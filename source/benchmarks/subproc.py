@@ -20,6 +20,8 @@ import sys
 import threading
 from typing import Any, Callable
 
+from services.procname import named_interpreter
+
 # The project root (parent of benchmarks/) so workers can import all packages.
 _ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,7 +51,7 @@ def stream_target_subprocess(
     it ran to completion. The child is always reaped. stderr is discarded so
     library chatter can't deadlock on a full pipe."""
     proc = subprocess.Popen(
-        [sys.executable, "-m", worker_module],
+        [named_interpreter(sys.executable, "Benchmark"), "-m", worker_module],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,

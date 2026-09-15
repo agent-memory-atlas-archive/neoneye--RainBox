@@ -16,6 +16,7 @@ from flask import (
     url_for,
 )
 
+from services.procname import named_interpreter
 import llm
 import providers
 from db import (
@@ -1265,7 +1266,7 @@ def models_test_api() -> Response:
 
     def generate():
         proc = subprocess.Popen(
-            [sys.executable, "-m", "llm.models_test_worker"],
+            [named_interpreter(sys.executable, "Model Test"), "-m", "llm.models_test_worker"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,

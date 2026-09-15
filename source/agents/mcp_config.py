@@ -23,6 +23,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from services.procname import named_interpreter
+
 _REPO_DIR = Path(__file__).resolve().parent.parent
 _CONFIG_PATH = _REPO_DIR / "mcp.json"
 
@@ -44,7 +46,7 @@ def _resolve_command(command: str) -> str:
     `mcp` install) as the caller. Path-looking commands are resolved
     relative to the repo dir."""
     if command in ("python", "python3"):
-        return sys.executable
+        return named_interpreter(sys.executable, "MCP Server")
     if "/" in command or command.startswith("."):
         cmd_path = Path(command)
         if not cmd_path.is_absolute():

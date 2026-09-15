@@ -7,14 +7,17 @@ started. It starts the core (`core.py`: supervisor + webserver) and every side
 service the operator has enabled on /settings, as *siblings*, keeps them
 running, stops what is disabled, and reports what it sees. It never becomes
 the core: it imports only the standard library plus the data-only catalogue
-in `services/definitions.py`, so its footprint stays small and a restart of
-the core never takes a service down.
+in `services/definitions.py` (and `services/procname.py`, stdlib too), so its
+footprint stays small and a restart of the core never takes a service down.
 
 Design: docs/superpowers/specs/2026-09-10-launcher-design.md. In short:
 
 - Children are spawned with fork+exec (`subprocess.Popen`, own session), never
   fork alone; each child's parent pid is this process, which is what makes
-  Activity Monitor's hierarchy legible.
+  Activity Monitor's hierarchy legible. Each child is exec'd from a link to
+  the interpreter named for its role (`services/procname.py`), so the same
+  hierarchy reads "RainBox Launcher" > "RainBox Core" > "RainBox Agent
+  direct_chat", and "RainBox Discord Main Bot" beside them, not "Python".
 - The core gets one end of a `socketpair()` as an inherited fd (`core.py
   --control-fd N`), the same way the core hands its agents theirs. Both
   directions are JSON lines and both are pushes: the core sends a desired-
@@ -50,6 +53,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from services.procname import named_interpreter, reexec_as
 from services.definitions import (
     ALL_KINDS,
     BASELINE_ENV_KEYS,
@@ -357,7 +361,8 @@ class Launcher:
         self.catalogue = dict(ALL_KINDS if catalogue is None else catalogue)
         self.source_dir = Path(source_dir).resolve()
         self.core_addr = core_addr
-        self.core_argv = core_argv or [sys.executable, str(self.source_dir / "core.py")]
+        self.core_argv = core_argv or [named_interpreter(sys.executable, "Core"),
+                                       str(self.source_dir / "core.py")]
         self.spawn_core = spawn_core
         self.base_env = dict(os.environ if base_env is None else base_env)
         self.clock = clock
@@ -448,15 +453,21 @@ class Launcher:
             return ("environment", env_value)
         return None
 
-    def _service_paths(self, kind: ServiceKind) -> tuple[Path, list[str]]:
+    def _service_paths(self, kind: ServiceKind, label: str | None = None) -> tuple[Path, list[str]]:
+        """cwd and argv for a service: its own venv python — exec'd through a
+        link named for the kind (plus the connector's label for a bridge),
+        so the process shows as e.g. "RainBox Discord Main Bot" — and its
+        entrypoint. A missing venv is reported under its plain path."""
         directory = self.source_dir / kind.directory
-        argv = [str(directory / kind.argv[0]), *[str(directory / a) if a.endswith(".py") else a for a in kind.argv[1:]]]
+        title = f"{kind.process_title} {label}" if label else kind.process_title
+        python = named_interpreter(directory / kind.argv[0], title)
+        argv = [python, *[str(directory / a) if a.endswith(".py") else a for a in kind.argv[1:]]]
         return directory, argv
 
     def _preflight(self, rec: Proc) -> str | None:
         """None when the service can be spawned, else the blocking state."""
         assert rec.kind is not None
-        _directory, argv = self._service_paths(rec.kind)
+        _directory, argv = self._service_paths(rec.kind, rec.label)
         if not Path(argv[0]).exists() or not Path(argv[-1]).exists():
             rec.message = f"missing {argv[0] if not Path(argv[0]).exists() else argv[-1]}"
             return "not installed"
@@ -486,7 +497,7 @@ class Launcher:
             pass_fds = (child_sock.fileno(),)
         else:
             parent_sock = None
-            cwd, argv = self._service_paths(rec.kind)
+            cwd, argv = self._service_paths(rec.kind, rec.label)
             credential = None
             declared = dict(rec.env)
             if rec.kind.dynamic:
@@ -1086,4 +1097,5 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    reexec_as("Launcher")   # show as "RainBox Launcher", not "Python"
     sys.exit(main())

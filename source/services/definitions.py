@@ -54,6 +54,9 @@ class ServiceKind:
     # by variable NAME and a per-instance state file through `state_file_env`.
     dynamic: bool = False
     state_file_env: str | None = None
+    # What the process is called after "RainBox " in Activity Monitor/ps
+    # (services/procname.py); the kind itself when unset.
+    title: str = ""
 
     def env_spec(self, name: str) -> EnvVar:
         for spec in self.env_specs:
@@ -65,10 +68,14 @@ class ServiceKind:
     def key(self) -> str:
         return self.kind
 
+    @property
+    def process_title(self) -> str:
+        return self.title or self.kind
+
 
 STATIC_SERVICES: dict[str, ServiceKind] = {
     "voice_tts_kokoro": ServiceKind(
-        kind="voice_tts_kokoro",
+        kind="voice_tts_kokoro", title="TTS Kokoro",
         directory="voice_tts_kokoro",
         argv=("venv/bin/python", "server.py"),
         bind="127.0.0.1:5005",
@@ -77,7 +84,7 @@ STATIC_SERVICES: dict[str, ServiceKind] = {
         core_url_env="KOKORO_TTS_URL",
     ),
     "voice_stt_whisper": ServiceKind(
-        kind="voice_stt_whisper",
+        kind="voice_stt_whisper", title="STT Whisper",
         directory="voice_stt_whisper",
         argv=("venv/bin/python", "server.py"),
         bind="127.0.0.1:5006",
@@ -95,7 +102,7 @@ STATIC_SERVICES: dict[str, ServiceKind] = {
         ),
     ),
     "voice_tts_dotstts": ServiceKind(
-        kind="voice_tts_dotstts",
+        kind="voice_tts_dotstts", title="TTS dots",
         directory="voice_tts_dotstts",
         argv=("venv/bin/python", "server.py"),
         bind="127.0.0.1:5007",
@@ -104,7 +111,7 @@ STATIC_SERVICES: dict[str, ServiceKind] = {
         core_url_env="DOTS_TTS_URL",
     ),
     "reranker": ServiceKind(
-        kind="reranker",
+        kind="reranker", title="Reranker",
         directory="reranker",
         argv=("venv/bin/python", "server.py"),
         bind="127.0.0.1:5008",
@@ -121,14 +128,14 @@ STATIC_SERVICES: dict[str, ServiceKind] = {
 
 DYNAMIC_SERVICES: dict[str, ServiceKind] = {
     "discord_bridge": ServiceKind(
-        kind="discord_bridge", directory="discord_service",
+        kind="discord_bridge", title="Discord", directory="discord_service",
         argv=("venv/bin/python", "bridge.py"), bind="outbound only",
         env_keys=("RAINBOX_URL", "BRIDGE_CONNECTOR"),
         description="Discord <-> chatroom bridge, one process per connector.",
         dynamic=True, state_file_env="DISCORD_STATE_FILE",
     ),
     "telegram_bridge": ServiceKind(
-        kind="telegram_bridge", directory="telegram_service",
+        kind="telegram_bridge", title="Telegram", directory="telegram_service",
         argv=("venv/bin/python", "bridge.py"), bind="outbound only",
         env_keys=("RAINBOX_URL", "BRIDGE_CONNECTOR"),
         description="Telegram <-> chatroom bridge, one process per connector.",

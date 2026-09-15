@@ -84,6 +84,8 @@ python3 main.py
 
 That is the launcher: it starts the core (`core.py`) as a child, and any side service enabled on `/settings`. The core runs the webserver on `http://127.0.0.1:5000` **and** the supervisor (in a background daemon thread). `python3 core.py` runs the core alone, unmanaged. The supervisor is idle until work shows up — no agent processes are spawned at startup.
 
+Every RainBox process shows up in Activity Monitor, `ps` and `top` under its role — `RainBox Launcher`, `RainBox Core`, `RainBox Agent direct_chat`, `RainBox Discord Main Bot`, `RainBox TTS Kokoro` — instead of a column of "Python". Activity Monitor names a process after the file it executed, so each one is exec'd from a hard link to the interpreter created under its venv's `procnames/` directory (`services/procname.py`; the launcher and a hand-started `core.py` re-exec themselves the same way). It is best effort: anything that cannot be linked runs under the plain interpreter, and `RAINBOX_PROCNAME=0` switches it off.
+
 Startup also reconciles the `model_config` table with every registered provider (availability, file sizes where available, and the `is_function_calling_model` capability flag for newly-discovered models). To also refresh **existing** rows' capability arguments from provider-reported capabilities, run a one-shot sync that exits without starting the server:
 
 ```

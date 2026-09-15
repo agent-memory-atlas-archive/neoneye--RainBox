@@ -101,6 +101,26 @@ replaces a pending one whose bytes have not yet gone out. Backpressure never
 closes the channel (an inherited socketpair cannot be reopened); only a peer
 that is gone does.
 
+### Process names
+
+Every process the launcher and the core spawn — and the two of them — runs
+under an executable named for its role: `RainBox Launcher`, `RainBox Core`,
+`RainBox Agent <role>`, `RainBox Discord <connector label>`, `RainBox TTS
+Kokoro`, and so on (`ServiceKind.title`, `services/procname.py`). Activity
+Monitor names a process after the file it executed and nothing a running
+process does can change that, so `named_interpreter(python, title)` hard-links
+the binary that actually runs behind `python` (on macOS framework builds the
+`Python.app` binary the `bin/python3.X` stub re-execs, found once with
+`proc_pidpath`) to `<venv>/procnames/RainBox <title>` and returns that path
+for argv[0]. The link sits one directory below `pyvenv.cfg`, so the process
+is still that venv; `sys.executable` becomes the link, which is why the core
+names its agents explicitly instead of letting them inherit "RainBox Core".
+The launcher and a hand-started core re-exec themselves through the same
+path (`reexec_as`). A link whose inode no longer matches the interpreter is
+remade at the next spawn; a failure at any step falls back to the plain
+interpreter with one warning; `RAINBOX_PROCNAME=0` disables it. The module
+is stdlib-only so the launcher's footprint is unchanged.
+
 ## Environment and credential ownership
 
 The launcher does **not** parse repo-root `.env`. The core already loads that
