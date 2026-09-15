@@ -265,3 +265,16 @@ def test_credential_endpoints_are_write_only_and_feed_the_launcher_snapshot(clie
     r = c.put(f"/bridges/api/connectors/{cu}/credential", json={"value": "tok"})
     assert r.status_code == 409 and r.get_json()["key_configured"] is False and "RAINBOX_CREDENTIAL_KEY" in r.get_json()["error"]
     assert c.get(f"/bridges/api/connectors/{cu}").get_json()["credential"]["key_configured"] is False
+
+
+def test_create_without_a_name_uses_the_platform_name(client):
+    """The New connector dialog sends no name: the server calls it "Discord",
+    then "Discord 2", and so on; Rename stays available afterwards."""
+    c, made = client
+    a = _connector(c, made, name=None)
+    b = _connector(c, made, name="")
+    assert a["name"] == "Discord" or a["name"].startswith("Discord ")
+    assert b["name"].startswith("Discord ") and b["name"] != a["name"]
+    assert c.post("/bridges/api/connectors", json={"name": 5, "platform": "discord", "token_env": "X"}).status_code == 400
+    r = c.put(f"/bridges/api/connectors/{a['uuid']}", json={"name": f"Main Bot {a['uuid'][:4]}"})
+    assert r.status_code == 200 and r.get_json()["connector"]["name"].startswith("Main Bot")

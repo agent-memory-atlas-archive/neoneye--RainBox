@@ -78,13 +78,14 @@ the core has the key (Phase C would otherwise show a warning).
 
 Open http://127.0.0.1:5000/bridges. Click **+ Connector**:
 
-- Name: `Main Bot`
 - Platform: Discord (Telegram and Zulip are listed but greyed out — their
   bridges have no connector mode yet)
 - Credential variable name: `DISCORD_TOKEN_MAINBOT`
 
-Click Create. The connector appears in the left tree and its pane opens.
-Expect:
+Click Create. The connector appears in the left tree as `Discord` (a
+second one would be `Discord 2`) and its pane opens. Rename it to `Main Bot`
+— kebab menu on the tree row → Rename — so the `[Main Bot]` log lines quoted
+below match. Expect:
 
 - *Credential variable* `DISCORD_TOKEN_MAINBOT`, and a *Token* row saying `not set`.
 - *Desired state*: Enabled unchecked; Launch mode *launcher*.

@@ -151,8 +151,8 @@ BRIDGES_TEMPLATE = """
 
 <div class="ui-modal" id="br-connector-modal" hidden>
   <h3>New connector</h3>
-  <label>Name<input type="text" id="br-conn-name" placeholder="e.g. Main Bot" autocomplete="off"></label>
-  <label>Platform<select id="br-conn-platform"></select></label>
+  <label>Platform<select id="br-conn-platform"></select>
+    <span class="hint">The connector is named after its platform (Discord, Discord 2, …); rename it from its menu afterwards.</span></label>
   <label>Credential variable name<input type="text" id="br-conn-token-env" placeholder="e.g. DISCORD_TOKEN_MAINBOT" autocomplete="off">
     <span class="hint">The variable the bridge process reads. You paste the token itself on the connector pane afterwards; it is stored sealed and never shown again.</span></label>
   <label id="br-conn-base-url-row" hidden>Realm URL<input type="url" id="br-conn-base-url" placeholder="https://chat.example.org"></label>

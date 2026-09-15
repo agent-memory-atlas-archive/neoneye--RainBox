@@ -83,3 +83,10 @@ def test_admin_views_for_bridge_rows_are_read_only():
     from webapp.core import BridgeBindingView, BridgeConnectorView, BridgeFolderView
     for view in (BridgeConnectorView, BridgeFolderView, BridgeBindingView):
         assert not view.can_create and not view.can_edit and not view.can_delete
+
+
+def test_new_connector_modal_has_no_name_field():
+    body = _body()
+    assert "br-conn-name" not in body
+    assert "named after its platform" in body
+    assert "Name is required" not in body

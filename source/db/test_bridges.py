@@ -363,3 +363,25 @@ def test_credential_requires_the_key_and_dies_with_its_connector(cleanup, monkey
     db.bridge_set_credential(cu, "tok", autostart=True)
     assert db.bridge_delete_connector(cu) is True
     assert db.session.get(db.BridgeCredential, cu) is None                       # ON DELETE CASCADE
+
+
+def test_connector_without_a_name_is_named_after_its_platform_with_a_free_number(cleanup):
+    """No name (None or blank) → the platform label, then "Discord 2", "Discord 3"
+    — the next free number, never a reused one; an explicit name still wins and
+    a non-string is refused."""
+    from uuid import UUID
+
+    def make(name):
+        c = db.bridge_create_connector(name, "discord", "DISCORD_TOKEN_TEST")
+        cleanup["connectors"].append(UUID(c["uuid"]))
+        return c["name"]
+
+    names = [make(None), make(""), make("   ")]
+    assert len(set(names)) == 3
+    for n in names:
+        assert n == "Discord" or (n.startswith("Discord ") and n[8:].isdigit() and int(n[8:]) >= 2)
+    assert db.default_connector_name("Discord") not in names      # the next one is free
+    assert make("Explicit " + names[0]) == "Explicit " + names[0]
+    with pytest.raises(db.AdapterError):
+        db.bridge_create_connector(12, "discord", "DISCORD_TOKEN_TEST")
+    assert db.default_connector_name("Never Used Label") == "Never Used Label"

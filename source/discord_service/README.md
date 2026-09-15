@@ -56,7 +56,8 @@ input at all (see *Troubleshooting* below).
 ## Connector mode
 
 1. On `/bridges`: **+ Connector** (platform Discord, a credential variable
-   NAME such as `DISCORD_TOKEN_MAINBOT`), then **+ Binding** per chatroom ↔
+   NAME such as `DISCORD_TOKEN_MAINBOT`; it is named `Discord`, then
+   `Discord 2`, … — rename it from its menu), then **+ Binding** per chatroom ↔
    channel pair (channel id from Discord's *Copy Channel ID*). Set
    `allowed_senders` (numeric user ids) on the connector, a folder, or the
    binding — the nearest level wins; enable the binding and the connector.

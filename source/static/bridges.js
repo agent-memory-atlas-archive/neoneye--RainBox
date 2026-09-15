@@ -815,7 +815,6 @@ function brAddConnector(){
     const meta = brPlatforms[p];
     return '<option value="' + brEscapeHtml(p) + '"' + (meta.available ? '' : ' disabled') + '>' + brEscapeHtml(meta.label) + (meta.available ? '' : ' (no bridge yet)') + '</option>';
   }).join('');
-  document.getElementById('br-conn-name').value = '';
   document.getElementById('br-conn-token-env').value = '';
   document.getElementById('br-conn-base-url').value = '';
   document.getElementById('br-conn-identity').value = '';
@@ -823,7 +822,7 @@ function brAddConnector(){
   brSyncConnectorFields();
   document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('br-connector-modal').hidden = false;
-  document.getElementById('br-conn-name').focus();
+  document.getElementById('br-conn-token-env').focus();
 }
 function brSyncConnectorFields(){
   const meta = brPlatforms[document.getElementById('br-conn-platform').value] || {};
@@ -837,12 +836,12 @@ function brCloseConnectorModal(){
 async function brAddConnectorConfirm(){
   const err = document.getElementById('br-conn-err');
   err.textContent = '';
+  // No name: the server names it after the platform ("Discord", then
+  // "Discord 2"); Rename in the tree's kebab menu covers the rest.
   const body = {
-    name: document.getElementById('br-conn-name').value.trim(),
     platform: document.getElementById('br-conn-platform').value,
     token_env: document.getElementById('br-conn-token-env').value.trim(),
   };
-  if (!body.name){ err.textContent = 'Name is required.'; return; }
   if (!body.token_env){ err.textContent = 'The credential variable name is required.'; return; }
   const meta = brPlatforms[body.platform] || {};
   if (meta.requires_base_url) body.base_url = document.getElementById('br-conn-base-url').value.trim();
@@ -1412,7 +1411,7 @@ function brSavePush(){
 // ---- dirty-guarded dismissal (clicking backdrop / Esc) ----
 function brOpenModalDirty(){
   const v = id => document.getElementById(id).value.trim();
-  if (!document.getElementById('br-connector-modal').hidden) return v('br-conn-name') !== '' || v('br-conn-token-env') !== '';
+  if (!document.getElementById('br-connector-modal').hidden) return v('br-conn-token-env') !== '';
   if (!document.getElementById('br-folder-modal').hidden) return v('br-folder-input') !== '';
   if (!document.getElementById('br-credential-modal').hidden) return v('br-credential-input') !== '';
   if (!document.getElementById('br-binding-modal').hidden)

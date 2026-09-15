@@ -388,11 +388,16 @@ def _validate_connector_fields(platform: str, token_env: Any, base_url: Any, ide
 def bridge_create_connector(name: Any, platform: Any, token_env: Any, *,
                             base_url: Any = None, identity: Any = None,
                             policy: Any = None) -> dict[str, Any]:
-    """A new connector, disabled, at the end of the list. Raises AdapterError
-    (400) for a bad shape and BridgeBlocked (409) for a duplicate name."""
-    if not isinstance(name, str) or not name.strip():
-        raise AdapterError("name is required")
+    """A new connector, disabled, at the end of the list. Without a name it
+    is called after its platform — "Discord", then "Discord 2", "Discord 3"
+    — so the create dialog needs no name field and a rename is a later,
+    optional step. Raises AdapterError (400) for a bad shape and
+    BridgeBlocked (409) for a duplicate explicit name."""
     adapter, token, url, ident = _validate_connector_fields(platform, token_env, base_url, identity)
+    if name is not None and not isinstance(name, str):
+        raise AdapterError("name must be a string")
+    if not name or not name.strip():
+        name = default_connector_name(adapter.label)
     pol = adapter.validate_policy(policy)
     highest = db.session.execute(sa.select(sa.func.max(BridgeConnector.position))).scalar_one()
     row = BridgeConnector(uuid=uuid4(), name=name.strip(), platform=adapter.platform, token_env=token,
@@ -408,6 +413,18 @@ def bridge_create_connector(name: Any, platform: Any, token_env: Any, *,
     db.session.commit()
     _push_launcher()
     return _connector_dict(row)
+
+
+def default_connector_name(label: str) -> str:
+    """`label` itself when no connector carries it, else the first free
+    `label N` from 2 up (names are unique across platforms)."""
+    taken = set(db.session.execute(sa.select(BridgeConnector.name)).scalars())
+    if label not in taken:
+        return label
+    n = 2
+    while f"{label} {n}" in taken:
+        n += 1
+    return f"{label} {n}"
 
 
 def bridge_get_connector(connector_uuid: UUID) -> dict[str, Any] | None:
