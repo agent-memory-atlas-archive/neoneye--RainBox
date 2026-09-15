@@ -26,6 +26,7 @@ from agents.config import (  # noqa: E402
 )
 from services import registry as services_registry  # noqa: E402
 from services.definitions import EXIT_LOCK_HELD  # noqa: E402
+from services.procname import named_interpreter, reexec_as  # noqa: E402
 from webapp import app  # noqa: E402
 from webapp.core import sync_models_from_providers  # noqa: E402
 
@@ -84,8 +85,11 @@ def spawn(name: str, params: AgentConfigEntry) -> Agent:
     agent_uuid = params["uuid"]
     parent_sock, agent_sock = socket.socketpair()
     os.set_inheritable(agent_sock.fileno(), True)
+    # Exec'd through a link named for the role, so Activity Monitor shows
+    # "RainBox Agent direct_chat" rather than the core's own name again.
+    exe = named_interpreter(sys.executable, f"Agent {name}")
     argv = [
-        sys.executable, "-m", "agents",
+        exe, "-m", "agents",
         "--socket-fd", str(agent_sock.fileno()),
     ]
     # Make the source root importable in the child regardless of its CWD.
@@ -93,7 +97,7 @@ def spawn(name: str, params: AgentConfigEntry) -> Agent:
     env["PYTHONPATH"] = ROOT_DIR + (
         os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else ""
     )
-    pid = os.posix_spawn(sys.executable, argv, env)
+    pid = os.posix_spawn(exe, argv, env)
     agent_sock.close()
     config_msg = {"name": name, **params}
     parent_sock.sendall((json.dumps(config_msg, default=str) + "\n").encode())
@@ -414,4 +418,5 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    reexec_as("Core")   # already named when the launcher started us; a hand start gets it here
     main()
