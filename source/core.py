@@ -237,7 +237,7 @@ def supervisor_loop(stop_event: threading.Event) -> None:
                     status = msg.get("status")
                     if status in ("processing", "heartbeat") and msg.get("journal_id"):
                         ag["current_journal_id"] = UUID(msg["journal_id"])
-                    elif status in ("completed", "failed"):
+                    elif status in ("completed", "failed", "stopped"):
                         ag["current_journal_id"] = None
                     if msg.get("status") != "heartbeat":
                         logger.info("agent %s -> %s", name, msg)

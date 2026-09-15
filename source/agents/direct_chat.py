@@ -18,17 +18,22 @@ turn on.
 
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
 from llama_index.core.llms import ChatMessage, MessageRole
+from sqlalchemy.orm import Session
 
 import db
 from agents.base import Agent
+from agents.turn_stop import StopRequested, StopWatch, TurnStopped
 from chat.streaming import StreamingReplyWriter, extract_stream_deltas
 from llm import prepare_llm
 
 logger = logging.getLogger(__name__)
+
+_END = object()  # `next(chunks, _END)`: the stream is exhausted
 
 NO_MODEL_NOTICE: str = (
     "No model selected for this chat, and no global default is available. "
@@ -102,9 +107,27 @@ class DirectChatAgent(Agent):
         idx = reasoning.rfind("</think>")
         return reasoning[idx + len("</think>"):].strip() if idx != -1 else ""
 
+    @staticmethod
+    def _stop_probe(journal_id: UUID | None) -> Callable[[], bool] | None:
+        """What the StopWatch polls: has the operator flagged this turn's
+        journal row. Reads on a session of its own, bound to the engine
+        captured here on the main thread — the watcher runs on a thread
+        with no app context, and the scoped db.session must never be shared
+        across threads (the activity recorder documents why). None, an
+        inert watch, when the turn has no journal (tests driving
+        _stream_reply directly)."""
+        if journal_id is None:
+            return None
+        engine = db.db.engine
+
+        def probe() -> bool:
+            with Session(bind=engine) as session:
+                return db.stop_requested(journal_id, session=session)
+        return probe
+
     def _stream_reply(
         self, room_uuid: UUID, model_uuid: UUID, messages: list[ChatMessage],
-        request_timeout: int | None = None,
+        request_timeout: int | None = None, journal_id: UUID | None = None,
     ) -> str:
         """Stream one completion from the room's model into live
         thinking/answer rows. `request_timeout` (the room's Settings override,
@@ -113,11 +136,18 @@ class DirectChatAgent(Agent):
         timeout grows with it. Single model — no fallback list; any failure
         closes the streaming rows, posts a kind="notice" failure message into
         the room (the journal's `failed` status is invisible in the chat UI),
-        and raises (the item still journals `failed`)."""
+        and raises (the item still journals `failed`).
+
+        A Stop request on `journal_id` (agents/turn_stop.py) interrupts the
+        stream — mid-read included — keeps the text that streamed, settles
+        the rows, posts a stop notice, and raises TurnStopped (journal
+        `stopped`)."""
         t0 = time.monotonic()
         writer = self._make_writer(room_uuid)
         reasoning_text = ""
         model_name = None
+        stream: Any = None
+        watch = StopWatch(self._stop_probe(journal_id))
         try:
             provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
             logger.info(
@@ -136,18 +166,30 @@ class DirectChatAgent(Agent):
                 or args.get("request_timeout") or args.get("timeout") or 60.0
             )
             the_llm = prepare_llm(provider_id, model_name, args)
-            stream = the_llm.stream_chat(messages)
-            deadline = time.monotonic() + timeout_s
-            for chunk in stream:
-                if time.monotonic() > deadline:
-                    raise TimeoutError(
-                        f"chat stream exceeded {timeout_s:.0f}s "
-                        "(model still generating)"
-                    )
-                reasoning_delta, content_delta = extract_stream_deltas(chunk)
-                reasoning_text += reasoning_delta
-                writer.add_reasoning(reasoning_delta)
-                writer.add_answer(content_delta)
+            # The two calls that block on the network sit in interruptible
+            # windows: opening the stream (a cold model sends nothing until
+            # it has loaded) and each read. Between reads — the writer's
+            # database flushes — a stop waits for the next boundary.
+            with watch:
+                with watch.interruptible():
+                    stream = the_llm.stream_chat(messages)
+                deadline = time.monotonic() + timeout_s
+                chunks = iter(stream)
+                while True:
+                    watch.raise_if_requested()
+                    with watch.interruptible():
+                        chunk = next(chunks, _END)
+                    if chunk is _END:
+                        break
+                    if time.monotonic() > deadline:
+                        raise TimeoutError(
+                            f"chat stream exceeded {timeout_s:.0f}s "
+                            "(model still generating)"
+                        )
+                    reasoning_delta, content_delta = extract_stream_deltas(chunk)
+                    reasoning_text += reasoning_delta
+                    writer.add_reasoning(reasoning_delta)
+                    writer.add_answer(content_delta)
             final_answer = self._answer_from_reasoning(reasoning_text) \
                 if writer.answer_id is None else None
             reply = writer.finish(final_answer=final_answer).strip()
@@ -156,6 +198,45 @@ class DirectChatAgent(Agent):
                 self.name, model_name, time.monotonic() - t0, len(reply),
             )
             return reply
+        except StopRequested:
+            # The operator pressed Stop. Close the generator (its HTTP
+            # connection with it — the server stops generating), keep what
+            # streamed with the same answer recovery as a normal finish,
+            # mark the cut with a notice posted as this agent (it reaps the
+            # working bubble), and hand the queue a `stopped`.
+            close = getattr(stream, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception:
+                    logger.debug("agent %s: closing the stream raised",
+                                 self.name, exc_info=True)
+            partial = ""
+            try:
+                final_answer = self._answer_from_reasoning(reasoning_text) \
+                    if writer.answer_id is None else None
+                partial = writer.finish(final_answer=final_answer).strip()
+            except Exception:
+                db.session.rollback()
+                logger.exception(
+                    "agent %s: could not settle rows after stop", self.name)
+            elapsed = time.monotonic() - t0
+            logger.info(
+                "agent %s: stopped by operator after %.1fs (%d reply chars)",
+                self.name, elapsed, len(partial),
+            )
+            try:
+                db.post_chat_message(
+                    room_uuid, self.agent_uuid,
+                    f"⏹ Stopped — after {elapsed:.0f}s "
+                    f"(model {model_name or model_uuid})",
+                    kind="notice",
+                )
+            except Exception:
+                db.session.rollback()
+                logger.exception(
+                    "agent %s: could not post stop notice", self.name)
+            raise TurnStopped(partial) from None
         except Exception as exc:
             # Close any live rows so the UI doesn't show a stuck cursor. A DB
             # error mid-flush leaves the transaction aborted — roll it back
@@ -231,7 +312,7 @@ class DirectChatAgent(Agent):
         )
         reply = self._stream_reply(
             room_uuid, model_uuid, messages,
-            request_timeout=room.request_timeout,
+            request_timeout=room.request_timeout, journal_id=journal_id,
         )
         if not reply:
             logger.warning(

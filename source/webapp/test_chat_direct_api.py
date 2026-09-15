@@ -644,3 +644,79 @@ def test_troubleshooting_post_rejects_bad_input(client, direct_room, agents_room
     assert test_client.post(url, json={"kind": "message", "text": "  "}).status_code == 400
     assert test_client.post(url, json={"kind": "notice", "text": ""}).status_code == 400
     assert test_client.post(url, json={"kind": "message", "text": 5}).status_code == 400
+
+
+# ---- POST /stop ------------------------------------------------------------
+
+def _drop_journal(journal_id):
+    db.session.query(db.Journal).filter_by(id=journal_id).delete()
+    db.session.commit()
+
+
+def test_stop_with_a_queued_turn_dequeues_it_and_posts_the_notice(client, direct_room):
+    """Stop before any worker took the item: the item is gone, and since no
+    worker will close the turn the API posts the stop notice itself, which
+    reaps the working bubble."""
+    test_client, app = client
+    room_uuid, _human_uuid = direct_room
+    assert test_client.post(f"/chat/api/rooms/{room_uuid}/messages",
+                            json={"text": "typo"}).status_code == 201
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/stop")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"ok": True, "dequeued": 1, "signalled": 0, "settled": True}
+    with app.app_context():
+        rows = db.list_room_messages(room_uuid)
+        assert [r["kind"] for r in rows] == ["message", "notice"]
+        assert "Stopped" in rows[-1]["text"]
+        assert rows[-1]["sender_uuid"] == str(DIRECT_CHAT_UUID)
+        assert _drain_direct_inbox() == []
+
+
+def test_stop_flags_the_worker_owned_item_and_leaves_closing_to_it(client, direct_room):
+    """A worker took the item (a processing journal row): the API only flags
+    it — the worker cuts its stream and posts the notice — so the working
+    bubble stays until then."""
+    test_client, app = client
+    room_uuid, _human_uuid = direct_room
+    assert test_client.post(f"/chat/api/rooms/{room_uuid}/messages",
+                            json={"text": "slow question"}).status_code == 201
+    with app.app_context():
+        taken = db.take_item(DIRECT_CHAT_UUID)
+        assert taken is not None
+        journal_id = taken[0]
+    try:
+        resp = test_client.post(f"/chat/api/rooms/{room_uuid}/stop")
+        assert resp.get_json() == {"ok": True, "dequeued": 0, "signalled": 1, "settled": False}
+        with app.app_context():
+            assert db.stop_requested(journal_id)
+            assert [r["kind"] for r in db.list_room_messages(room_uuid)] == ["message", "progress"]
+    finally:
+        with app.app_context():
+            _drop_journal(journal_id)
+
+
+def test_stop_on_a_quiet_room_posts_nothing_but_settles_stuck_rows(client, direct_room):
+    """Nothing to stop → no stray notice (a press that lands after the reply
+    finished). A row a dead worker left streaming is the exception: the press
+    settles it and says so."""
+    test_client, app = client
+    room_uuid, _human_uuid = direct_room
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/stop")
+    assert resp.get_json() == {"ok": True, "dequeued": 0, "signalled": 0, "settled": False}
+    with app.app_context():
+        assert db.list_room_messages(room_uuid) == []
+        stuck_id = db.post_chat_message(room_uuid, DIRECT_CHAT_UUID, "half an ans",
+                                        kind="message", streaming=True).id
+    resp = test_client.post(f"/chat/api/rooms/{room_uuid}/stop")
+    assert resp.get_json() == {"ok": True, "dequeued": 0, "signalled": 0, "settled": True}
+    with app.app_context():
+        rows = db.list_room_messages(room_uuid)
+        assert [(r["id"], r["kind"], r["streaming"]) for r in rows] == [
+            (stuck_id, "message", False), (rows[-1]["id"], "notice", False)]
+
+
+def test_stop_rejected_in_agents_room(client, agents_room):
+    test_client, _app = client
+    room_uuid, _human_uuid = agents_room
+    assert test_client.post(f"/chat/api/rooms/{room_uuid}/stop").status_code == 403
+    assert test_client.post(f"/chat/api/rooms/{uuid4()}/stop").status_code == 404

@@ -148,6 +148,45 @@ Details that live here:
   model loads, a room model that no longer resolves): without it the room
   would stay silent.
 
+## Stopping a turn
+
+The composer of a direct room shows **⏹ Stop** beside Send while a turn is
+in flight — the working bubble or a streaming row is in the log — and the
+page derives that from the log itself rather than a flag (`syncStopButton`
+runs after every path that changes the log). Send keeps working meanwhile:
+a follow-up queues a second turn, as ever.
+
+Pressing it calls `POST /chat/api/rooms/<uuid>/stop` (direct rooms only),
+which abandons every pending turn for the room:
+
+- Items still queued in the direct-chat agent's inbox are deleted
+  (`db.cancel_room_turns`, `dequeued`).
+- The item a worker is processing gets `journal.stop_requested_at`
+  (`signalled`) — the one column this feature adds, on the queue's own
+  record of the work, so a stale request can never leak into the next
+  turn. The worker's `StopWatch` (`agents/turn_stop.py`) polls it every
+  0.5 s on a session of its own. A request seen between chunks raises at
+  the next chunk boundary; one that arrives while the worker is blocked
+  on the network — waiting for a cold model's first token, or mid-read —
+  is delivered as `SIGUSR1` to the main thread, whose handler raises out
+  of the blocked call (PEP 475, the same mechanism the supervisor's
+  SIGTERM uses). The handler only raises inside the windows the agent
+  declares around `stream_chat` and each read, never inside a database
+  commit. The generator is closed, so the HTTP connection drops and the
+  inference server stops generating.
+- What streamed stays: the answer row settles with its partial text (the
+  same `</think>` recovery as a normal finish), a `kind="notice"` row
+  "⏹ Stopped — after 12s (model X)" posted by the agent reaps the working
+  bubble, and the journal records `stopped` with the partial reply
+  (`TurnStopped` in `Agent.run`). A partial reply is an ordinary assistant
+  turn afterwards — edit or delete it like any other row.
+- When no worker is on the room (the item was still queued, or a worker
+  died and left a row streaming), nothing else would close the turn, so
+  the endpoint settles it: streaming rows flip to settled
+  (`db.settle_streaming_rows`) and it posts the notice itself. With
+  nothing to stop at all it posts nothing, so a press that lands after
+  the reply finished leaves no stray row.
+
 ## Settings sidebar
 
 The right panel remembers which panel is selected and whether it is shown as
@@ -191,14 +230,17 @@ model sees on the *next* operator message.
 | --- | --- |
 | Agent | `agents/direct_chat.py` |
 | Streaming writer + delta extraction | `chat/streaming.py` |
-| Room settings, triggers, editing (HTTP) | `webapp/chat_api.py` |
+| Room settings, triggers, editing, stop (HTTP) | `webapp/chat_api.py` |
+| Stop watch (signal-interrupted stream) | `agents/turn_stop.py` |
+| Queue-side cancel, `stop_requested_at` poll | `db/queue.py` |
 | Sidebar + client behavior | `webapp/chat_template.py` |
 | Prompt resolution, edit/delete, tree | `db/chat.py` |
 | Model choices + Ollama-first default | `db/model_config.py` |
 | `chat.default_model` setting | `db/settings.py` |
 
 Tests: `agents/test_direct_chat.py` (message building, model fallback,
-notice), `webapp/test_chat_direct_api.py` (HTTP surface),
+notice, stop), `agents/test_turn_stop.py` (the watch, the `stopped`
+journal branch), `webapp/test_chat_direct_api.py` (HTTP surface),
 `db/test_chat_direct.py` (room/settings persistence),
 `db/test_model_config_default.py` (the Ollama-first pick),
 `chat/test_streaming.py` (writer + delta shapes).

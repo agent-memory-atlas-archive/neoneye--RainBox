@@ -503,3 +503,22 @@ def test_direct_room_bridge_troubleshooting():
     for marker in ("ds-trouble-text", "ds-trouble-progress",
                    "ds-trouble-reply", "ds-trouble-notice"):
         assert marker in body
+
+
+def test_direct_room_stop_button():
+    """A Stop button beside Send, shown only while a direct room's turn is in
+    flight — read off the log (a progress row or a streaming row), and
+    re-synced on every path that changes the log: append, removal, the
+    streaming rebuild, and the room switch (an empty room appends nothing)."""
+    body = _body()
+    assert '<button type="button" id="stop-btn" hidden>' in body
+    assert "function turnInFlight" in body and "function syncStopButton" in body
+    assert "'.msg[data-kind=\"progress\"], .msg.msg-streaming'" in body
+    assert "msg.dataset.kind = m.kind" in body
+    assert "'/chat/api/rooms/' + room + '/stop'" in body
+    assert "stopBtn.addEventListener('click', stopTurn)" in body
+    assert "  log.appendChild(node);\n  syncStopButton();" in body          # appendMessageNode
+    assert "  pruneDaySeparators();\n  syncStopButton();" in body           # removeDeletedMessages
+    assert "existing.replaceWith(node);\n    syncStopButton();" in body    # upsertMessage
+    assert "log.innerHTML = '';\n  syncStopButton();" in body              # selectRoom
+    assert "msgs.forEach(appendMessage);\n  syncStopButton();" in body

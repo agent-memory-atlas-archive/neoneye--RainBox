@@ -244,6 +244,11 @@ class Journal(db.Model):
     payload: Mapped[str] = mapped_column(Text)
     result: Mapped[str | None] = mapped_column(Text)
     routed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The operator asked the worker owning this row to stop (the Stop button
+    # on a direct room). The worker polls it while its model call runs and
+    # journals the item `stopped`; see agents/turn_stop.py.
+    stop_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True))
     __table_args__ = (
         CheckConstraint(
             "state IN ('processing','completed','failed','stopped')",

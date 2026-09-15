@@ -352,7 +352,7 @@ Helpers in `db/` (all use `db.session` under a pushed Flask app context — no c
 - `mark_routed(journal_id)` — set `routed_at = now`, used after enqueueing to the next agent or to skip terminal rows.
 - `agent_uuids_with_work()` — set of agent UUIDs whose inbox is non-empty (used by the supervisor's wake-up pass).
 
-The demo only exercises `processing → completed`; `failed` and `stopped` exist for the obvious extensions (exception during work → `failed`; supervisor cancellation → `stopped`).
+`processing → completed` is the normal path; an exception in `handle()` journals `failed`. `stopped` is the Stop button's outcome on a direct-chat turn: the API stamps `journal.stop_requested_at` (`cancel_room_turns`), the worker's `StopWatch` (`agents/turn_stop.py`) polls it and cuts the model call — a blocked read included, via a `SIGUSR1` handler that raises — and `Agent.run` journals the item `stopped` with the partial reply (`notes/direct-chat.md`, "Stopping a turn").
 
 ## Layout
 
@@ -399,7 +399,7 @@ A candid assessment of the supervisor layer as the basis for an AI-agent system.
 1. **A role with no class is a stub, not an error.** `StructuredChatAgent`, `UnstructuredChatAgent`, the `edit_document*` agents, `MCPAgent`, `KanbanWorkerAgent` and the assistant make real provider-backed LLM calls when configured. A role absent from `AGENT_CLASS_PATHS` falls back to `ModelGroupAgent`, whose `handle()` resolves its real model-group candidates and then sleeps a second — deliberately functional, so binding can be verified without an LLM, but silent about the fact that nothing is actually running.
 2. **Heartbeat detects liveness, not semantic progress.** The background thread keeps a process alive during long model calls, but it also keeps heartbeating if `handle()` is deadlocked while the process itself remains healthy. Per-call model timeouts are the primary bound for that case; the supervisor watchdog covers process or status-channel failure.
 3. **Retry / backoff policy.** The journal *can* hold `failed` rows (and `handle()` exceptions now produce them), but nothing reads them. A real system needs "if `failed` and attempts < N, re-enqueue with attempts+1 and an exponential delay."
-4. **Bidirectional protocol post-config.** The agent reads its inbox directly from Postgres and doesn't react to anything the supervisor sends after the initial config message. Cancellation and live steering still need a socket-side protocol.
+4. **Bidirectional protocol post-config.** The agent reads its inbox directly from Postgres and doesn't react to anything the supervisor sends after the initial config message. Cancellation therefore goes through the database too — `journal.stop_requested_at`, polled by the worker's `StopWatch` (the direct-chat Stop button; the assistant has its own `assistant_control` rows) — and live steering of the other agents still has no channel.
 5. **Routing is one hop to a fixed address.** `return_to_agent_uuid` names a single successor, chosen when the work is dispatched rather than from what came back. Real workflows need fanout (one role feeds many), fanin (many feed one), conditional routing (route on result content), and stop conditions.
 
 ### Where it sits in the landscape

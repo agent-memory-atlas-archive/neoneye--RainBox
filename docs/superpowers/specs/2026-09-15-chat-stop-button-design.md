@@ -1,6 +1,6 @@
 # Stop button for direct-chat turns — design
 
-**Status: accepted design; implementation follows on this branch.** A direct room's composer gets a **Stop** button
+**Status: implemented.** A direct room's composer gets a **Stop** button
 that aborts the model turn in flight — the operator hit Send with a typo, or
 the model under trial is too slow for the question — and the machinery
 behind it actually stops the model, not just the page.
@@ -55,9 +55,10 @@ journal row that gets flagged).
 
 1. Delete every inbox item of the direct-chat agent whose payload names this
    room (`dequeued`).
-2. Set `stop_requested_at = now()` on every `processing` journal row of the
-   direct-chat agent whose payload names this room and that has no request
-   yet (`signalled`; idempotent — pressing twice re-signals nothing).
+2. Stamp `stop_requested_at = now()` on every `processing` journal row of
+   the direct-chat agent whose payload names this room (`signalled` counts
+   those rows; a row already stamped keeps its stamp, so a second press
+   changes nothing).
 3. If nothing was signalled, no worker is going to close the turn, so the
    endpoint settles the room itself: every still-`streaming` row of the
    direct-chat agent in the room is marked settled, and the stop notice is
