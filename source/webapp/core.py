@@ -42,6 +42,10 @@ from db import (
     EvalResult,
     EvalRun,
     FeedbackEvent,
+    BridgeBinding,
+    BridgeConnector,
+    BridgeCredential,
+    BridgeFolder,
     GitFolder,
     GitRepo,
     Inbox,
@@ -172,6 +176,7 @@ NAV_TEMPLATE = """
       </div>
     </details>
     <a href="{{ url_for('git_page') }}" class="{{ 'pp-active' if request.endpoint == 'git_page' }}">Git</a>
+    <a href="{{ url_for('bridges_page') }}" class="{{ 'pp-active' if request.endpoint == 'bridges_page' }}">Bridges</a>
     <a href="{{ url_for('profile_page') }}" class="{{ 'pp-active' if request.endpoint == 'profile_page' }}">Profile</a>
     <a href="{{ url_for('settings_page') }}" class="{{ 'pp-active' if request.endpoint == 'settings_page' }}">Settings</a>
     <details class="pp-dd {{ 'pp-active' if request.endpoint in ('models_page', 'modelgroups_page', 'agent_models_page') }}">
@@ -1040,6 +1045,99 @@ class GitRepoView(ModelView):
 
 admin.add_view(GitFolderView(GitFolder, db, category="Git"))
 admin.add_view(GitRepoView(GitRepo, db, category="Git"))
+
+
+# --- chat bridges (connectors, folders, bindings; edited on /bridges) ---------------
+
+
+def _bridges_open_link(view, context, model, name):
+    """Deep link into the /bridges page for this row."""
+    uid = getattr(model, "uuid", None)
+    if not uid:
+        return ""
+    return Markup(f'<a href="/bridges?id={escape(str(uid))}" target="_blank">Open</a>')
+
+
+def _bridge_connector_label(view, context, model, name):
+    cid = getattr(model, name)
+    if not cid:
+        return ""
+    full = str(cid)
+    short = Markup(f'<code title="{escape(full)}">{escape(full[:6])}</code>')
+    conn = db.session.query(BridgeConnector).filter_by(uuid=cid).first()
+    return Markup(f"{short}<br>{escape(conn.name)}") if conn else short
+
+
+class BridgeConnectorView(ModelView):
+    """Read-only: the credential is never here (only `token_env`, the
+    variable NAME); every write belongs on /bridges, whose API validates
+    addresses and policies, refuses deletes that would orphan rows, rewrites
+    the restart nonce, notifies the running bridge, and pushes the launcher.
+    An admin write would bypass all of that."""
+    can_create = can_edit = can_delete = False
+    column_list = (
+        "bridges_link", "position", "uuid", "name", "platform", "token_env", "launch_mode",
+        "enabled", "base_url", "identity", "policy", "restart_nonce", "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"bridges_link": "Bridges page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "restart_nonce": _fmt_short_uuid,
+        "bridges_link": _bridges_open_link,
+    }
+
+
+class BridgeFolderView(ModelView):
+    can_create = can_edit = can_delete = False   # writes go through /bridges (see BridgeConnectorView)
+    column_list = (
+        "bridges_link", "position", "uuid", "name", "connector_uuid", "parent_uuid",
+        "enabled", "policy", "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"bridges_link": "Bridges page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "parent_uuid": _fmt_short_uuid,
+        "connector_uuid": _bridge_connector_label,
+        "bridges_link": _bridges_open_link,
+    }
+
+
+class BridgeBindingView(ModelView):
+    can_create = can_edit = can_delete = False   # writes go through /bridges (see BridgeConnectorView)
+    column_list = (
+        "bridges_link", "position", "uuid", "connector_uuid", "folder_uuid", "room_uuid",
+        "address_key", "address", "enabled", "policy", "created_at", "updated_at",
+    )
+    column_default_sort = ("position", False)
+    column_labels = {"bridges_link": "Bridges page"}
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {
+        "uuid": _fmt_short_uuid,
+        "folder_uuid": _fmt_short_uuid,
+        "room_uuid": _fmt_short_uuid,
+        "connector_uuid": _bridge_connector_label,
+        "bridges_link": _bridges_open_link,
+    }
+
+
+class BridgeCredentialView(ModelView):
+    """Read-only, and only the row's metadata: the sealed bytes are not
+    listed (they are ciphertext, but nothing in the admin needs them), and
+    the value itself exists nowhere the admin could show."""
+    can_create = can_edit = can_delete = False
+    column_list = ("connector_uuid", "version", "updated_at")
+    column_type_formatters = CRON_TYPE_FORMATTERS
+    column_formatters = {"connector_uuid": _bridge_connector_label}
+
+
+admin.add_view(BridgeConnectorView(BridgeConnector, db, category="Bridges"))
+admin.add_view(BridgeCredentialView(BridgeCredential, db, category="Bridges"))
+admin.add_view(BridgeFolderView(BridgeFolder, db, category="Bridges"))
+admin.add_view(BridgeBindingView(BridgeBinding, db, category="Bridges"))
 
 
 # System prompt tables backing the /prompt page (folder tree + versioned

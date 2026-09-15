@@ -28,8 +28,11 @@ import threading
 from datetime import UTC, datetime
 from typing import Any
 
+import sqlalchemy as sa
+
 import db
 from services.definitions import (
+    BRIDGE_KEY_PREFIX,
     CORE_KEY,
     SCHEMA_VERSION,
     STATIC_SERVICES,
@@ -57,7 +60,18 @@ def _known_key(service_key: str) -> bool:
 def bump_restart_nonce(service_key: str) -> str:
     """Rewrite one service's (or the core's) restart nonce and push the new
     snapshot to the launcher, which restarts the process. Nothing executes
-    here."""
+    here. A `bridge:<uuid>` key rewrites the connector row's nonce instead
+    of a settings key."""
+    if service_key.startswith(BRIDGE_KEY_PREFIX):
+        from uuid import UUID
+        try:
+            connector_uuid = UUID(service_key[len(BRIDGE_KEY_PREFIX):])
+        except ValueError:
+            raise KeyError(service_key) from None
+        nonce = db.bridge_bump_connector_nonce(connector_uuid)
+        if nonce is None:
+            raise KeyError(service_key)
+        return nonce
     if not _known_key(service_key):
         raise KeyError(service_key)
     nonce = new_nonce()
@@ -66,11 +80,33 @@ def bump_restart_nonce(service_key: str) -> str:
     return nonce
 
 
+def bridges_autostart() -> bool:
+    return bool(db.get_setting(db.BRIDGES_AUTOSTART_KEY))
+
+
+def rainbox_url() -> str:
+    return f"http://127.0.0.1:{os.environ.get('RAINBOX_CORE_PORT', '5000')}"
+
+
 def set_service_setting(key: str, value: object) -> bool:
     """Write a `services.<key>.enabled` or `services.<key>.env.<VAR>` setting
     and, if the effective value changed, rewrite that service's nonce in the
     same transaction, then push the snapshot. Returns whether the nonce was
     bumped. KeyError for a key this function does not own."""
+    if key == db.BRIDGES_AUTOSTART_KEY:
+        # The global bridge launch gate: connectors whose gate flips off->on
+        # get a fresh nonce in the SAME transaction as the setting (rows
+        # locked in uuid order inside bridge_gate_transitions).
+        db.lock_setting_row(key)
+        before = bridges_autostart()
+        db.stage_setting(key, value)
+        db.session.flush()
+        after = bridges_autostart()
+        db.bridge_gate_transitions(before, after)
+        db.session.commit()
+        if after != before:
+            CHANNEL.push_desired()
+        return after != before
     service_key = _service_key_of(key)
     if service_key is None:
         raise KeyError(key)
@@ -102,14 +138,27 @@ def _service_key_of(setting_key: str) -> str | None:
 
 
 def owns_setting(setting_key: str) -> bool:
-    return _service_key_of(setting_key) is not None
+    return setting_key == db.BRIDGES_AUTOSTART_KEY or _service_key_of(setting_key) is not None
 
 
 def desired_snapshot() -> dict[str, Any]:
-    """What the launcher should be running, as one coherent snapshot from one
-    statement over the settings table. Includes disabled entries, never a
-    credential value, never a path or argv — the launcher resolves kinds
-    against its own copy of the catalogue. App context required."""
+    """What the launcher should be running, as one coherent snapshot: the
+    settings table, the connector rows, and their sealed credentials are all
+    read inside ONE REPEATABLE READ read-only transaction, so a concurrent
+    commit (an autostart flip racing a connector edit) can never mix an old
+    setting with new rows. Includes disabled entries, never a path or argv —
+    the launcher resolves kinds against its own copy of the catalogue. The
+    only place a credential value is ever serialized. App context required."""
+    db.session.rollback()  # the isolation level applies to a fresh transaction
+    conn = db.session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+    conn.execute(sa.text("SET TRANSACTION READ ONLY"))
+    try:
+        return _desired_snapshot_in_transaction()
+    finally:
+        db.session.rollback()
+
+
+def _desired_snapshot_in_transaction() -> dict[str, Any]:
     values = db.get_settings_snapshot("services.")
     services = []
     for svc in STATIC_SERVICES.values():
@@ -125,6 +174,10 @@ def desired_snapshot() -> dict[str, Any]:
             "restart_nonce": values.get(nonce_setting_key(svc.key)),
             "env": env,
         })
+    # Chat-bridge connectors ride along as dynamic entries (design:
+    # 2026-09-09-bridge-settings-design.md, "Supervised by the launcher").
+    services.extend(db.bridge_launcher_entries(
+        autostart=bool(values.get(db.BRIDGES_AUTOSTART_KEY)), rainbox_url=rainbox_url()))
     return {
         "type": "desired",
         "schema_version": SCHEMA_VERSION,
@@ -174,11 +227,13 @@ class LauncherStatus:
         """What /settings renders: managed?, and per-service observed state —
         `unknown` when unmanaged (no launcher on the channel) or for a service
         the launcher has not reported yet."""
-        keys = [CORE_KEY, *STATIC_SERVICES]
         with self._lock:
             payload = self._payload
             received_at = self._received_at
         reported = (payload or {}).get("services", {}) if managed else {}
+        # The core and the static kinds always appear; dynamic keys (bridge
+        # connectors, `bridge:<uuid>`) appear as the launcher reports them.
+        keys = [CORE_KEY, *STATIC_SERVICES, *sorted(k for k in reported if k.startswith(BRIDGE_KEY_PREFIX))]
         services: dict[str, Any] = {}
         for key in keys:
             rec = reported.get(key)
@@ -187,7 +242,7 @@ class LauncherStatus:
             else:
                 services[key] = {
                     k: rec.get(k) for k in
-                    ("state", "pid", "since", "last_exit", "message", "next_retry")
+                    ("state", "pid", "since", "last_exit", "message", "next_retry", "label", "credential_source")
                     if k in rec
                 }
         return {
@@ -206,7 +261,7 @@ class ControlChannel:
 
     def __init__(self) -> None:
         self._sock: socket.socket | None = None
-        self._send_lock = threading.Lock()
+        self._send_lock = threading.RLock()   # re-entrant: push_desired builds AND sends under it
         self._app: Any = None
         self._reader: threading.Thread | None = None
         self.status = LauncherStatus()
@@ -250,16 +305,20 @@ class ControlChannel:
         A send failure means the launcher is gone: detach, log once."""
         if self._sock is None:
             return
-        try:
-            if self._app is not None and not _has_app_context():
-                with self._app.app_context():
+        # Build and send under one lock: two concurrent pushes then reach the
+        # launcher in the order their snapshots were read, so the last line
+        # it sees is the newest state, never a stale read that lost the race.
+        with self._send_lock:
+            try:
+                if self._app is not None and not _has_app_context():
+                    with self._app.app_context():
+                        snapshot = desired_snapshot()
+                else:
                     snapshot = desired_snapshot()
-            else:
-                snapshot = desired_snapshot()
-        except Exception:
-            logger.exception("control: could not build the desired snapshot")
-            return
-        self._send(snapshot)
+            except Exception:
+                logger.exception("control: could not build the desired snapshot")
+                return
+            self._send(snapshot)
 
     def _send(self, message: dict[str, Any]) -> None:
         sock = self._sock

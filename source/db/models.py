@@ -10,7 +10,7 @@ from uuid import UUID, uuid4
 import sqlalchemy as sa
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from pgvector.sqlalchemy import Vector
@@ -1442,6 +1442,119 @@ class AppSetting(db.Model):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class BridgeConnector(db.Model):
+    """One chat-bridge bot identity on one platform (Discord, Telegram, …).
+    The credential never lives on this row: `token_env` is the NAME of the
+    variable the bridge process reads; the value is sealed in its own
+    `BridgeCredential` row (never serialized with the connector). Platform,
+    realm, identity, and token_env are fixed after creation; name, policy,
+    launch mode, and enabled are editable. `restart_nonce` is what a Restart
+    (or an off→on transition of the launch gate) rewrites so the launcher
+    restarts the process. Design: docs/superpowers/specs/2026-09-09-bridge-settings-design.md."""
+
+    __tablename__ = "bridge_connector"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    platform: Mapped[str] = mapped_column(Text)
+    base_url: Mapped[str | None] = mapped_column(Text, default=None)
+    identity: Mapped[str | None] = mapped_column(Text, default=None)
+    token_env: Mapped[str] = mapped_column(Text)
+    launch_mode: Mapped[str] = mapped_column(Text, default="launcher")  # "launcher" | "manual"
+    restart_nonce: Mapped[UUID] = mapped_column(default=uuid4)
+    enabled: Mapped[bool] = mapped_column(default=False)
+    policy: Mapped[dict] = mapped_column(JSONB, default=dict)
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class BridgeCredential(db.Model):
+    """The connector's credential, sealed (services/credential_box.py:
+    AES-256-GCM under a key derived from RAINBOX_CREDENTIAL_KEY and this
+    row's salt). One row per connector, deleted with it. No API returns the
+    value; the core opens it only to hand it to the launcher."""
+
+    __tablename__ = "bridge_credential"
+    connector_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("bridge_connector.uuid", ondelete="CASCADE"), primary_key=True)
+    version: Mapped[int] = mapped_column(default=1)
+    salt: Mapped[bytes] = mapped_column(LargeBinary)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC))
+
+
+class BridgeFolder(db.Model):
+    """Grouping under ONE connector (a Discord server, a purpose). Placement
+    (`parent_uuid`) is a plain column validated app-side, the house style;
+    ownership (`connector_uuid`) is a RESTRICT foreign key so a connector
+    with folders cannot be deleted by any path. Policy inherits down the
+    folder chain; `enabled` is an AND gate, not an inheritable value."""
+
+    __tablename__ = "bridge_folder"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    connector_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("bridge_connector.uuid", ondelete="RESTRICT"), index=True
+    )
+    parent_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = directly under the connector; plain col
+    name: Mapped[str] = mapped_column(Text, default="")
+    position: Mapped[int] = mapped_column(default=0)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    policy: Mapped[dict] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (Index("bridge_folder_children", "connector_uuid", "parent_uuid", "position"),)
+
+
+class BridgeBinding(db.Model):
+    """One remote conversation <-> one rainbox room, under one connector.
+    `address` is the platform-shaped JSON (a Zulip address is a stream AND a
+    topic, so this is never a scalar column); `address_key` is its canonical
+    routing text, unique per connector including disabled rows. `room_uuid`
+    is a RESTRICT foreign key: a bound room cannot be deleted until its
+    bindings are gone. Connector, room, and address are fixed after creation."""
+
+    __tablename__ = "bridge_binding"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    uuid: Mapped[UUID] = mapped_column(unique=True, default=uuid4)
+    connector_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("bridge_connector.uuid", ondelete="RESTRICT"), index=True
+    )
+    folder_uuid: Mapped[UUID | None] = mapped_column(default=None)  # null = directly under the connector; plain col
+    room_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("chatroom.uuid", ondelete="RESTRICT"), index=True
+    )
+    address: Mapped[dict] = mapped_column(JSONB, default=dict)
+    address_key: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[bool] = mapped_column(default=False)
+    policy: Mapped[dict] = mapped_column(JSONB, default=dict)
+    position: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    __table_args__ = (
+        UniqueConstraint("connector_uuid", "address_key", name="bridge_binding_address"),
+        Index("bridge_binding_placement", "connector_uuid", "folder_uuid", "position"),
     )
 
 

@@ -2,8 +2,14 @@
 
 **Date:** 2026-09-09
 
-**Status:** design note; none of the proposed tables, endpoints, or live reload
-behavior is implemented yet.
+**Status:** implemented for Discord (migration steps 1–3 below): the three
+tables plus `bridge_credential` and `db/bridges.py`, the `/bridges` page and
+API, the config endpoint and `bridge_config` event, the launcher's dynamic
+`bridge:<uuid>` entries with the sealed credential delivered over the control
+socket, the Discord bridge's connector mode
+(`discord_service/connector_bridge.py`) and `discord_service/import_legacy.py`.
+Telegram DB mode (step 4) and Zulip (step 5) are not implemented; those
+bridges keep their env modes.
 
 **Roadmap:** the [launcher](2026-09-10-launcher-design.md) is implemented
 (`source/main.py`, merged 2026-09-10) and this design resumes on top of it;
@@ -45,8 +51,20 @@ configuration.
 | Home | Rule | Examples |
 |---|---|---|
 | Environment: deployment | Needed before fetching configuration, or specific to the host/process | `RAINBOX_URL`, `BRIDGE_CONNECTOR`, state-file path |
-| Environment: credentials | Credential values never enter the bridge tables or config API | Discord/Telegram bot tokens, Zulip API key |
+| Postgres: credentials, encrypted | One row per connector in `bridge_credential`, sealed with a key that lives only in the core's environment; never returned by any API, never in a config snapshot; decrypted only to hand to the launcher | Discord/Telegram bot tokens, Zulip API key |
 | Postgres: operator settings | Validated edits take effect in the running bridge | Bindings, allowlists, direction, enabled flags, forwarding policy |
+
+The key is `RAINBOX_CREDENTIAL_KEY` in the repo-root `.env` (or the core's
+environment): a random string of at least 32 characters, generated once.
+Without it credentials cannot be saved; a database restored without it
+cannot decrypt them, and the connector pane says so and asks for the value
+again. This is the same split as the rest of the database: the health and
+contact facts in the operator's Q&A overlay are far more sensitive than a
+bot token and already live in Postgres under the encrypted backup, so the
+token is not kept out of the database for sensitivity. It is *sealed* so
+that a dump alone, or a generic reader of the tables, never yields a
+usable credential, and it is kept in its own table so no serializer of the
+connector row can carry it by accident.
 
 `DATABASE_URL` remains a **core** deployment setting. Bridges fetch configuration
 through HTTP and do not connect directly to Postgres. `BRIDGE_CONNECTOR` is
@@ -62,7 +80,9 @@ stored in the database is also present in the decrypted dump.
 
 `app_setting` is a registry of fixed keys. User-created connectors and bindings
 are collections of rows, like model configurations and cron jobs, so they need
-real tables rather than dynamically generated setting keys.
+real tables rather than dynamically generated setting keys. `set_setting`'s
+rule that secret-flagged *settings* are env-only still holds; bridge
+credentials are not settings but sealed rows in their own table.
 
 ## Data model
 
@@ -153,7 +173,13 @@ row lock for bridge-tree edits:
   even when application checks race. `RESTRICT` is not a deferred commit-time
   check: the statement can fail
   before commit. Catch failures from flush/execute as well as commit, roll back
-  the failed transaction, and query current blockers in a new transaction
+  the failed transaction, and query current blockers in a new transaction.
+  The unique connector name is handled the same way: a tree save that renames
+  a connector to a name another one holds is a 409 the page explains, never
+  a 500. The admin panel's views of the three tables and of
+  `bridge_credential` are read-only — create, edit, and delete disabled —
+  because every write must pass through the API's validation, blockers,
+  restart nonce, `bridge_config` notify, and launcher push
   before returning HTTP 409. See [PostgreSQL foreign-key constraints](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-FK).
 - **Plain uuid columns with a version token for placement.** `folder_uuid`
   and `parent_uuid` stay plain columns validated app-side, the cron/chat
@@ -230,7 +256,7 @@ The UI shows the effective value and which level supplied it.
 |---|---|
 | `allowed_senders` | `[]`: deny all inbound. A list of platform user-ID strings, not usernames or rainbox UUIDs. A child can replace its parent's list; the UI must show this clearly. |
 | `forward_kinds` | Discord: `["message","notice","progress"]`; Telegram: `["message"]`. Only supported agent row kinds can be forwarded; human, thinking, and debug rows remain excluded. |
-| `poll_seconds` | Discord: `2`; finite number in `[0.5, 300]`. Controls channel polling, not config refresh. Reject for adapters that do not use per-binding polling. |
+| `poll_seconds` | Discord: `2`; finite number in `[0.5, 300]`. Controls channel polling, not config refresh. Reject for adapters that do not use per-binding polling. Each binding is polled on its own schedule: a deadline of last poll + interval (a per-binding backoff after a failed poll); a changed interval re-anchors the deadline on the last poll, so a shorter one may be due at once and a longer one never causes an extra poll; the scheduler sleeps until the earliest deadline or a published snapshot, and its state survives the stale interval every refresh passes through — it is pruned only when a fresh snapshot shows the binding gone or inactive. |
 | `mirror_progress` | Discord: `true`; edits one remote bubble per progress row. When false, sends each supported progress update separately. Unsupported by the current Telegram adapter. Ignored when `progress` is excluded. |
 | `direction` | `both`; accepted values `both`, `in`, `out`, relative to rainbox. |
 
@@ -271,7 +297,8 @@ The `/bridges` tree gives each connector the same **Copy ID** kebab item the
 chat and cron trees have. The detail panel also offers a copyable launch command
 for the connector's platform, labeled with its required working directory
 (`source/discord_service/` or `source/telegram_service/` on the bridge host).
-Include `BRIDGE_CONNECTOR` and a distinct state-file path derived from its UUID,
+Include `RAINBOX_URL` as the address this core actually listens on
+(`RAINBOX_CORE_PORT` honoured; the tree GET carries it), `BRIDGE_CONNECTOR`, and a distinct state-file path derived from its UUID,
 using the platform's existing state-file variable. On the launcher's host use
 its reported absolute state directory, so manual and supervised runs use the
 same `bridge-<uuid>.json` and lock. If the host/path is unknown, require an explicit
@@ -286,29 +313,43 @@ assignment that would overwrite it. Validate `token_env` as an environment
 variable name (`[A-Za-z_][A-Za-z0-9_]*`), reject reserved bridge/deployment names
 such as `BRIDGE_CONNECTOR`, `RAINBOX_URL`, and state-file variables, and shell-quote
 generated argument values. Connector display names never become shell syntax.
-`token_env` stores only the name of its credential variable, such as
-`DISCORD_TOKEN_MAINBOT`; it never stores a value.
+`token_env` stores only the name of the variable the bridge process reads,
+such as `DISCORD_TOKEN_MAINBOT`; the connector row never holds a value.
 
-The process reads that variable locally. Empty/missing credentials prevent
-activation and produce a redacted error. Rotation under the same variable name
-requires restarting only that connector. A replacement token must authenticate
-as the same bot; verify and retain the authenticated bot identity in local state
-so a different bot cannot inherit the previous bot's checkpoints.
+The value is set on the connector pane (a write-only field: saving replaces
+it, nothing ever displays it); it must be one printable line — a NUL or
+control character is refused at the API and again by the launcher's
+snapshot validator, since no such value could enter a child's environment,
+and a spawn the OS still refuses fails that one entry, never the launcher.
+It is stored in `bridge_credential`: AES-256-GCM
+over the value, under a key derived (HKDF-SHA256) from
+`RAINBOX_CREDENTIAL_KEY` and a random per-row salt, with a random per-row
+nonce; the row is deleted with its connector. `GET` of a connector reports
+only `credential: {set, updated_at}` and whether the key is configured.
+Saving a value while the launch gate is on rewrites the restart nonce, so
+rotation is: paste the new token, done — the launcher restarts only that
+connector with it.
 
-The bridges do **not** load `.env`. Under supervision the launcher supplies the
-credential at every spawn from its private `<state-dir>/credentials.env`
-first, and only for a name the file does not set, from its own startup
-environment — so editing the file and pressing Restart rotates the token
-without restarting the launcher. Manual runs receive credentials from their
-launch environment. The [launcher design's
+The process reads its variable locally. Empty/missing credentials prevent
+activation and produce a redacted error. A replacement token must
+authenticate as the same bot; verify and retain the authenticated bot
+identity in local state so a different bot cannot inherit the previous
+bot's checkpoints.
+
+The bridges do **not** load `.env`. Under supervision the core decrypts the
+row only while building the launcher's desired snapshot and sends it over
+the control socketpair as the entry's `credential`; the launcher injects it
+under `token_env` at every spawn and falls back to its own startup
+environment when the snapshot carries none. The launcher never persists it
+and never puts it in its status table or logs. Manual runs receive the
+credential from their launch environment. The [launcher design's
 environment contract](2026-09-10-launcher-design.md#environment-and-credential-ownership)
 is the authority; do not add a second bridge-side dotenv loader.
 
-Only the selected credential is passed to a supervised bridge. This does not
-mean the core can never see it: credentials exported to the launcher can reach
-the core, and the core's existing `source/env_file.py` loads all keys from the
-repo-root `.env`. Use the private launcher credentials file to keep bridge-only
-values out of the core's environment. Environment filtering is not an OS sandbox.
+Only the selected credential is passed to a supervised bridge. The core
+holds each value in memory only for the duration of one snapshot build;
+environment filtering is not an OS sandbox, and the unauthenticated
+localhost core API can *write* a credential (PUT), never read one.
 
 Keeping credential values out of JSON does not make configuration harmless.
 The core API is currently unauthenticated and bound to localhost; connector
@@ -558,8 +599,16 @@ enabled on stale policy. Never restore freshness from a timestamp in the
 state file. This bounds stale allowlist/enablement use to the interval
 between a change and the event's delivery, which is the NOTIFY round trip;
 it does not promise revocation while the stream is down, because nothing is
-delivered then. Readiness/status must distinguish disabled, stale
-configuration, invalid configuration, and transport failure. SSE reconnect
+delivered then. A fetch made while the stream is closed is kept as the
+latest known data but never marked fresh (and none is requested while
+closed); only the reconnect's fetch restores freshness. Workers read policy
+from the current snapshot per message and per row, not from a binding
+captured when a poll began, so a sender revoked mid-poll is dropped on the
+very next message. A binding whose activation failed transiently (the
+high-water-mark reads) is retried by re-applying the current snapshot with
+capped backoff; no configuration change is needed. Readiness/status must
+distinguish disabled, stale configuration, invalid configuration, and
+transport failure. SSE reconnect
 still triggers catch-up from persisted cursors.
 
 Delete-and-create may happen between two config fetches: the bridge can observe

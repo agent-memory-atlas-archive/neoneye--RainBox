@@ -251,3 +251,41 @@ def test_unreadable_stored_override_reads_as_unset_and_can_be_repaired(client):
         assert registry.set_service_setting(key, 8) is True
         assert db.get_setting(key) == 8
         assert db.get_setting(nonce_setting_key("reranker")) != nonce_before
+
+
+def test_status_view_carries_reported_bridge_keys_only_while_reported(client, managed):
+    """Dynamic keys (bridge:<uuid>) are not in the static catalogue; the view
+    lists them exactly as long as the launcher reports them."""
+    cu = "0f7a1b2c-3d4e-4f50-8a9b-0c1d2e3f4a5b"
+    key = f"bridge:{cu}"
+    first = _status(1, core="running")
+    first["services"][key] = {"state": "credential missing", "label": "Main Bot",
+                              "message": "no credential stored for this connector and BOT_TOKEN is not in the environment"}
+    first["services"]["rogue"] = {"state": "running"}  # an unknown static-looking key never surfaces
+    managed.send(first)
+    view = _wait_status(lambda v: key in v["services"])
+    assert view["services"][key]["state"] == "credential missing"
+    assert view["services"][key]["label"] == "Main Bot" and "rogue" not in view["services"]
+    api = client.get("/services/api/status").get_json()["services"]
+    assert api[key]["label"] == "Main Bot"
+    managed.send(_status(2, core="running"))  # the connector row was removed
+    view = _wait_status(lambda v: key not in v["services"])
+    assert set(view["services"]) == {"core", *STATIC_SERVICES}
+
+
+def test_desired_snapshot_is_read_in_one_repeatable_read_transaction(client, monkeypatch):
+    """Settings, connector rows, and credentials must come from one
+    REPEATABLE READ read-only transaction (a racing autostart flip cannot
+    pair with newer rows), and the session is left clean afterwards."""
+    import sqlalchemy as sa
+    seen = {}
+    real = db.bridge_launcher_entries
+
+    def spy(**kw):
+        seen["isolation"] = db.session.execute(sa.text("SHOW transaction_isolation")).scalar_one()
+        seen["read_only"] = db.session.execute(sa.text("SHOW transaction_read_only")).scalar_one()
+        return real(**kw)
+    monkeypatch.setattr(db, "bridge_launcher_entries", spy)
+    registry.desired_snapshot()
+    assert seen == {"isolation": "repeatable read", "read_only": "on"}
+    assert db.session.execute(sa.text("SHOW transaction_isolation")).scalar_one() != "repeatable read"  # ended

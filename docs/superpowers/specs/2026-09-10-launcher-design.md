@@ -10,9 +10,10 @@ core can run beside the operator's for a smoke test; and the control channel
 between launcher and core is a socketpair (`core.py --control-fd N`), not
 HTTP — see *Bootstrap and the control channel*.
 
-**Roadmap:** ship the core and static services first, then add dynamic bridge
-entries from the [bridge settings design](2026-09-09-bridge-settings-design.md).
-Bridges continue to start manually until that second phase is ready.
+**Dynamic entries:** besides the static catalogue, the snapshot carries one
+`bridge:<connector-uuid>` entry per chat-bridge connector row, from the
+[bridge settings design](2026-09-09-bridge-settings-design.md); the launcher
+creates and forgets those records as they come and go.
 
 ## Decision and current behavior
 
@@ -119,34 +120,20 @@ loader-injection variables, database URLs, or arbitrary parent variables through
 this service path. Additional model-cache/proxy settings require catalogue
 entries; the UI must not accept arbitrary environment maps.
 
-For supervised bridges, use `<state-dir>/credentials.env`, an owner-readable
-file read only by the launcher. It is optional for the static-services phase;
-a missing file matters only when a requested credential is unavailable.
-The launcher parses a deliberately limited format:
-
-- One `NAME=value` per line; names match `[A-Za-z_][A-Za-z0-9_]*`.
-- Blank lines and lines whose first non-whitespace character is `#` are ignored.
-- Strip whitespace around the name and value; one matching pair of single or
-  double quotes may surround the value. Characters inside quotes are literal.
-- No interpolation, escapes, multiline values, `export`, or inline comments.
-  An unquoted `#` is part of the value. Reject malformed quoting and duplicate
-  names with a line-number error, never echo the line's contents.
-
-At **every spawn**, resolve a credential from the freshly parsed credentials
-file first, and only if the file does not set that name, from the launcher's
-startup environment. The file is the operator's source of truth for service
-credentials, so editing it and pressing Restart takes effect even when the
-same name was exported when the launcher booted — silently ignoring a file
-edit because of a variable set days ago would be the astonishing behavior.
-An empty value is unset at either level. Show the selected source
-(file/environment) without its value. Because the file is read at every
-spawn, a writer must replace it atomically — write `credentials.env.tmp`,
-then `os.replace()` — so a Restart that coincides with a save never reads a
-truncated file; editors that truncate-then-write are an accepted risk for a
-hand-edited file, and any UI that writes it must use the atomic form. Changing an exported value that the
-file does not override requires restarting the launcher. Running children keep their
-current environment. Invalid file syntax prevents file-backed spawns, not the
-core or already-running services. Neither source is copied into DB, argv, status,
+For supervised bridges the credential arrives **in the desired snapshot**:
+the core stores each connector's token sealed in Postgres
+(`bridge_credential`, see the bridge design's *Credentials and process
+identity*), decrypts it only while building the snapshot, and sends it over
+the control socketpair as the entry's `credential` (a string, or null when
+none is stored). The launcher keeps it in memory on the process record,
+injects it under the entry's `token_env` at every spawn, and falls back to
+its own startup environment for a null. It never writes it anywhere: not
+to the state directory, not to the status table, not to a log line
+(snapshot rejections name the field, never the value). Changing an
+exported fallback value requires restarting the launcher; a stored value
+takes effect at the connector's next spawn, which saving it triggers.
+Show the selected source (database/environment) without its value.
+Running children keep their current environment. Neither source is copied into DB, argv, status,
 or the desired-state API. A child may still deliberately read local files:
 environment filtering is not an OS sandbox.
 
@@ -209,8 +196,11 @@ One JSON line from the core, pushed at startup and on every change:
 }
 ```
 
-A snapshot is complete and coherent — it comes from one statement over the
-settings table — and includes **disabled** entries. Missing static entries
+A snapshot is complete and coherent — the settings table, the bridge
+connector rows, and their sealed credentials are read in one REPEATABLE READ
+read-only transaction, and the core builds and sends it under one lock so
+concurrent pushes arrive in the order they were read — and includes
+**disabled** entries. Missing static entries
 invalidate it. A missing dynamic bridge key in a valid snapshot means removal.
 Validate the whole line before reconciling any part of it; unknown kinds
 invalidate it and report that launcher/core versions disagree.
@@ -219,14 +209,23 @@ The local data-only catalogue fixes each kind's directory, argv, allowed
 nonsecret environment keys, and defaults. The core imports the same catalogue
 to build its registry and settings. The channel cannot provide arbitrary paths, argv,
 or new executable kinds. A service key identifies one process; static keys
-match their kind, and future bridge keys are `bridge:<connector-uuid>`.
+match their kind, and bridge keys are `bridge:<connector-uuid>`.
 
-The later bridge extension permits `token_env` and `state_file: {env, name}`
-only for registered bridge kinds. Validate the credential name, the catalogue's
-state-variable name, and the UUID-derived basename, then join it under the
-canonical state directory. Reject path traversal and collisions with explicit
-`env` values. Static services reject these extra fields. The bridge spec defines
-the exact entry; both readers use this same envelope and validation rules.
+Kinds marked `dynamic` in the catalogue (`discord_bridge`, `telegram_bridge`)
+are instantiated only under such keys, and their entries additionally carry
+`label`, `token_env`, and `state_file: {env, name}`. The launcher validates
+the credential name, that the state variable is the catalogue's
+`state_file_env`, that the basename is exactly `bridge-<uuid>.json`, that
+`env.BRIDGE_CONNECTOR` equals the key's uuid, and that `env` carries neither
+the state-file nor the credential variable; static services reject these
+fields. The state file is joined under the launcher's state directory. The
+credential comes with the entry (`credential`, sealed in the database and
+decrypted by the core for the snapshot) or, failing that, from the
+launcher's own environment under `token_env`; when neither has it the
+record reports `credential missing` naming the variable, and a later
+Restart (nonce change) or a saved credential retries. The label prefixes the child's output lines
+and rides the status table. A dynamic record whose key is absent from a valid
+snapshot is stopped, then dropped from the status table.
 
 `source/db/settings.py` registers `services.<key>.enabled` (default false) and
 internal persisted `services.<key>.restart_nonce` for static services, plus
