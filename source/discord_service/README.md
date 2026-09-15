@@ -55,9 +55,8 @@ input at all (see *Troubleshooting* below).
 
 ## Connector mode
 
-1. On `/bridges`: **+ Connector** (platform Discord, a credential variable
-   NAME such as `DISCORD_TOKEN_MAINBOT`; it is named `Discord`, then
-   `Discord 2`, … — rename it from its menu), then **+ Binding** per chatroom ↔
+1. On `/bridges`: **+ Connector** (platform Discord; it is named `Discord`,
+   then `Discord 2`, … — rename it from its menu), then **+ Binding** per chatroom ↔
    channel pair (channel id from Discord's *Copy Channel ID*). Set
    `allowed_senders` (numeric user ids) on the connector, a folder, or the
    binding — the nearest level wins; enable the binding and the connector.
@@ -89,7 +88,7 @@ A refresh (event or reconnect) never causes an extra poll.
 | Env var (connector mode) | Required | Meaning |
 |---|---|---|
 | `BRIDGE_CONNECTOR` | yes | the connector's uuid (selects this mode) |
-| *the connector's `token_env`* | yes | the bot token, under whatever NAME the row says; read from this process's environment only (the launcher sets it from the sealed value saved on /bridges; a manual run exports it) |
+| `DISCORD_BOT_TOKEN` (the connector's `token_env`) | yes | the bot token; read from this process's environment only (the launcher sets it from the sealed value saved on /bridges; a manual run exports it) |
 | `RAINBOX_URL` | no (`http://127.0.0.1:5000`) | core webapp base URL |
 | `DISCORD_STATE_FILE` | no (`./bridge-<uuid>.json`) | per-connector state (schema 2): bot identity, per-binding cursors and progress maps; the launcher sets `<state-dir>/bridge-<uuid>.json` |
 

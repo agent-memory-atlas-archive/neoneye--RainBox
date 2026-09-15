@@ -65,6 +65,10 @@ class Adapter:
     kind: str                       # launcher service kind, e.g. "discord_bridge"
     label: str
     state_file_env: str
+    # The environment variable the bridge process reads its token from. A
+    # platform constant: the launcher injects the sealed value under it at
+    # every spawn, so the operator never has to know or choose the name.
+    token_env: str
     available: bool                 # has a bridge implementation in this repo
     requires_base_url: bool
     requires_identity: bool
@@ -207,7 +211,7 @@ def _common_policy(forward_default: list[str], poll_supported: bool, mirror_supp
 ADAPTERS: dict[str, Adapter] = {
     "discord": Adapter(
         platform="discord", kind="discord_bridge", label="Discord",
-        state_file_env="DISCORD_STATE_FILE", available=True,
+        state_file_env="DISCORD_STATE_FILE", token_env="DISCORD_BOT_TOKEN", available=True,
         requires_base_url=False, requires_identity=False,
         address_fields=(AddressField("channel_id", "snowflake"),
                         AddressField("guild_id", "snowflake", required=False, routing=False)),
@@ -217,14 +221,14 @@ ADAPTERS: dict[str, Adapter] = {
         platform="telegram", kind="telegram_bridge", label="Telegram",
         # The Telegram bridge still reads only its legacy environment; until
         # it gains a connector mode a connector for it could never start.
-        state_file_env="TELEGRAM_STATE_FILE", available=False,
+        state_file_env="TELEGRAM_STATE_FILE", token_env="TELEGRAM_BOT_TOKEN", available=False,
         requires_base_url=False, requires_identity=False,
         address_fields=(AddressField("chat_id", "signed_int"),),
         policy_keys=_common_policy(["message"], False, False),
     ),
     "zulip": Adapter(
         platform="zulip", kind="zulip_bridge", label="Zulip",
-        state_file_env="ZULIP_STATE_FILE", available=False,
+        state_file_env="ZULIP_STATE_FILE", token_env="ZULIP_API_KEY", available=False,
         requires_base_url=True, requires_identity=True,
         address_fields=(AddressField("stream_id", "snowflake"), AddressField("topic", "text")),
         policy_keys=_common_policy(["message", "notice", "progress"], False, True),

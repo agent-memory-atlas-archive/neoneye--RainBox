@@ -369,7 +369,9 @@ def _validate_connector_fields(platform: str, token_env: Any, base_url: Any, ide
     adapter = adapter_for(platform)
     if not adapter.available:
         raise AdapterError(f"{adapter.label} has no bridge implementation yet")
-    token = validate_token_env(token_env)
+    # The platform's own variable unless a caller (the legacy import, a
+    # script) names another; the create dialog sends none.
+    token = adapter.token_env if token_env in (None, "") else validate_token_env(token_env)
     url = None
     if adapter.requires_base_url:
         url = validate_base_url(base_url)

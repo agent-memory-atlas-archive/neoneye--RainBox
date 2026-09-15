@@ -278,3 +278,15 @@ def test_create_without_a_name_uses_the_platform_name(client):
     assert c.post("/bridges/api/connectors", json={"name": 5, "platform": "discord", "token_env": "X"}).status_code == 400
     r = c.put(f"/bridges/api/connectors/{a['uuid']}", json={"name": f"Main Bot {a['uuid'][:4]}"})
     assert r.status_code == 200 and r.get_json()["connector"]["name"].startswith("Main Bot")
+
+
+def test_create_with_platform_alone(client):
+    """The dialog sends only the platform: name and credential variable are
+    the server's business."""
+    c, made = client
+    r = c.post("/bridges/api/connectors", json={"platform": "discord"})
+    assert r.status_code == 201, r.get_json()
+    row = r.get_json()["connector"]
+    made["connectors"].append(UUID(row["uuid"]))
+    assert row["token_env"] == "DISCORD_BOT_TOKEN"
+    assert row["name"].startswith("Discord")

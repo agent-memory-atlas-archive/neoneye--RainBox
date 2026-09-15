@@ -88,5 +88,6 @@ def test_admin_views_for_bridge_rows_are_read_only():
 def test_new_connector_modal_has_no_name_field():
     body = _body()
     assert "br-conn-name" not in body
+    assert "br-conn-token-env" not in body            # the variable is the platform's, not the operator's
     assert "named after its platform" in body
     assert "Name is required" not in body

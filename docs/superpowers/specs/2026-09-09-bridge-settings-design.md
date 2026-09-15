@@ -313,8 +313,12 @@ assignment that would overwrite it. Validate `token_env` as an environment
 variable name (`[A-Za-z_][A-Za-z0-9_]*`), reject reserved bridge/deployment names
 such as `BRIDGE_CONNECTOR`, `RAINBOX_URL`, and state-file variables, and shell-quote
 generated argument values. Connector display names never become shell syntax.
-`token_env` stores only the name of the variable the bridge process reads,
-such as `DISCORD_TOKEN_MAINBOT`; the connector row never holds a value.
+`token_env` stores only the name of the variable the bridge process reads.
+It is the platform's constant (`DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`,
+`ZULIP_API_KEY`, from the adapter), so the create dialog asks for the
+platform alone and the operator never sees a variable name; the API still
+accepts an explicit `token_env` for scripted callers. The connector row never
+holds a value.
 
 The value is set on the connector pane (a write-only field: saving replaces
 it, nothing ever displays it); it must be one printable line — a NUL or
@@ -420,7 +424,7 @@ key from a complete desired snapshot.
     "RAINBOX_URL": "http://127.0.0.1:5000",
     "BRIDGE_CONNECTOR": "<connector-uuid>"
   },
-  "token_env": "DISCORD_TOKEN_MAINBOT",
+  "token_env": "DISCORD_BOT_TOKEN",
   "state_file": {
     "env": "DISCORD_STATE_FILE",
     "name": "bridge-<connector-uuid>.json"

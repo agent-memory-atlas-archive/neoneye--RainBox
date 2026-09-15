@@ -385,3 +385,26 @@ def test_connector_without_a_name_is_named_after_its_platform_with_a_free_number
     with pytest.raises(db.AdapterError):
         db.bridge_create_connector(12, "discord", "DISCORD_TOKEN_TEST")
     assert db.default_connector_name("Never Used Label") == "Never Used Label"
+
+
+def test_connector_token_variable_defaults_to_the_platforms(cleanup):
+    """No token_env → the adapter's fixed name (the operator never picks one);
+    an explicit one is still honoured for scripted callers."""
+    from uuid import UUID
+    c = db.bridge_create_connector(None, "discord", None)
+    cleanup["connectors"].append(UUID(c["uuid"]))
+    assert c["token_env"] == "DISCORD_BOT_TOKEN"
+    d = db.bridge_create_connector(None, "discord", "")
+    cleanup["connectors"].append(UUID(d["uuid"]))
+    assert d["token_env"] == "DISCORD_BOT_TOKEN"
+    e = db.bridge_create_connector(None, "discord", "MY_OWN_NAME")
+    cleanup["connectors"].append(UUID(e["uuid"]))
+    assert e["token_env"] == "MY_OWN_NAME"
+
+
+def test_every_adapter_names_a_distinct_valid_token_variable():
+    from services import bridge_adapters as ba
+    names = [a.token_env for a in ba.ADAPTERS.values()]
+    assert len(set(names)) == len(names)
+    for n in names:
+        assert ba.validate_token_env(n) == n

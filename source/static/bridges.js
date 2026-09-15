@@ -199,7 +199,7 @@ function brRenderContents(){
     const tr = document.createElement('tr');
     const n = item.node;
     let type = '', details = '', id = '';
-    if (item.kind === 'connector'){ type = 'Connector'; details = brEscapeHtml(brPlatformOf(n.uuid).label) + ' · <code>' + brEscapeHtml(n.token_env) + '</code>' + (n.launch_mode === 'manual' ? ' · manual' : ''); id = n.uuid; }
+    if (item.kind === 'connector'){ type = 'Connector'; details = brEscapeHtml(brPlatformOf(n.uuid).label) + (n.launch_mode === 'manual' ? ' · manual' : ''); id = n.uuid; }
     else if (item.kind === 'folder'){ type = 'Folder'; id = n.id; }
     else { type = 'Binding'; details = 'room <b>' + brEscapeHtml(n.roomName || '(missing)') + '</b> · <code>' + brEscapeHtml(n.addressKey) + '</code>'; id = n.uuid; }
     tr.innerHTML =
@@ -298,7 +298,6 @@ function brRenderDetail(){
     html +=
       '<dl class="br-kv">' +
       '<dt>Platform</dt><dd>' + brEscapeHtml(plat.label) + (plat.available === false ? ' <span class="br-warn">(no bridge implementation yet)</span>' : '') + '</dd>' +
-      '<dt>Credential variable</dt><dd><code>' + brEscapeHtml(n.token_env) + '</code> <span class="muted">what the bridge process reads; the launcher fills it from the sealed value below</span></dd>' +
       '<dt>Token</dt><dd id="br-cred"><span class="muted">checking…</span></dd>' +
       (n.base_url ? '<dt>Realm URL</dt><dd><code>' + brEscapeHtml(n.base_url) + '</code></dd>' : '') +
       (n.identity ? '<dt>Identity</dt><dd>' + brEscapeHtml(n.identity) + '</dd>' : '') +
@@ -411,7 +410,7 @@ function brOpenCredentialModal(uuid){
   if (!c) return;
   brCredentialUuid = uuid;
   document.getElementById('br-credential-title').textContent = (brCredential[uuid] && brCredential[uuid].set ? 'Replace token for ' : 'Set token for ') + c.name;
-  document.getElementById('br-credential-desc').textContent = 'The bridge process will read it as ' + c.token_env + '.';
+  document.getElementById('br-credential-desc').textContent = 'Stored sealed; the launcher hands it to the bridge process at every start and never shows it again.';
   const input = document.getElementById('br-credential-input');
   input.value = '';
   document.getElementById('br-credential-err').textContent = '';
@@ -449,7 +448,7 @@ function brConfirmClearCredential(uuid){
   const c = brConnectorByUuid(uuid);
   if (!c) return;
   brOpenDeleteModal({title: 'Clear token',
-    message: 'Forget the stored token for "' + c.name + '"? A running process keeps going until its next restart; after that the launcher reports "credential missing" unless ' + c.token_env + ' is in its environment.',
+    message: 'Forget the stored token for "' + c.name + '"? A running process keeps going until its next restart; after that the launcher reports "credential missing".',
     onConfirm: async () => {
       try {
         const r = await fetch('/bridges/api/connectors/' + encodeURIComponent(uuid) + '/credential', {method: 'DELETE'});
@@ -655,7 +654,7 @@ function brConnectorLi(c){
   const node = document.createElement('a');
   node.className = 'br-node br-connector' + (brIsSel('connector', c.uuid) ? ' sel' : '') + (c.enabled ? '' : ' br-off');
   node.href = '/bridges?id=' + encodeURIComponent(c.uuid);
-  node.title = brPlatformOf(c.uuid).label + ' · ' + c.token_env;
+  node.title = brPlatformOf(c.uuid).label;
   const icon = document.createElement('span'); icon.className = 'br-ficon'; icon.innerHTML = BR_ICON_PLUG;
   const label = document.createElement('span'); label.className = 'br-folder-label'; label.textContent = c.name;
   node.appendChild(icon); node.appendChild(label);
@@ -815,14 +814,13 @@ function brAddConnector(){
     const meta = brPlatforms[p];
     return '<option value="' + brEscapeHtml(p) + '"' + (meta.available ? '' : ' disabled') + '>' + brEscapeHtml(meta.label) + (meta.available ? '' : ' (no bridge yet)') + '</option>';
   }).join('');
-  document.getElementById('br-conn-token-env').value = '';
   document.getElementById('br-conn-base-url').value = '';
   document.getElementById('br-conn-identity').value = '';
   document.getElementById('br-conn-err').textContent = '';
   brSyncConnectorFields();
   document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('br-connector-modal').hidden = false;
-  document.getElementById('br-conn-token-env').focus();
+  document.getElementById('br-conn-platform').focus();
 }
 function brSyncConnectorFields(){
   const meta = brPlatforms[document.getElementById('br-conn-platform').value] || {};
@@ -836,13 +834,11 @@ function brCloseConnectorModal(){
 async function brAddConnectorConfirm(){
   const err = document.getElementById('br-conn-err');
   err.textContent = '';
-  // No name: the server names it after the platform ("Discord", then
-  // "Discord 2"); Rename in the tree's kebab menu covers the rest.
-  const body = {
-    platform: document.getElementById('br-conn-platform').value,
-    token_env: document.getElementById('br-conn-token-env').value.trim(),
-  };
-  if (!body.token_env){ err.textContent = 'The credential variable name is required.'; return; }
+  // Neither a name nor a credential variable: the server names it after the
+  // platform ("Discord", then "Discord 2") and the bridge reads its token from
+  // the platform's fixed variable. Rename lives in the tree's kebab menu; the
+  // token is pasted on the pane.
+  const body = { platform: document.getElementById('br-conn-platform').value };
   const meta = brPlatforms[body.platform] || {};
   if (meta.requires_base_url) body.base_url = document.getElementById('br-conn-base-url').value.trim();
   if (meta.requires_identity) body.identity = document.getElementById('br-conn-identity').value.trim();
@@ -1411,7 +1407,7 @@ function brSavePush(){
 // ---- dirty-guarded dismissal (clicking backdrop / Esc) ----
 function brOpenModalDirty(){
   const v = id => document.getElementById(id).value.trim();
-  if (!document.getElementById('br-connector-modal').hidden) return v('br-conn-token-env') !== '';
+  if (!document.getElementById('br-connector-modal').hidden) return v('br-conn-base-url') !== '' || v('br-conn-identity') !== '';
   if (!document.getElementById('br-folder-modal').hidden) return v('br-folder-input') !== '';
   if (!document.getElementById('br-credential-modal').hidden) return v('br-credential-input') !== '';
   if (!document.getElementById('br-binding-modal').hidden)
@@ -1452,7 +1448,7 @@ document.getElementById('br-credential-input').addEventListener('input', () => {
 document.getElementById('br-credential-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !document.getElementById('br-credential-save').disabled){ e.preventDefault(); brSaveCredential(); }
 });
-document.getElementById('br-conn-token-env').addEventListener('keydown', e => {
+document.getElementById('br-conn-platform').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); brAddConnectorConfirm(); }
 });
 document.getElementById('br-policy-inherit').addEventListener('change', brSyncPolicyControl);

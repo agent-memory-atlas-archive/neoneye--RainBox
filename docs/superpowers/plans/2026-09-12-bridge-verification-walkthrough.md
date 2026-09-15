@@ -11,7 +11,7 @@ not match and read *Troubleshooting* at the end.
 
 1. Add `RAINBOX_CREDENTIAL_KEY` to `.env` (once), start `main.py`, check
    `/settings` says *managed*.
-2. `/bridges` → **+ Connector** (Discord, variable name `DISCORD_TOKEN_MAINBOT`).
+2. `/bridges` → **+ Connector** (Discord).
 3. **Set token…** on the pane, paste the bot token.
 4. Tick **Enabled** → pane says `running`, terminal shows `[Main Bot]` lines.
 5. **+ Binding** (room + channel id), set `allowed_senders` to your user id,
@@ -79,15 +79,14 @@ the core has the key (Phase C would otherwise show a warning).
 Open http://127.0.0.1:5000/bridges. Click **+ Connector**:
 
 - Platform: Discord (Telegram and Zulip are listed but greyed out — their
-  bridges have no connector mode yet)
-- Credential variable name: `DISCORD_TOKEN_MAINBOT`
+  bridges have no connector mode yet). That is the whole dialog.
 
 Click Create. The connector appears in the left tree as `Discord` (a
 second one would be `Discord 2`) and its pane opens. Rename it to `Main Bot`
 — kebab menu on the tree row → Rename — so the `[Main Bot]` log lines quoted
 below match. Expect:
 
-- *Credential variable* `DISCORD_TOKEN_MAINBOT`, and a *Token* row saying `not set`.
+- A *Token* row saying `not set`.
 - *Desired state*: Enabled unchecked; Launch mode *launcher*.
 - *Process*: `unknown` (the launcher has never been asked to run it).
 - The **Manual launch command** section shows the launcher's state directory
@@ -203,7 +202,7 @@ is never restarted for a policy change.
    (nothing is replayed).
 2. Press **Replace token…**, paste `wrong`, Save. The connector restarts by
    itself (saving a token rewrites its restart nonce). Expect
-   `discord rejected the credential in DISCORD_TOKEN_MAINBOT` in the log, the
+   `discord rejected the credential in DISCORD_BOT_TOKEN` in the log, the
    pill `failed` with `exit 2`, and **no** respawn loop (exit 2 means "fix
    the config", so the launcher waits for you).
 3. **Replace token…** again with the real one. Running again, no Restart
