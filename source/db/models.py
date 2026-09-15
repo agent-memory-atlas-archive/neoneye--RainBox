@@ -1452,10 +1452,11 @@ class AppSetting(db.Model):
 
 class BridgeConnector(db.Model):
     """One chat-bridge bot identity on one platform (Discord, Telegram, …).
-    The credential never lives on this row: `token_env` is the NAME of the
-    variable the bridge process reads; the value is sealed in its own
-    `BridgeCredential` row (never serialized with the connector). Platform,
-    realm, identity, and token_env are fixed after creation; name, policy,
+    The credential never lives on this row: the value is sealed in its own
+    `BridgeCredential` row (never serialized with the connector), and the
+    variable the bridge process reads it from is the platform's constant
+    (`Adapter.token_env`), not a per-row choice. Platform, realm, and
+    identity are fixed after creation; name, policy,
     launch mode, and enabled are editable. `restart_nonce` is what a Restart
     (or an off→on transition of the launch gate) rewrites so the launcher
     restarts the process. Design: docs/superpowers/specs/2026-09-09-bridge-settings-design.md."""
@@ -1467,7 +1468,6 @@ class BridgeConnector(db.Model):
     platform: Mapped[str] = mapped_column(Text)
     base_url: Mapped[str | None] = mapped_column(Text, default=None)
     identity: Mapped[str | None] = mapped_column(Text, default=None)
-    token_env: Mapped[str] = mapped_column(Text)
     launch_mode: Mapped[str] = mapped_column(Text, default="launcher")  # "launcher" | "manual"
     restart_nonce: Mapped[UUID] = mapped_column(default=uuid4)
     enabled: Mapped[bool] = mapped_column(default=False)

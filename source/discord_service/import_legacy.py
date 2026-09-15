@@ -9,8 +9,9 @@ What it does, through the core's HTTP API only (no database access):
 
 1. Resolves `DISCORD_ROOM_NAME` (default `discord`) to exactly one chatroom;
    an ambiguous or missing name is an error, never a guess.
-2. Creates a DISABLED connector (platform discord, `token_env` defaulting to
-   `DISCORD_BOT_TOKEN` — the variable NAME only) and a DISABLED binding for
+2. Creates a DISABLED connector (platform discord; its bridge process reads
+   the token from `DISCORD_BOT_TOKEN`, the platform's fixed variable, which
+   the launcher fills from the token pasted on /bridges) and a DISABLED binding for
    `DISCORD_CHANNEL_ID`, copying the nonsecret settings (`allowed_senders`
    from `DISCORD_ALLOWED_USER_IDS`, `poll_seconds` from `DISCORD_POLL_SECONDS`)
    as the connector's policy.
@@ -98,8 +99,6 @@ def wrap_state(legacy: dict[str, Any], connector_uuid: str, binding_uuid: str,
 def run(argv: list[str] | None = None, env: dict[str, str] | None = None, session: Any = None) -> dict[str, Any]:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--name", required=True, help="connector name shown on /bridges")
-    parser.add_argument("--token-env", default="DISCORD_BOT_TOKEN",
-                        help="the credential variable NAME the connector will read (default DISCORD_BOT_TOKEN)")
     parser.add_argument("--state-dir", required=True, type=Path,
                         help="where connector-mode state files live (the launcher's state dir for a supervised run)")
     args = parser.parse_args(argv)
@@ -110,7 +109,7 @@ def run(argv: list[str] | None = None, env: dict[str, str] | None = None, sessio
 
     room = resolve_room(base, legacy["room_name"], session)
     conn_resp = session.post(f"{base}/bridges/api/connectors", json={
-        "name": args.name, "platform": "discord", "token_env": args.token_env,
+        "name": args.name, "platform": "discord",
         "policy": {"allowed_senders": legacy["allowed_senders"], "poll_seconds": legacy["poll_seconds"]},
     }, timeout=10)
     if conn_resp.status_code != 201:
@@ -139,7 +138,7 @@ def run(argv: list[str] | None = None, env: dict[str, str] | None = None, sessio
                                                 str(room["uuid"]), legacy["channel_id"])))
         wrote_state = True
 
-    print(f"connector {connector['uuid']} ({args.name}) created, disabled; credential variable: {args.token_env}")
+    print(f"connector {connector['uuid']} ({args.name}) created, disabled; paste the bot token on its /bridges pane")
     print(f"binding {binding['uuid']}: room {room['name']!r} ({room['uuid']}) <-> channel {legacy['channel_id']}, disabled")
     if wrote_state:
         print(f"state wrapped into {target} (legacy {legacy['state_file']} kept for rollback)")

@@ -405,6 +405,10 @@ def init_db(app: Flask) -> None:
                 "ON model_config (provider, model_name)"
             )
         )
+        # The bridge token variable became a platform constant (Adapter.token_env);
+        # the per-connector column is gone. Idempotent.
+        db.session.execute(sa.text("ALTER TABLE bridge_connector DROP COLUMN IF EXISTS token_env"))
+        db.session.commit()
         _add_column_if_missing("journal", "stop_requested_at",
                                "stop_requested_at TIMESTAMPTZ")
         _add_column_if_missing("chatroom", "room_type",

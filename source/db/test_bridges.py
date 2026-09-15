@@ -50,8 +50,8 @@ def _room(cleanup):
     return room
 
 
-def _connector(cleanup, name=None, platform="discord", token_env="DISCORD_TOKEN_TEST", **kw):
-    c = db.bridge_create_connector(name or f"conn-{uuid4().hex[:6]}", platform, token_env, **kw)
+def _connector(cleanup, name=None, platform="discord", **kw):
+    c = db.bridge_create_connector(name or f"conn-{uuid4().hex[:6]}", platform, **kw)
     from uuid import UUID
     cleanup["connectors"].append(UUID(c["uuid"]))
     return c
@@ -105,14 +105,12 @@ def test_policy_validation_and_resolution():
 def test_create_connector_validates_shape_and_starts_disabled(cleanup):
     c = _connector(cleanup, name="mainbot")
     assert c["enabled"] is False and c["launch_mode"] == "launcher" and c["restart_nonce"]
-    assert c["platform"] == "discord" and c["token_env"] == "DISCORD_TOKEN_TEST"
+    assert c["platform"] == "discord" and c["token_env"] == "DISCORD_BOT_TOKEN"   # the platform's, always
     with pytest.raises(db.BridgeBlocked):
-        db.bridge_create_connector("mainbot", "discord", "OTHER")          # duplicate name
-    for kwargs in (dict(platform="zulip", token_env="Z", base_url="https://z", identity="bot@z"),
-                   dict(platform="discord", token_env="BRIDGE_CONNECTOR"),
-                   dict(platform="discord", token_env="not a name"),
-                   dict(platform="discord", token_env="T", base_url="https://x"),
-                   dict(platform="nope", token_env="T")):
+        db.bridge_create_connector("mainbot", "discord")                   # duplicate name
+    for kwargs in (dict(platform="zulip", base_url="https://z", identity="bot@z"),
+                   dict(platform="discord", base_url="https://x"),
+                   dict(platform="nope")):
         with pytest.raises(AdapterError):
             db.bridge_create_connector(f"x-{uuid4().hex[:4]}", **kwargs)
 
@@ -288,7 +286,7 @@ def test_launcher_entries_shape(cleanup):
         "key": f"bridge:{cu}", "kind": "discord_bridge", "label": "Main Bot", "enabled": True,
         "restart_nonce": db.bridge_get_connector(cu)["restart_nonce"],
         "env": {"RAINBOX_URL": "http://127.0.0.1:5000", "BRIDGE_CONNECTOR": str(cu)},
-        "token_env": "DISCORD_TOKEN_TEST",
+        "token_env": "DISCORD_BOT_TOKEN",
         "credential": None,   # nothing stored yet; the opened value rides here otherwise
         "state_file": {"env": "DISCORD_STATE_FILE", "name": f"bridge-{cu}.json"},
     }
@@ -372,7 +370,7 @@ def test_connector_without_a_name_is_named_after_its_platform_with_a_free_number
     from uuid import UUID
 
     def make(name):
-        c = db.bridge_create_connector(name, "discord", "DISCORD_TOKEN_TEST")
+        c = db.bridge_create_connector(name, "discord")
         cleanup["connectors"].append(UUID(c["uuid"]))
         return c["name"]
 
@@ -383,23 +381,21 @@ def test_connector_without_a_name_is_named_after_its_platform_with_a_free_number
     assert db.default_connector_name("Discord") not in names      # the next one is free
     assert make("Explicit " + names[0]) == "Explicit " + names[0]
     with pytest.raises(db.AdapterError):
-        db.bridge_create_connector(12, "discord", "DISCORD_TOKEN_TEST")
+        db.bridge_create_connector(12, "discord")
     assert db.default_connector_name("Never Used Label") == "Never Used Label"
 
 
-def test_connector_token_variable_defaults_to_the_platforms(cleanup):
-    """No token_env → the adapter's fixed name (the operator never picks one);
-    an explicit one is still honoured for scripted callers."""
+def test_connector_token_variable_is_the_platforms_and_not_a_field(cleanup):
+    """The bridge reads its token from the platform's fixed variable; no row
+    stores a name and none can be set."""
     from uuid import UUID
-    c = db.bridge_create_connector(None, "discord", None)
+    c = db.bridge_create_connector(None, "discord")
     cleanup["connectors"].append(UUID(c["uuid"]))
     assert c["token_env"] == "DISCORD_BOT_TOKEN"
-    d = db.bridge_create_connector(None, "discord", "")
-    cleanup["connectors"].append(UUID(d["uuid"]))
-    assert d["token_env"] == "DISCORD_BOT_TOKEN"
-    e = db.bridge_create_connector(None, "discord", "MY_OWN_NAME")
-    cleanup["connectors"].append(UUID(e["uuid"]))
-    assert e["token_env"] == "MY_OWN_NAME"
+    with pytest.raises(TypeError):
+        db.bridge_create_connector(None, "discord", token_env="MY_OWN_NAME")   # type: ignore[call-arg]
+    with pytest.raises(AdapterError):
+        db.bridge_update_connector(UUID(c["uuid"]), {"token_env": "X"}, autostart=True)
 
 
 def test_every_adapter_names_a_distinct_valid_token_variable():

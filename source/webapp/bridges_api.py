@@ -88,7 +88,7 @@ def bridges_create_connector() -> tuple[Response, int]:
         return _err(400, "request body must be a JSON object")
     try:
         row = db.bridge_create_connector(
-            data.get("name"), data.get("platform"), data.get("token_env"),
+            data.get("name"), data.get("platform"),
             base_url=data.get("base_url"), identity=data.get("identity"), policy=data.get("policy"))
     except AdapterError as exc:
         return _err(400, str(exc))

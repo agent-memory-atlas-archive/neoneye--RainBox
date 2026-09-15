@@ -1069,14 +1069,14 @@ def _bridge_connector_label(view, context, model, name):
 
 
 class BridgeConnectorView(ModelView):
-    """Read-only: the credential is never here (only `token_env`, the
-    variable NAME); every write belongs on /bridges, whose API validates
+    """Read-only: the credential is never here (its variable name is the
+    platform's constant); every write belongs on /bridges, whose API validates
     addresses and policies, refuses deletes that would orphan rows, rewrites
     the restart nonce, notifies the running bridge, and pushes the launcher.
     An admin write would bypass all of that."""
     can_create = can_edit = can_delete = False
     column_list = (
-        "bridges_link", "position", "uuid", "name", "platform", "token_env", "launch_mode",
+        "bridges_link", "position", "uuid", "name", "platform", "launch_mode",
         "enabled", "base_url", "identity", "policy", "restart_nonce", "created_at", "updated_at",
     )
     column_default_sort = ("position", False)

@@ -144,8 +144,8 @@ def test_bridge_config_snapshot_endpoint(client):
     r = c.get(f"/bridge/api/connectors/{cu}/config")
     assert r.status_code == 200
     d = r.get_json()
-    assert d["schema_version"] == 1 and d["connector"]["token_env"] == "DISCORD_TOKEN_T"
-    assert "DISCORD_TOKEN_T" in json.dumps(d) and "value" not in d["connector"]
+    assert d["schema_version"] == 1 and d["connector"]["token_env"] == "DISCORD_BOT_TOKEN"
+    assert "DISCORD_BOT_TOKEN" in json.dumps(d) and "value" not in d["connector"]
     [entry] = d["bindings"]
     assert entry["effective_enabled"] is False and entry["policy"]["allowed_senders"] == ["7"]
     rev = d["revision"]
@@ -162,7 +162,7 @@ def test_desired_snapshot_carries_bridge_entries_and_autostart_gates_them(client
     c.put(f"/bridges/api/connectors/{cu}", json={"enabled": True})
     entry = next(s for s in registry.desired_snapshot()["services"] if s["key"] == f"bridge:{cu}")
     assert entry["kind"] == "discord_bridge" and entry["enabled"] is True
-    assert entry["env"]["BRIDGE_CONNECTOR"] == cu and entry["token_env"] == "DISCORD_TOKEN_T"
+    assert entry["env"]["BRIDGE_CONNECTOR"] == cu and entry["token_env"] == "DISCORD_BOT_TOKEN"
     assert entry["state_file"] == {"env": "DISCORD_STATE_FILE", "name": f"bridge-{cu}.json"}
     nonce = entry["restart_nonce"]
     # Autostart off: the gate closes, nonce untouched; on again: nonce bumped.

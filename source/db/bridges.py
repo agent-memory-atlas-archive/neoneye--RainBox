@@ -46,7 +46,6 @@ from services.bridge_adapters import (
     canonical_json,
     sanitize_label,
     validate_base_url,
-    validate_token_env,
 )
 
 BRIDGE_SCHEMA_VERSION = 1
@@ -107,7 +106,7 @@ def _push_launcher() -> None:
 def _connector_dict(c: BridgeConnector) -> dict[str, Any]:
     return {
         "uuid": str(c.uuid), "name": c.name, "platform": c.platform,
-        "base_url": c.base_url, "identity": c.identity, "token_env": c.token_env,
+        "base_url": c.base_url, "identity": c.identity, "token_env": adapter_for(c.platform).token_env,
         "launch_mode": c.launch_mode, "enabled": c.enabled, "policy": c.policy or {},
         "restart_nonce": str(c.restart_nonce) if c.restart_nonce else None,
         "position": c.position,
@@ -365,13 +364,10 @@ def bridge_save_tree(connectors: list, folders: list, bindings: list, *,
 # --- connectors -----------------------------------------------------------------
 
 
-def _validate_connector_fields(platform: str, token_env: Any, base_url: Any, identity: Any) -> tuple[Adapter, str, str | None, str | None]:
+def _validate_connector_fields(platform: str, base_url: Any, identity: Any) -> tuple[Adapter, str | None, str | None]:
     adapter = adapter_for(platform)
     if not adapter.available:
         raise AdapterError(f"{adapter.label} has no bridge implementation yet")
-    # The platform's own variable unless a caller (the legacy import, a
-    # script) names another; the create dialog sends none.
-    token = adapter.token_env if token_env in (None, "") else validate_token_env(token_env)
     url = None
     if adapter.requires_base_url:
         url = validate_base_url(base_url)
@@ -384,25 +380,26 @@ def _validate_connector_fields(platform: str, token_env: Any, base_url: Any, ide
         ident = identity.strip()
     elif identity not in (None, ""):
         raise AdapterError(f"{adapter.label} connectors take no identity")
-    return adapter, token, url, ident
+    return adapter, url, ident
 
 
-def bridge_create_connector(name: Any, platform: Any, token_env: Any, *,
+def bridge_create_connector(name: Any, platform: Any, *,
                             base_url: Any = None, identity: Any = None,
                             policy: Any = None) -> dict[str, Any]:
     """A new connector, disabled, at the end of the list. Without a name it
     is called after its platform — "Discord", then "Discord 2", "Discord 3"
     — so the create dialog needs no name field and a rename is a later,
-    optional step. Raises AdapterError (400) for a bad shape and
+    optional step. The token variable is the platform's (`Adapter.token_env`),
+    never chosen here. Raises AdapterError (400) for a bad shape and
     BridgeBlocked (409) for a duplicate explicit name."""
-    adapter, token, url, ident = _validate_connector_fields(platform, token_env, base_url, identity)
+    adapter, url, ident = _validate_connector_fields(platform, base_url, identity)
     if name is not None and not isinstance(name, str):
         raise AdapterError("name must be a string")
     if not name or not name.strip():
         name = default_connector_name(adapter.label)
     pol = adapter.validate_policy(policy)
     highest = db.session.execute(sa.select(sa.func.max(BridgeConnector.position))).scalar_one()
-    row = BridgeConnector(uuid=uuid4(), name=name.strip(), platform=adapter.platform, token_env=token,
+    row = BridgeConnector(uuid=uuid4(), name=name.strip(), platform=adapter.platform,
                           base_url=url, identity=ident, policy=pol, enabled=False,
                           position=0 if highest is None else highest + 1)
     db.session.add(row)
@@ -440,7 +437,8 @@ def launch_gate(row: BridgeConnector, autostart: bool) -> bool:
 
 def bridge_update_connector(connector_uuid: UUID, changes: dict[str, Any], *, autostart: bool) -> dict[str, Any] | None:
     """Editable fields only: name, enabled, launch_mode, policy. Platform,
-    base_url, identity, and token_env are fixed after creation (400). An
+    base_url, and identity are fixed after creation, and token_env is the
+    platform's, so all four are refused (400). An
     off→on transition of the launch gate rewrites the nonce in the same
     transaction. Returns None for an unknown connector."""
     row = _connector_row(connector_uuid, lock=True)
@@ -798,7 +796,8 @@ def bridge_connector_config(connector_uuid: UUID) -> dict[str, Any] | None:
                 entry["note"] = note
             out_bindings.append(entry)
         connector = {"uuid": str(row.uuid), "name": row.name, "platform": row.platform,
-                     "base_url": row.base_url, "identity": row.identity, "token_env": row.token_env,
+                     "base_url": row.base_url, "identity": row.identity,
+                     "token_env": adapter_for(row.platform).token_env,
                      "enabled": row.enabled, "launch_mode": row.launch_mode}
         body = {"connector": connector, "bindings": out_bindings}
         revision = hashlib.sha256(canonical_json(body).encode()).hexdigest()[:16]
@@ -911,7 +910,7 @@ def bridge_launcher_entries(*, autostart: bool, rainbox_url: str) -> list[dict[s
             "enabled": launch_gate(row, autostart),
             "restart_nonce": str(row.restart_nonce) if row.restart_nonce else None,
             "env": {"RAINBOX_URL": rainbox_url, "BRIDGE_CONNECTOR": str(row.uuid)},
-            "token_env": row.token_env,
+            "token_env": adapter.token_env,
             # The sealed value, opened for this snapshot only; the launcher
             # keeps it in memory and injects it under token_env at spawn.
             "credential": bridge_credential_value(row.uuid),

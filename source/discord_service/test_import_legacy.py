@@ -48,7 +48,7 @@ def test_import_creates_disabled_rows_and_wraps_state(tmp_path):
     out = il.run(["--name", "Main Bot", "--state-dir", str(tmp_path / "svc")],
                  env={**ENV, "DISCORD_STATE_FILE": str(legacy)}, session=session)
     conn_body = session.posts[0][1]
-    assert conn_body == {"name": "Main Bot", "platform": "discord", "token_env": "DISCORD_BOT_TOKEN",
+    assert conn_body == {"name": "Main Bot", "platform": "discord",
                          "policy": {"allowed_senders": ["111", "222"], "poll_seconds": 3.0}}
     assert "NEVER-READ" not in json.dumps(session.posts)          # the value never travels
     assert session.posts[1][1] == {"connectorId": "c-1", "roomUuid": "r-1", "address": {"channel_id": "777"}}

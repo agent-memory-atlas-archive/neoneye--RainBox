@@ -93,7 +93,7 @@ complete SQLAlchemy migration.
 
 | Table | Fields in addition to common identity/timestamps |
 |---|---|
-| `bridge_connector` | `name` (unique label), `platform`, nullable `base_url` and `identity`, `token_env`, `launch_mode` (`launcher` or `manual`, default `launcher`), `restart_nonce` (UUID, default new UUID), `enabled` (default false), `policy` (JSON object, default `{}`) |
+| `bridge_connector` | `name` (unique label), `platform`, nullable `base_url` and `identity`, `launch_mode` (`launcher` or `manual`, default `launcher`), `restart_nonce` (UUID, default new UUID), `enabled` (default false), `policy` (JSON object, default `{}`) |
 | `bridge_folder` | `connector_uuid` (FK `RESTRICT`), `parent_uuid` (nullable, plain uuid), `name`, `position`, `enabled` (default true), `policy` (JSON object, default `{}`) |
 | `bridge_binding` | `connector_uuid` (FK `RESTRICT`), `folder_uuid` (nullable, plain uuid), `room_uuid` (FK `RESTRICT` to `chatroom.uuid`), `address` (validated JSON object), `address_key` (canonical text), `enabled` (default false), `policy` (JSON object, default `{}`), `position` |
 
@@ -309,16 +309,16 @@ the default localhost endpoint is unsuitable.
 
 Name the required credential variable beside the command as “must already be
 set in the launch environment”; do not insert an empty or placeholder token
-assignment that would overwrite it. Validate `token_env` as an environment
-variable name (`[A-Za-z_][A-Za-z0-9_]*`), reject reserved bridge/deployment names
-such as `BRIDGE_CONNECTOR`, `RAINBOX_URL`, and state-file variables, and shell-quote
-generated argument values. Connector display names never become shell syntax.
-`token_env` stores only the name of the variable the bridge process reads.
-It is the platform's constant (`DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`,
-`ZULIP_API_KEY`, from the adapter), so the create dialog asks for the
-platform alone and the operator never sees a variable name; the API still
-accepts an explicit `token_env` for scripted callers. The connector row never
-holds a value.
+assignment that would overwrite it. The adapters' `token_env` constants are
+valid environment variable names (`[A-Za-z_][A-Za-z0-9_]*`) outside the
+reserved bridge/deployment names such as `BRIDGE_CONNECTOR`, `RAINBOX_URL`,
+and state-file variables (a test holds that line), and generated argument
+values are shell-quoted. Connector display names never become shell syntax.
+`token_env` is not stored: it is the platform's constant
+(`DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN`, `ZULIP_API_KEY`, from the
+adapter), derived wherever a connector is serialized, so the create dialog
+asks for the platform alone and the operator never sees a variable name. The
+connector row never holds a value.
 
 The value is set on the connector pane (a write-only field: saving replaces
 it, nothing ever displays it); it must be one printable line — a NUL or
