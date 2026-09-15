@@ -31,6 +31,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 import db
+from agents.turn_stop import TurnStopped
 # NOTE: `prepare_llm` (and the llm package it lives in) pulls in llama_index
 # (~0.6s). Imported lazily inside `_structured_completion` so a freshly spawned
 # agent process can post progress before paying that cost.
@@ -255,6 +256,19 @@ class Agent:
                 # Heartbeat keeps the supervisor from killing a slow-but-healthy
                 # handle() (reasoning models can think for >60s with no output).
                 result = self._handle_with_heartbeat(journal_id, payload)
+            except TurnStopped as e:
+                # The operator pressed Stop and the agent already settled
+                # its rows and posted its notice; the queue's part is the
+                # `stopped` state (with whatever reply streamed) and the
+                # status line. Same rollback reasoning as `failed` below.
+                db.session.rollback()
+                stopped_result: dict[str, Any] = {
+                    "ok": False, "stopped": True, "reply_content": e.reply}
+                if routing is not None:
+                    stopped_result["_routing"] = routing
+                db.journal_update(journal_id, "stopped", result=stopped_result)
+                self._emit({"status": "stopped", "journal_id": str(journal_id)})
+                continue
             except Exception as e:
                 msg = f"{type(e).__name__}: {e}"
                 logger.exception("agent %s: handle failed for journal %s", self.name, journal_id)

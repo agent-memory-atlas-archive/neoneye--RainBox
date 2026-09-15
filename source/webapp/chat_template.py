@@ -268,6 +268,12 @@ CHAT_TEMPLATE: str = """
   .compose button{padding:0.5em 1.2em;font-size:1rem;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer}
   .compose button:hover{background:#1d4ed8}
   .compose button:disabled{background:#9db4e8;cursor:default}
+  /* Stop: the composer's secondary button, shown only while a direct-room
+     turn is in flight (syncStopButton). Grey so Send stays the primary. */
+  .compose #stop-btn{background:#6b7280}
+  .compose #stop-btn:hover{background:#4b5563}
+  .compose #stop-btn:disabled{background:#b3b8c2}
+  .compose #stop-btn[hidden]{display:none}
 
   /* Folder-contents table (shown in room-main instead of a chat). The chat-log
      and compose set display:flex at class specificity, which beats the UA
@@ -345,6 +351,7 @@ CHAT_TEMPLATE: str = """
     </div>
     <form class="compose" id="compose" onsubmit="return false;">
       <textarea id="msg-input" rows="1" placeholder="Write a message…  (Enter to send, Shift+Enter for newline)"></textarea>
+      <button type="button" id="stop-btn" hidden>⏹ Stop</button>
       <button type="submit">Send</button>
     </form>
   </div>
@@ -448,6 +455,7 @@ const sidebarModeSel = document.getElementById('sidebar-mode');
 const splitEl = document.querySelector('.chat-split');
 const form = document.getElementById('compose');
 const input = document.getElementById('msg-input');
+const stopBtn = document.getElementById('stop-btn');
 const newRoomBtn = document.getElementById('new-room-btn');
 const agentListEl = document.getElementById('agent-list');
 
@@ -619,6 +627,7 @@ function appendMessageNode(node, m){
     log.appendChild(makeDaySeparator(day, d ? formatDayLabel(d) : day));
   }
   log.appendChild(node);
+  syncStopButton();
 }
 
 // A divider earns its place only while a message of its day follows it and
@@ -655,6 +664,7 @@ function removeDeletedMessages(ids){
     renderedIds.delete(id);
   });
   pruneDaySeparators();
+  syncStopButton();
 }
 
 // How close to the bottom still counts as "following the conversation". This
@@ -701,6 +711,7 @@ function upsertMessage(m){
   const node = makeMessage(m);
   if (existing){
     existing.replaceWith(node);
+    syncStopButton();  // a row settling is how a turn ends on screen
   } else {
     renderedIds.add(m.id);
     lastId = Math.max(lastId, m.id);
@@ -708,6 +719,47 @@ function upsertMessage(m){
   }
   if (pinned) log.scrollTop = log.scrollHeight;
 }
+
+// ---- Stop button ----
+// Whether the open direct room has a turn in flight is read off the log
+// itself rather than tracked as a flag: the working bubble (a progress row)
+// or a row still streaming means the responder is busy. Every path that
+// changes the log calls syncStopButton, so the button can never outlive
+// the turn or miss one that arrived by push. Agents rooms never show it.
+let stopPending = false;   // POST /stop sent; its effect not yet on screen
+function turnInFlight(){
+  if (!currentRoomIsDirect()) return false;
+  return !!log.querySelector('.msg[data-kind="progress"], .msg.msg-streaming');
+}
+function syncStopButton(){
+  const busy = turnInFlight();
+  if (!busy) stopPending = false;
+  stopBtn.hidden = !busy;
+  stopBtn.disabled = stopPending;
+  stopBtn.textContent = stopPending ? 'Stopping…' : '⏹ Stop';
+}
+// Abandon the turn: queued items are dropped and the worker on the room
+// cuts its stream (the notice it posts, and the rows settling, are what
+// clear the button). The label holds 'Stopping…' until then. When no
+// worker was on the room the API settles it itself; fetch so that notice
+// shows without waiting on the stream.
+async function stopTurn(){
+  if (!currentRoom || stopPending) return;
+  const room = currentRoom;
+  stopPending = true;
+  syncStopButton();
+  try {
+    await postJSON('/chat/api/rooms/' + room + '/stop', {});
+  } catch (e) {
+    stopPending = false;
+    syncStopButton();
+    chatToast('Could not stop: ' + e.message);
+    return;
+  }
+  await fetchNew(room);
+  input.focus();
+}
+stopBtn.addEventListener('click', stopTurn);
 
 // Handle a streaming NOTIFY ({message_id, kind, streaming, text?}): grow the
 // thinking/answer bubble in place. The notify inlines `text` when small; when
@@ -1257,6 +1309,7 @@ function makeMessage(m){
   // refresh the text in place. `_row` is the newest row the node is showing.
   msg.dataset.messageId = String(m.id);
   msg.dataset.renderKey = messageRenderKey(m);
+  msg.dataset.kind = m.kind || 'message';  // what syncStopButton reads
   // The day this row belongs to, so appending the next one can tell whether a
   // divider is due without re-parsing dates already computed here.
   msg.dataset.day = messageDayKey(m);
@@ -2338,10 +2391,12 @@ async function selectRoom(uuid, scrollMsgId){
   }
   syncSidebarModeOptions();
   log.innerHTML = '';
+  syncStopButton();  // the previous room's button must not survive the switch
   input.focus();
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=0');
   if (uuid !== currentRoom) return;  // room switched while loading
   msgs.forEach(appendMessage);
+  syncStopButton();  // an empty room appends nothing
   renderSidebar();  // members/stats reflect the now-open room — resizes the log,
                     // so toggle it BEFORE scrolling or we land a line short.
   scrollLogToBottom();

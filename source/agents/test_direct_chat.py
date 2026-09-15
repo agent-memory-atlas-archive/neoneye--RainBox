@@ -1,6 +1,8 @@
 """Tests for DirectChatAgent (agents/direct_chat.py): message-list building,
 the no-model notice path, and the handle() flow with a stubbed stream."""
 
+import time
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -9,6 +11,7 @@ from llama_index.core.llms import MessageRole
 import db
 from agents.config import DIRECT_CHAT_UUID
 from agents.direct_chat import NO_MODEL_NOTICE, DirectChatAgent
+from agents.turn_stop import StopWatch, TurnStopped
 from db import Chatroom
 
 
@@ -97,7 +100,7 @@ def test_handle_without_room_model_uses_global_default(direct_room, monkeypatch)
     agent = _agent()
     seen = {}
 
-    def fake_stream(room, model, messages, request_timeout=None):
+    def fake_stream(room, model, messages, request_timeout=None, journal_id=None):
         seen["model"] = model
         return "stubbed reply"
 
@@ -134,17 +137,20 @@ def test_handle_streams_full_history(direct_room, monkeypatch):
     agent = _agent()
     seen = {}
 
-    def fake_stream(room, model, messages, request_timeout=None):
+    def fake_stream(room, model, messages, request_timeout=None, journal_id=None):
         seen["room"] = room
         seen["model"] = model
         seen["messages"] = messages
         seen["request_timeout"] = request_timeout
+        seen["journal_id"] = journal_id
         return "stubbed reply"
 
     monkeypatch.setattr(agent, "_stream_reply", fake_stream)
-    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid)})
+    journal_id = uuid4()
+    result = agent.handle(journal_id, {"room_uuid": str(room_uuid)})
     assert result == {"ok": True, "reply_content": "stubbed reply"}
     assert seen["room"] == room_uuid
+    assert seen["journal_id"] == journal_id   # what the stop watch polls
     assert seen["model"] == model_uuid
     assert seen["request_timeout"] == 300  # the room's Settings override
     roles = [m.role for m in seen["messages"]]
@@ -274,7 +280,7 @@ def test_handle_applies_room_history_window(direct_room, monkeypatch):
     agent = _agent()
     seen = {}
 
-    def fake_stream(room, model, messages, request_timeout=None):
+    def fake_stream(room, model, messages, request_timeout=None, journal_id=None):
         seen["messages"] = messages
         return "ok"
 
@@ -283,3 +289,86 @@ def test_handle_applies_room_history_window(direct_room, monkeypatch):
     assert [(m.role, m.content) for m in seen["messages"]] == [
         (MessageRole.USER, "second"),
     ]
+
+
+def _chunk(text: str) -> SimpleNamespace:
+    """A native-Ollama-shaped stream chunk (extract_stream_deltas reads .delta)."""
+    return SimpleNamespace(delta=text, additional_kwargs={}, raw=None)
+
+
+def _stoppable_agent(monkeypatch, flag: dict, llm) -> DirectChatAgent:
+    """An agent whose stop probe reads `flag["stop"]` (no journal row needed),
+    polled fast, streaming from `llm`."""
+    import agents.direct_chat as direct_chat_mod
+
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs", lambda target: ("lm_studio", "test-model", {})
+    )
+    monkeypatch.setattr(direct_chat_mod, "prepare_llm", lambda p, m, a: llm)
+    monkeypatch.setattr(
+        direct_chat_mod, "StopWatch",
+        lambda probe: StopWatch(probe, poll_seconds=0.02))
+    agent = _agent()
+    monkeypatch.setattr(agent, "_stop_probe", lambda journal_id: (lambda: flag["stop"]))
+    return agent
+
+
+def test_stop_mid_stream_keeps_partial_settles_rows_and_posts_notice(direct_room, monkeypatch):
+    """Two chunks land, then the model blocks and the operator presses Stop:
+    the read is interrupted, the partial answer stays (settled, no cursor),
+    the stop notice reaps the working bubble, and TurnStopped carries the
+    partial for the journal."""
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "hello?")
+    db.upsert_progress(room_uuid, DIRECT_CHAT_UUID, "working")
+    flag = {"stop": False}
+    closed = {"n": 0}
+
+    class FakeLLM:
+        def stream_chat(self, messages):
+            try:
+                yield _chunk("Hel")
+                yield _chunk("lo")
+                flag["stop"] = True
+                time.sleep(5)          # a blocked read; the watch interrupts it
+                yield _chunk(" world")
+            finally:
+                closed["n"] += 1       # the generator is closed, connection with it
+
+    agent = _stoppable_agent(monkeypatch, flag, FakeLLM())
+    t0 = time.monotonic()
+    with pytest.raises(TurnStopped) as info:
+        agent._stream_reply(room_uuid, uuid4(), [], journal_id=uuid4())
+    assert time.monotonic() - t0 < 3
+    assert info.value.reply == "Hello"
+    assert closed["n"] == 1
+    rows = db.list_room_messages(room_uuid)
+    answers = [r for r in rows if r["kind"] == "message"
+               and r["sender_uuid"] == str(DIRECT_CHAT_UUID)]
+    assert [r["text"] for r in answers] == ["Hello"]
+    assert answers[0]["streaming"] is False
+    notices = [r for r in rows if r["kind"] == "notice"]
+    assert len(notices) == 1
+    assert "Stopped" in notices[0]["text"] and "test-model" in notices[0]["text"]
+    assert not [r for r in rows if r["kind"] == "progress"]   # reaped by the notice
+
+
+def test_stop_before_the_first_token_posts_only_the_notice(direct_room, monkeypatch):
+    """A cold model that has sent nothing yet: the stop lands inside the
+    stream-open call. No answer row is created; the notice alone marks it."""
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "hello?")
+    flag = {"stop": True}
+
+    class ColdLLM:
+        def stream_chat(self, messages):
+            time.sleep(5)              # "loading"; nothing streams
+            yield _chunk("late")
+
+    agent = _stoppable_agent(monkeypatch, flag, ColdLLM())
+    with pytest.raises(TurnStopped) as info:
+        agent._stream_reply(room_uuid, uuid4(), [], journal_id=uuid4())
+    assert info.value.reply == ""
+    rows = db.list_room_messages(room_uuid)
+    assert [r["kind"] for r in rows] == ["message", "notice"]
+    assert "Stopped" in rows[-1]["text"]

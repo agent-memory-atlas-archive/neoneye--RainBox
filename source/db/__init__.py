@@ -405,6 +405,8 @@ def init_db(app: Flask) -> None:
                 "ON model_config (provider, model_name)"
             )
         )
+        _add_column_if_missing("journal", "stop_requested_at",
+                               "stop_requested_at TIMESTAMPTZ")
         _add_column_if_missing("chatroom", "room_type",
                                "room_type TEXT NOT NULL DEFAULT 'agents'")
         _add_column_if_missing("chatroom", "system_prompt",

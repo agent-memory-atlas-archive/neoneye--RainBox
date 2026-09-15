@@ -5,12 +5,14 @@ Uses the live local Postgres database. Every test cleans up rows it
 created so artifacts don't accumulate.
 """
 
+import json
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.orm import Session
 
 import db
-from db import Chatroom
+from db import Chatroom, Inbox, Journal
 
 
 @pytest.fixture
@@ -214,3 +216,58 @@ def test_set_chatroom_settings_history_window(direct_room):
     assert db.get_chatroom(room_uuid).history_window == 12
     db.set_chatroom_settings(room_uuid, history_window=None)
     assert db.get_chatroom(room_uuid).history_window is None
+
+
+# ---- the Stop button's queue side -------------------------------------------
+
+def _drop_agent_rows(agent_uuid):
+    db.session.query(Inbox).filter_by(agent_uuid=agent_uuid).delete()
+    db.session.query(Journal).filter_by(agent_uuid=agent_uuid).delete()
+    db.session.commit()
+
+
+def test_cancel_room_turns_drops_queued_and_flags_processing(direct_room):
+    """Only this room's items go: the queued one is deleted, the one a worker
+    took gets stop_requested_at (kept on a second press), another room's item
+    is untouched. The watcher's own-session read sees the flag."""
+    room_uuid, _ = direct_room
+    other_room = uuid4()
+    agent = uuid4()   # a throwaway agent uuid: no supervisor drains it
+    db.enqueue(agent, {"room_uuid": str(room_uuid)})
+    db.enqueue(agent, {"room_uuid": str(other_room)})
+    db.enqueue(agent, {"room_uuid": str(room_uuid)})
+    try:
+        taken = db.take_item(agent)          # the oldest: this room's first item
+        assert taken is not None
+        journal_id, _payload = taken
+        assert not db.stop_requested(journal_id)
+        assert db.cancel_room_turns(room_uuid, agent) == {"dequeued": 1, "signalled": 1}
+        assert db.stop_requested(journal_id)
+        left = [json.loads(r.payload)["room_uuid"] for r in
+                db.session.query(Inbox).filter_by(agent_uuid=agent).order_by(Inbox.id)]
+        assert left == [str(other_room)]
+        stamp = db.session.get(Journal, journal_id).stop_requested_at
+        assert db.cancel_room_turns(room_uuid, agent) == {"dequeued": 0, "signalled": 1}
+        assert db.session.get(Journal, journal_id).stop_requested_at == stamp   # not re-stamped
+        with Session(bind=db.db.engine) as side:   # as the worker's watcher reads it
+            assert db.stop_requested(journal_id, session=side)
+        assert not db.stop_requested(uuid4())
+        assert db.cancel_room_turns(other_room, agent) == {"dequeued": 1, "signalled": 0}
+    finally:
+        _drop_agent_rows(agent)
+
+
+def test_settle_streaming_rows_flips_only_that_senders_rows(direct_room):
+    room_uuid, human_uuid = direct_room
+    responder = uuid4()
+    mine = db.post_chat_message(room_uuid, responder, "half a", kind="message", streaming=True)
+    think = db.post_chat_message(room_uuid, responder, "hmm", kind="thinking", streaming=True)
+    done = db.post_chat_message(room_uuid, responder, "earlier", kind="message")
+    other = db.post_chat_message(room_uuid, human_uuid, "typing", kind="message", streaming=True)
+    assert db.settle_streaming_rows(room_uuid, responder) == [mine.id, think.id]
+    by_id = {r["id"]: r for r in db.list_room_messages(room_uuid)}
+    assert by_id[mine.id]["streaming"] is False and by_id[mine.id]["text"] == "half a"
+    assert by_id[think.id]["streaming"] is False
+    assert by_id[done.id]["streaming"] is False
+    assert by_id[other.id]["streaming"] is True     # another sender's row is not ours
+    assert db.settle_streaming_rows(room_uuid, responder) == []

@@ -1064,6 +1064,33 @@ def update_chat_message(
     db.session.commit()
 
 
+def settle_streaming_rows(room_uuid: UUID, sender_uuid: UUID) -> list[int]:
+    """Flip every row `sender_uuid` still has streaming in the room to
+    settled, NOTIFYing each so open tabs drop the cursor. The Stop button's
+    recovery path: when no worker is going to close a turn (it died, or the
+    item was still queued), the API settles the room itself. Returns the
+    ids touched, oldest first."""
+    rows = (
+        db.session.query(ChatMessage)
+        .filter(ChatMessage.room_uuid == room_uuid,
+                ChatMessage.sender_uuid == sender_uuid,
+                ChatMessage.streaming.is_(True))
+        .order_by(ChatMessage.id.asc())
+        .all()
+    )
+    ids: list[int] = []
+    for msg in rows:
+        msg.streaming = False
+        db.session.flush()
+        _chat_notify(
+            room_uuid=msg.room_uuid, message_id=msg.id, event="update",
+            kind=msg.kind, streaming=False, text=msg.text,
+        )
+        ids.append(msg.id)
+    db.session.commit()
+    return ids
+
+
 def get_room_message(room_uuid: UUID, message_id: int) -> dict[str, Any] | None:
     """One message row (same dict shape as list_room_messages), or None if it
     isn't in this room. Used by the browser to refetch a streamed row whose

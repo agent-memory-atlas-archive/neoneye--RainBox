@@ -127,6 +127,15 @@ at all.
     connection stays open with only `: keepalive` comments arriving every
     `SSE_HEARTBEAT_SECONDS`. Numbers, not vibes.
 
+14. **Stop is read off the log, not tracked.** The composer's Stop button
+    shows while the open direct room has a working bubble or a streaming
+    row in the log, and every path that changes the log calls
+    `syncStopButton()` — append, removal, the streaming rebuild, the room
+    switch (an empty room appends nothing). A separate "in flight" flag
+    would drift the first time a row arrived by push or a room switched
+    mid-stream; the DOM already knows. The label holds "Stopping…" until
+    the turn is actually gone from the log, never on a timer.
+
 ## Why this matters
 
 The user keeps this tab open all day. A "small" polling loop — 2s, every

@@ -470,6 +470,41 @@ def retry_chat_room_message(room_uuid: str, message_id: int) -> Response:
                     "deleted_ids": deleted})
 
 
+STOPPED_NOTICE: str = "⏹ Stopped"
+
+
+@app.route("/chat/api/rooms/<room_uuid>/stop", methods=["POST"])
+def stop_chat_room_turn(room_uuid: str) -> Response:
+    """The Stop button (direct rooms only): abandon every pending
+    direct-chat turn for this room. Queued items are dropped; the item a
+    worker is on gets `journal.stop_requested_at`, and that worker cuts
+    its stream, settles the rows, and posts the stop notice itself. When
+    no worker is on the room, nothing else will close the turn, so this
+    settles it here: streaming rows are flipped to settled and the notice
+    is posted (as the direct-chat agent, so it reaps the working bubble) —
+    also the recovery for a cursor a dead worker left blinking. The
+    notice is skipped when there was nothing to stop at all, so a press
+    that lands after the reply finished leaves no stray row."""
+    ruuid = _parse_uuid(room_uuid)
+    room = db.get_chatroom(ruuid)
+    if room is None:
+        abort(404, "room not found")
+    if room.room_type != "direct":
+        abort(403, "stop is only available in direct rooms")
+    outcome = db.cancel_room_turns(ruuid, DIRECT_CHAT_UUID)
+    settled = False
+    if not outcome["signalled"]:
+        settled_ids = db.settle_streaming_rows(ruuid, DIRECT_CHAT_UUID)
+        working = any(
+            r["kind"] == "progress" and r["sender_uuid"] == str(DIRECT_CHAT_UUID)
+            for r in db.list_room_messages(ruuid))
+        if outcome["dequeued"] or settled_ids or working:
+            db.post_chat_message(
+                ruuid, DIRECT_CHAT_UUID, STOPPED_NOTICE, kind="notice")
+            settled = True
+    return jsonify({"ok": True, **outcome, "settled": settled})
+
+
 TROUBLESHOOTING_KINDS: tuple[str, ...] = ("message", "progress", "notice")
 
 
