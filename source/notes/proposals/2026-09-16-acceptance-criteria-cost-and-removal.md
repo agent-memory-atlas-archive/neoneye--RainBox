@@ -194,7 +194,9 @@ option 1 below and see whether anything moves.
 
 ## Options
 
-Ordered by effort. Savings are per turn against the twelve-run figures.
+Ordered by effort. Savings are per turn against the twelve-run figures. Every
+option keeps the shared-prefix structure intact — nothing here changes the
+shape of a prompt that another call reuses.
 
 ### 1. Unbind the slot (no code)
 
@@ -246,12 +248,20 @@ Verification is offline, as the latency note describes: replay recorded runs
 through `evals/profile_guidance.py`, diff the model's `processing`/`formatting`
 against the rendered version, and confirm the diff is paraphrase.
 
-### 4. Shrink the criteria call's history (measure first)
+### Not an option: shrinking the criteria call's history
 
-The call gets the whole transcript (~2 k tokens of the 4.7 k here) to resolve
-a pronoun. The latency note's Proposal C explains why cutting it may cost
-decide more than it saves: the criteria prompt primes decide's prefix, and
-the divergence point sits inside the history. Moot under options 1 or 3.
+It looks like one — the call gets the whole transcript (~2 k tokens of the
+4.7 k here) to resolve a pronoun — and the latency note once listed it as
+Proposal C. It is ruled out here because the prompts are built for the cache:
+criteria and decide are byte-identical from `<current_user_request>` through
+`<formatting_guide>`, with the history inside that shared run, and decide
+reuses the prefix up to the first byte that differs. A shorter history in the
+criteria call moves that byte earlier, so decide prefills the whole transcript
+again from scratch; the audit sits behind decide and pays the same way. The
+seconds saved on the criteria call come back on the two calls after it, with
+interest. Any change to what the criteria call sees must keep its prompt a
+prefix of decide's, which means: remove whole calls (options 1 and 3), never
+trim inside a shared section.
 
 ## Recommended order
 
