@@ -87,11 +87,11 @@ def _run_capture(room):
 def test_formatting_guide_injected_after_identity(room):
     db.set_current_profile(_germany_uuid())
     prompt = _run_capture(room)["user_prompt"]
-    assert "<user_settings_json>" in prompt
+    assert "<user_settings_yaml>" in prompt
     assert "<formatting_guide>" in prompt
     assert "Use these defaults unless the current request" in prompt
     assert "- Numbers: decimal comma with point grouping" in prompt
-    assert prompt.index("<user_settings_json") < prompt.index("<formatting_guide")
+    assert prompt.index("<user_settings_yaml") < prompt.index("<formatting_guide")
     # The switch marker itself is filtered from model history.
     assert "switched to Germany" not in prompt
 
@@ -116,7 +116,7 @@ def test_blocks_default_off_until_gated(room):
     db.set_setting("assistant.formatting_guide", None)      # back to default
     db.set_setting("assistant.knowledge_calibration", None)
     prompt = _run_capture(room)["user_prompt"]
-    assert "<user_settings_json" in prompt                  # never gated
+    assert "<user_settings_yaml" in prompt                  # never gated
     assert "<formatting_guide" not in prompt
     assert "<knowledge_calibration" not in prompt
     db.set_setting("assistant.formatting_guide", True)      # one block alone
@@ -128,7 +128,7 @@ def test_blocks_default_off_until_gated(room):
 def test_unset_profile_emits_neither_block(room):
     db.set_current_profile(None)
     prompt = _run_capture(room)["user_prompt"]
-    assert "<user_settings_json" not in prompt
+    assert "<user_settings_yaml" not in prompt
     assert "<formatting_guide" not in prompt
 
 
@@ -162,7 +162,7 @@ def test_formatting_failure_empties_only_its_block(room, monkeypatch):
 
     monkeypatch.setattr(assistant_mod.user_profile, "format_formatting_guide", boom)
     prompt = _run_capture(room)["user_prompt"]
-    assert "<user_settings_json" in prompt            # identity unaffected
+    assert "<user_settings_yaml" in prompt            # identity unaffected
     assert "<formatting_guide" not in prompt
 
 
@@ -204,7 +204,7 @@ def test_calibration_block_injected_as_context_after_formatting(room, calibrated
     assert '<knowledge_calibration authority="context">' in prompt
     assert "Self-declared topic calibration" in prompt
     assert '{"topic":"Mathematics","level":"expert"' in prompt
-    assert (prompt.index("<user_settings_json")
+    assert (prompt.index("<user_settings_yaml")
             < prompt.index("<formatting_guide")
             < prompt.index("<knowledge_calibration"))
 
@@ -292,7 +292,7 @@ def test_steps_record_the_debug_log(room):
 def test_identity_block_omits_the_tree_label(room):
     db.set_current_profile(_germany_uuid())
     prompt = _run_capture(room)["user_prompt"]
-    assert '"full_name": "Karl Weierstraß"' in prompt
+    assert 'full_name: Karl Weierstraß' in prompt
     assert '"profile":' not in prompt          # the tree label is debug info
 
 

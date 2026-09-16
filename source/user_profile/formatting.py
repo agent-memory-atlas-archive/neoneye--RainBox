@@ -2,7 +2,7 @@
 fields into code-owned prompt directives with examples.
 
 Injected by the main assistant as `<formatting_guide>` next to
-`<user_settings_json>`. The guide reads as the defaults the reply follows, so
+`<user_settings_yaml>`. The guide reads as the defaults the reply follows, so
 every imperative sentence here is owned by code and every interpolated value
 passes the strict prompt-boundary validation below — the profile form
 deliberately accepts uncommon free-text timezone/language/currency values, and

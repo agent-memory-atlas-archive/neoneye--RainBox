@@ -138,7 +138,7 @@ def test_user_prompt_has_xml_zones_turn_instructions_first_and_escaped_content()
     # This fixture's agent has no identity/persona/formatting/calibration/
     # profile set, so tier 1 renders empty and current_user_request (tier 1b)
     # is what starts the prompt here — a fully populated agent has
-    # user_settings_json lead instead (see test_assistant_prompt_tiers.py for
+    # user_settings_yaml lead instead (see test_assistant_prompt_tiers.py for
     # the tier ordering). What these assertions actually pin is
     # turn_instructions' own render shape: a bare tag (the shared system
     # prompt names it as the job section, so an authority attribute would

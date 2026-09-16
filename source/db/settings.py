@@ -193,7 +193,7 @@ SETTINGS: dict[str, Setting] = {
         validate=_validate_profile_current,
         description="The profile (from /profile) that IS the operator — the "
                     "current 'account'. The assistant injects this profile's "
-                    "filled-in fields into every turn as <user_settings_json>, "
+                    "filled-in fields into every turn as <user_settings_yaml>, "
                     "so it knows who it is talking to. Unset = no identity "
                     "block in the prompt.",
     ),

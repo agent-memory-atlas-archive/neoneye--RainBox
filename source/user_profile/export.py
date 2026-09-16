@@ -8,10 +8,10 @@ and re-rendered. Nothing re-implements a block. A second implementation would
 drift, and an export that quietly disagrees with the prompt is worse than no
 export at all.
 
-The document does NOT key on the prompt tags. A tag like `user_settings_json`
+The document does NOT key on the prompt tags. A tag like `user_settings_yaml`
 carries its suffix because the model needs to know what the payload inside it
-is; repeating that suffix as a key inside a YAML or XML document states the
-wrong format, and inside a JSON document states the obvious. The profile's
+is; repeating that suffix as a key inside a JSON or XML document states the
+wrong format, and inside a YAML document states the obvious. The profile's
 own fields are the document's top level, with `language` and `knowledge`
 beside them.
 
@@ -42,7 +42,7 @@ SECTIONS: tuple[str, ...] = ("profile", "languages", "calibration")
 
 # The document key each section occupies. "profile" is absent on purpose: its
 # fields ARE the top level, so a field reads as `full_name`, not
-# `user_settings_json.full_name`. Nothing in the field registry may take one of
+# `user_settings_yaml.full_name`. Nothing in the field registry may take one of
 # these names — see test_no_profile_field_collides_with_a_section_key, which
 # exists because `language` is an entirely plausible future field and hoisting
 # would silently overwrite it.
@@ -102,7 +102,7 @@ def collect_sections(
         if name not in sections:
             continue
         if name == "profile":
-            doc.update(json.loads(format_identity_block(profile) or "{}"))
+            doc.update(yaml.safe_load(format_identity_block(profile) or "") or {})
             continue
         if name == "languages":
             payload: Any = declared_language_candidates(profile)

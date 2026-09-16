@@ -468,7 +468,7 @@ def test_review_prompt_carries_all_artifacts_under_review(monkeypatch):
     # profile) leads, the dynamic tail follows, the local-time anchor closes.
     assert "<current_user_request>" in user_prompt
     assert (user_prompt.index("<current_user_request>")
-            < user_prompt.index("<user_settings_json")
+            < user_prompt.index("<user_settings_yaml")
             < user_prompt.index("<user_profile")
             < user_prompt.index("<turn_instructions")
             < user_prompt.index("<proposed_step")
