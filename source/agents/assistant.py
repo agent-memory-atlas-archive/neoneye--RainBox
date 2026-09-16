@@ -5377,8 +5377,7 @@ class AssistantAgent(ModelGroupAgent):
         return ResponseLanguageClassification(
             reason=(
                 f"Resolved by detection: the request is in {codes[0]}, which "
-                "the conversation or the profile already establishes. No model "
-                "was asked."
+                "the conversation or the profile already establishes."
             ),
             languages=[
                 ResponseLanguageItem(code=code, score=max(1, top - index))
