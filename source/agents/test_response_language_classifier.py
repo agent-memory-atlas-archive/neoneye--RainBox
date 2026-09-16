@@ -448,3 +448,16 @@ def test_classifier_call_records_its_token_cost_on_the_step_row(room, monkeypatc
     # fallbacks — it is what the throughput figure divides by.
     assert row.duration_ms == 4200
     assert row.model_uuid == model_uuid
+
+
+def test_markdown_without_reason_is_the_list_alone():
+    """The detection path renders no Reason section: its only evidence is the
+    language itself, which the list's first line already states."""
+    classification = ResponseLanguageClassification(
+        reason="Detected: the request is in da.",
+        languages=[ResponseLanguageItem(code="da", score=2),
+                   ResponseLanguageItem(code="en-US", score=1)],
+    )
+    assert AssistantAgent._format_reply_language_markdown(
+        classification, include_reason=False) == (
+        "## Languages - highest confidence first\n- `da`\n- `en-US`")

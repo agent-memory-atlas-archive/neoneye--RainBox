@@ -355,6 +355,11 @@ not every scored candidate must appear in the reply:
 </reply_language_markdown>
 ```
 
+When the language was resolved by detection (no classifier call — the request
+is in a language the conversation or the profile already establishes) the
+block carries the list alone: the Reason section would only restate its first
+line, and it rides every later call of the turn.
+
 The binding-only `assistant.response_language_classifier` slot allows
 scorer-model comparisons on `/agentmodel`; when unbound it falls back to
 `assistant.default`. If neither has a usable group, no Markdown block is

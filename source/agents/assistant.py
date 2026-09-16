@@ -5316,8 +5316,15 @@ class AssistantAgent(ModelGroupAgent):
     @staticmethod
     def _format_reply_language_markdown(
         classification: ResponseLanguageClassification,
+        *, include_reason: bool = True,
     ) -> str:
         """Render score-free language context for later assistant calls.
+
+        `include_reason=False` drops the Reason section: a classification
+        constructed by detection has no evidence beyond "the request is in
+        this language", which the list's first line already says, so the
+        section would spend tokens on every later call to state it twice.
+        The trace row still records the constructed reason.
 
         Descending score order conveys relative confidence without spending
         prompt tokens on the numeric Likert values. ``enumerate`` makes the
@@ -5335,11 +5342,11 @@ class AssistantAgent(ModelGroupAgent):
             enumerate(classification.languages),
             key=lambda pair: (-pair[1].score, pair[0]),
         )
-        reason = " ".join(classification.reason.split())
-        lines = [
-            "## Reason",
-            reason,
-            "",
+        lines: list[str] = []
+        if include_reason:
+            reason = " ".join(classification.reason.split())
+            lines += ["## Reason", reason, ""]
+        lines += [
             "## Languages - highest confidence first",
             *[f"- `{item.code}`" for _, item in ranked],
         ]
@@ -5376,8 +5383,8 @@ class AssistantAgent(ModelGroupAgent):
         top = max(2, min(5, len(codes)))
         return ResponseLanguageClassification(
             reason=(
-                f"Resolved by detection: the request is in {codes[0]}, which "
-                "the conversation or the profile already establishes."
+                f"Detected: the request is in {codes[0]}, a language the "
+                "conversation or the profile already establishes."
             ),
             languages=[
                 ResponseLanguageItem(code=code, score=max(1, top - index))
@@ -5572,7 +5579,8 @@ class AssistantAgent(ModelGroupAgent):
                     resolution.language, profile)
                 self._response_language_classification = built
                 self._reply_language_markdown = (
-                    self._format_reply_language_markdown(built))
+                    self._format_reply_language_markdown(
+                        built, include_reason=False))
                 # The row's own recorded language is the one the turn actually
                 # proceeds in -- the profile's declared variant when it has
                 # one (`en-US`, not the detector's bare `en`) -- so the row
