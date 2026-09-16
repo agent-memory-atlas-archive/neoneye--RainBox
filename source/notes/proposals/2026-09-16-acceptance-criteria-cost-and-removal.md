@@ -133,7 +133,7 @@ see, the same 4B decide model sees.
 
 ## The preferred-name rule
 
-The criteria prompt carries `<user_settings_json>` whole:
+The criteria prompt carries `<user_settings_yaml>` whole:
 
 ```
 "full_name": "…", "preferred_name": "…", "handle": "…", "gender": "…",
@@ -155,7 +155,7 @@ Two fixes, not exclusive:
 
 - **Structural.** Give the criteria call (or whatever replaces it) only the
   locale fields. With the latency note's Proposal B, the guide already carries
-  those, so the call needs no `user_settings_json` at all.
+  those, so the call needs no `user_settings_yaml` at all.
 - **Guidance.** A profile-guidance line stating when the assistant may use
   the name (never, except for something genuinely important) steers the
   decide and audit prompts too, which also see the name and also sometimes

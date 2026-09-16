@@ -17,7 +17,7 @@ import user_profile
 from profile_fields import PROFILE_FIELDS
 from user_profile.calibration import format_calibration
 from user_profile.export import SECTION_KEYS, collect_sections, export_settings
-from user_profile.identity import format_identity_block
+from user_profile.identity import dump_block, format_identity_block
 from user_profile.languages import declared_language_candidates
 
 PROFILE = {"data": {
@@ -43,8 +43,7 @@ def test_profile_section_round_trips_to_the_identity_block():
     fields reproduces the prompt string byte-for-byte. A reimplementation
     that merely looked similar would fail here."""
     doc = collect_sections(PROFILE, ["profile"])
-    assert json.dumps(doc, ensure_ascii=False,
-                      indent=2) == format_identity_block(PROFILE)
+    assert dump_block(doc) == format_identity_block(PROFILE)
 
 
 def test_language_section_is_the_prompt_candidate_list():
@@ -73,11 +72,11 @@ def test_calibration_drops_the_boilerplate_preamble():
 
 
 def test_profile_fields_are_the_documents_top_level():
-    """No `user_settings_json` wrapper: a suffix naming the payload format is
-    a prompt-tag concern, and inside YAML or XML it names the wrong one."""
+    """No `user_settings_yaml` wrapper: a suffix naming the payload format is
+    a prompt-tag concern, and inside JSON or XML it names the wrong one."""
     doc = collect_sections(PROFILE)
     assert doc["full_name"] == "Ada Lovelace"
-    assert not any(key.endswith("_json") for key in doc)
+    assert not any(key.endswith(("_json", "_yaml")) for key in doc)
 
 
 def test_no_profile_field_collides_with_a_section_key():

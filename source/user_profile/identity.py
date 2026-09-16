@@ -3,27 +3,57 @@
 The `profile.current` setting points at one profile on the /profile page (a
 person profile — the operator's own "account"). This module renders that
 profile's filled-in fields into a compact prompt block the assistant injects
-as `<user_settings_json>`, next to the memory-derived `<user_profile>`
+as `<user_settings_yaml>`, next to the memory-derived `<user_profile>`
 digest: identity is declared once by the operator, the digest accrues from
 remembered claims.
 
-Rendering is registry-driven (`profile_fields.PROFILE_FIELDS`) and emits JSON:
+Rendering is registry-driven (`profile_fields.PROFILE_FIELDS`) and emits YAML:
 fields appear under their registry keys in registry order, absent/blank fields
-are skipped, and the connector-owned `dynamic` subtree is never rendered. JSON
-because every value is escaped by json.dumps (a field containing newlines or
-quotes cannot forge structure) and the registry keys are stable machine
-identifiers — and local models see far more JSON than any other prompt shape.
+are skipped, and the connector-owned `dynamic` subtree is never rendered. YAML
+because it is the same mapping with fewer tokens — no braces, quotes, or
+commas around values a model reads as prose anyway — while keeping the
+guarantees the block relies on: every value is emitted by `yaml.safe_dump`, so
+a field containing newlines or quotes cannot forge structure (multi-line
+values render as literal blocks, values that would read as another type are
+quoted), the registry keys stay stable machine identifiers, and the round
+trip through `yaml.safe_load` is exact (`user_profile/export.py` depends on
+that to rebuild the document from this string).
 """
 
-import json
 import logging
 from typing import Any
 from uuid import UUID
+
+import yaml
 
 import db
 from profile_fields import PROFILE_FIELDS
 
 logger = logging.getLogger(__name__)
+
+
+class _BlockDumper(yaml.SafeDumper):
+    """SafeDumper that renders a multi-line string as a literal block (`|`)
+    instead of a quoted scalar full of escapes: an address reads as an
+    address. Single-line strings keep the default style, which quotes only
+    what would otherwise parse as a number, date, or boolean."""
+
+
+def _represent_str(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
+    style = "|" if "\n" in value else None
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style=style)
+
+
+_BlockDumper.add_representer(str, _represent_str)
+
+
+def dump_block(payload: dict[str, str]) -> str:
+    """The block's YAML: registry order kept, unicode kept, no line folding,
+    no trailing document markers — a bare mapping the enclosing tag names."""
+    return yaml.dump(
+        payload, Dumper=_BlockDumper, allow_unicode=True, sort_keys=False,
+        default_flow_style=False, width=10**6,
+    ).rstrip("\n")
 
 
 def current_profile() -> dict[str, Any] | None:
@@ -46,9 +76,9 @@ def current_profile() -> dict[str, Any] | None:
 
 
 def format_identity_block(profile: dict[str, Any]) -> str:
-    """Render one profile as a prompt block: a JSON object of the filled-in
+    """Render one profile as a prompt block: a YAML mapping of the filled-in
     fields under their registry keys, in registry order. No preamble line
-    and no profile display name: the enclosing <user_settings_json> tag
+    and no profile display name: the enclosing <user_settings_yaml> tag
     names the content, and the tree label is operator
     bookkeeping (it rides the per-step debug log, not the prompt). This is
     the single place to experiment with identity prompt formatting.
@@ -68,7 +98,7 @@ def format_identity_block(profile: dict[str, Any]) -> str:
         payload[field.key] = value
         if field.key == "number_format" and value in NUMBER_FORMAT_COMMENTS:
             payload["number_format.comment"] = NUMBER_FORMAT_COMMENTS[value]
-    return json.dumps(payload, ensure_ascii=False, indent=2)
+    return dump_block(payload)
 
 
 def build_identity_block() -> str:

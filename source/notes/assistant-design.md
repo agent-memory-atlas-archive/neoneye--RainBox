@@ -173,7 +173,7 @@ turn.
   decision it was, not an anonymous failure; tail-capped at
   `MAX_SCRATCHPAD_CHARS = 5000`), the step
   counter (`decision_request`), the **user settings**
-  (`<user_settings_json>` — `profile.current`'s fields as JSON, a bare tag
+  (`<user_settings_yaml>` — `profile.current`'s fields as YAML, a bare tag
   with no attributes (the system prompt declares it reference data), no
   preamble and no tree label; opaque enum values such as `number_format`
   carry a code-owned `<key>.comment` entry spelling the convention out), the
@@ -524,7 +524,7 @@ turn's conversation history of either role, both at the shared window
 (`MAX_RECENT_MESSAGES = 30`, owned by `AssistantPromptBuilder` so tier 0 is
 byte-identical across the turn's calls) — how the assistant has been
 formatting and phrasing its replies is exactly the continuity these criteria
-establish — plus `user_settings_json`, `reply_language_markdown`, and the
+establish — plus `user_settings_yaml`, `reply_language_markdown`, and the
 formatting guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
 injection). NOT the action catalog — the call plans constraints, not actions.

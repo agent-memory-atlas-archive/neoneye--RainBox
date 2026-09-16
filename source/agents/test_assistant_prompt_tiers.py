@@ -7,7 +7,7 @@ whole prefix through the previous step's own entry. Across the six calls of
 one turn, AssistantPromptBuilder emits an identical tier 0 — the request,
 then the conversation history at one window for every call — followed by the
 identity block every call carries, so the shared run reaches the end of
-user_settings_json before the per-call static heads diverge. Behind that,
+user_settings_yaml before the per-call static heads diverge. Behind that,
 _ALL_STATIC_BLOCKS is ordered so the per-call block sets nest (criteria then
 audit then second_opinion then decide), extending the overlap further for the
 calls that have more blocks in common.
@@ -188,7 +188,7 @@ DECIDE_EXPECTED = [
     # check below would reject a section the builder legitimately skipped.)
     "current_user_request", "conversation_history_xml",
     # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
-    "user_settings_json", "formatting_guide", "user_profile",
+    "user_settings_yaml", "formatting_guide", "user_profile",
     "assistant_persona", "knowledge_calibration",
     # tier 2
     "turn_instructions",
@@ -245,7 +245,7 @@ def sample_decision():
 CRITERIA_EXPECTED = [
     "current_user_request", "current_user_request_summary_markdown",
     "conversation_history_xml",
-    "user_settings_json", "formatting_guide",
+    "user_settings_yaml", "formatting_guide",
     "turn_instructions",
     "reply_language_markdown",
     "prior_acceptance_criteria",
@@ -254,7 +254,7 @@ CRITERIA_EXPECTED = [
 
 SECOND_OPINION_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_json", "formatting_guide", "user_profile",
+    "user_settings_yaml", "formatting_guide", "user_profile",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
     "proposed_step", "verdict_request", "current_local_time",
@@ -268,11 +268,11 @@ SECOND_OPINION_EXPECTED = [
 # (prior_acceptance_criteria on a revision, the request summary on a
 # truncated request) are deliberately absent from it.
 CRITERIA_ALWAYS = [
-    "user_settings_json", "formatting_guide", "turn_instructions",
+    "user_settings_yaml", "formatting_guide", "turn_instructions",
     "conversation_history_xml", "current_user_request", "criteria_request",
 ]
 SECOND_OPINION_ALWAYS = [
-    "user_settings_json", "turn_instructions", "proposed_step",
+    "user_settings_yaml", "turn_instructions", "proposed_step",
     "conversation_history_xml", "current_user_request", "verdict_request",
     "current_local_time",
 ]
@@ -301,7 +301,7 @@ def test_second_opinion_prompt_follows_tier_order(
 
 AUDIT_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_json", "formatting_guide",
+    "user_settings_yaml", "formatting_guide",
     "turn_instructions",
     "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
@@ -315,7 +315,7 @@ AUDIT_EXPECTED = [
 # carries.
 CLASSIFIER_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_json", "user_settings_languages_json",
+    "user_settings_yaml", "user_settings_languages_json",
     "turn_instructions", "classification_request",
 ]
 
@@ -325,12 +325,12 @@ SUMMARY_EXPECTED = ["turn_instructions", "current_user_request"]
 # As in Task 4: the order check filters by what was found, so these lists are
 # what stops a builder silently dropping a section it must always emit.
 AUDIT_ALWAYS = [
-    "user_settings_json", "formatting_guide", "turn_instructions",
+    "user_settings_yaml", "formatting_guide", "turn_instructions",
     "conversation_history_xml", "proposed_reply", "current_user_request",
     "current_local_time",
 ]
 CLASSIFIER_ALWAYS = [
-    "user_settings_json", "user_settings_languages_json",
+    "user_settings_yaml", "user_settings_languages_json",
     "turn_instructions", "conversation_history_xml", "current_user_request",
     "classification_request",
 ]
@@ -436,7 +436,7 @@ def test_decide_and_audit_prompts_share_the_request_and_static_head(
     # overlap does not stop at the first block decide carries and audit does
     # not. Reordering _ALL_STATIC_BLOCKS to put persona or calibration before
     # formatting would break this.
-    assert "<user_settings_json>identity</user_settings_json>" in decide[:shared]
+    assert "<user_settings_yaml>identity</user_settings_yaml>" in decide[:shared]
     assert "<formatting_guide" in decide[:shared]
 
 
@@ -484,7 +484,7 @@ def test_consecutive_decide_steps_share_everything_before_the_new_step(
 
 
 RECALL_FILTER_EXPECTED = [
-    "current_user_request", "conversation_history_xml", "user_settings_json",
+    "current_user_request", "conversation_history_xml", "user_settings_yaml",
     "turn_instructions", "recall_candidates", "scoring_request",
 ]
 
@@ -529,7 +529,7 @@ def test_recall_filter_shares_the_decide_prompts_opening_bytes(
     assert rf[:shared].startswith(
         "<current_user_request>what is 2+2</current_user_request>")
     assert "<conversation_history_xml>" in rf[:shared]
-    assert "<user_settings_json>identity</user_settings_json>" in rf[:shared]
+    assert "<user_settings_yaml>identity</user_settings_yaml>" in rf[:shared]
     # And it is the same system prompt, so nothing above the user message
     # differs either.
     assert agent._system_prompt() == ASSISTANT_SHARED_SYSTEM_PROMPT
@@ -595,13 +595,13 @@ def test_every_assistant_call_shares_the_turn_prefix(fully_populated_agent):
     their first <message> and share nothing past it. Every call therefore
     renders the same window, and every call carries `identity` — the one
     tier-1 block they all have — so the shared run reaches the end of
-    user_settings_json.
+    user_settings_yaml.
 
     Written as a loop over all six calls rather than as pairs, so a seventh
     call added later cannot quietly opt out.
     """
     prompts = all_turn_prompts(fully_populated_agent, TURN_MESSAGES)
-    required = "<user_settings_json>identity</user_settings_json>"
+    required = "<user_settings_yaml>identity</user_settings_yaml>"
 
     for name, prompt in prompts.items():
         assert required in prompt, f"{name} carries no identity block"
@@ -615,7 +615,7 @@ def test_every_assistant_call_shares_the_turn_prefix(fully_populated_agent):
             # a lower bound on `shared` rather than merely asserting overlap.
             assert required in prompt[:shared], (
                 f"{name} x {other_name} share only {shared} chars, "
-                f"which does not reach the end of user_settings_json"
+                f"which does not reach the end of user_settings_yaml"
             )
 
 
@@ -633,7 +633,7 @@ def test_prompt_builder_emits_tier_zero_and_one_on_construction(
 
     assert section_order(builder.render()) == [
         "current_user_request", "conversation_history_xml",
-        "user_settings_json",
+        "user_settings_yaml",
     ]
 
 
