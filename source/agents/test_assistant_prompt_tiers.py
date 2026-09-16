@@ -245,7 +245,7 @@ def sample_decision():
 CRITERIA_EXPECTED = [
     "current_user_request", "current_user_request_summary_markdown",
     "conversation_history_xml",
-    "user_settings_yaml", "formatting_guide",
+    "user_settings_yaml", "formatting_guide", "assistant_persona",
     "turn_instructions",
     "reply_language_markdown",
     "prior_acceptance_criteria",
