@@ -189,7 +189,7 @@ DECIDE_EXPECTED = [
     "current_user_request", "conversation_history_xml",
     # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
     "user_settings_yaml", "formatting_guide", "user_profile",
-    "assistant_persona", "knowledge_calibration",
+    "knowledge_calibration", "assistant_persona",
     # tier 2
     "turn_instructions",
     # tier 3
@@ -245,7 +245,8 @@ def sample_decision():
 CRITERIA_EXPECTED = [
     "current_user_request", "current_user_request_summary_markdown",
     "conversation_history_xml",
-    "user_settings_yaml", "formatting_guide", "assistant_persona",
+    "user_settings_yaml", "formatting_guide", "knowledge_calibration",
+    "assistant_persona",
     "turn_instructions",
     "reply_language_markdown",
     "prior_acceptance_criteria",
@@ -255,6 +256,7 @@ CRITERIA_EXPECTED = [
 SECOND_OPINION_EXPECTED = [
     "current_user_request", "conversation_history_xml",
     "user_settings_yaml", "formatting_guide", "user_profile",
+    "knowledge_calibration",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
     "proposed_step", "verdict_request", "current_local_time",
@@ -301,7 +303,7 @@ def test_second_opinion_prompt_follows_tier_order(
 
 AUDIT_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "formatting_guide",
+    "user_settings_yaml", "formatting_guide", "knowledge_calibration",
     "turn_instructions",
     "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
@@ -737,7 +739,7 @@ def test_criteria_and_decide_prompts_share_the_head_through_the_guide(
 ):
     """formatting_guide is the last block the criteria call and the decide
     call can share — criteria's head ends there while decide's continues
-    into assistant_persona — so the guide only pays off as shared prefix
+    into user_profile — so the guide only pays off as shared prefix
     while both render its tag identically. Reuse runs up to the point two
     prompts first differ, so an attribute on one side and not the other ends
     the shared run at the opening tag and makes decide prefill the guide
@@ -761,3 +763,26 @@ def test_criteria_and_decide_prompts_share_the_head_through_the_guide(
     assert "<formatting_guide>" in shared
     assert agent._formatting_block in shared
     assert "</formatting_guide>" in shared
+
+
+def test_every_judging_call_carries_the_calibration_block_as_decide_does(
+    fully_populated_agent, sample_decision
+):
+    """Calibration rides the criteria, audit, and second-opinion prompts with
+    the same tag, attribute, and text as the decide prompt — the calls that
+    judge a reply must not know less about the asker than the call that
+    wrote it."""
+    agent = fully_populated_agent
+    messages = [{"sender_type": "human", "text": "convert 30C to F"}]
+    rendered = '<knowledge_calibration authority="context">calibration</knowledge_calibration>'
+    decide = agent._build_user_prompt(messages=messages, scratchpad=[], step_index=0)
+    criteria = agent._build_acceptance_criteria_prompt(messages)
+    audit = agent._build_reply_audit_prompt(
+        "86 °F", messages=messages, scratchpad=[])
+    second = agent._build_second_opinion_prompt(
+        sample_decision, reasoning="because", messages=messages)
+    for prompt in (decide, criteria, audit, second):
+        assert rendered in prompt
+        assert prompt.index("<formatting_guide") < prompt.index("<knowledge_calibration")
+    assert criteria.index("<knowledge_calibration") < criteria.index("<assistant_persona>")
+    assert decide.index("<user_profile") < decide.index("<knowledge_calibration") < decide.index("<assistant_persona>")

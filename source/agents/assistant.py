@@ -5078,7 +5078,7 @@ class AssistantAgent(ModelGroupAgent):
         # Tiers 0 and 1. verdict_request re-anchors the request below.
         prompt = AssistantPromptBuilder(
             self, "second_opinion_review", messages=messages,
-            blocks=("identity", "formatting", "profile"))
+            blocks=("identity", "formatting", "profile", "calibration"))
         prompt.append_turn_instructions(SECOND_OPINION_TURN_INSTRUCTIONS)
 
         if self._reply_language_markdown:
@@ -5153,7 +5153,7 @@ class AssistantAgent(ModelGroupAgent):
         # Tiers 0 and 1.
         prompt = AssistantPromptBuilder(
             self, "reply_audit", messages=messages,
-            blocks=("identity", "formatting"))
+            blocks=("identity", "formatting", "calibration"))
         prompt.append_turn_instructions(REPLY_AUDIT_TURN_INSTRUCTIONS)
         if self._criteria_markdown:
             prompt.append_text(
@@ -6102,8 +6102,9 @@ class AssistantAgent(ModelGroupAgent):
         prior_criteria: "AcceptanceCriteria | None" = None,
         scratchpad: list[AssistantTurnEvent] | None = None,
     ) -> str:
-        """The criteria call's user prompt: who is asking (identity), the
-        formatting guide and the assistant's persona (who is answering), then
+        """The criteria call's user prompt: who is asking (identity, then the
+        knowledge calibration), the formatting guide and the assistant's
+        persona (who is answering), then
         the request, the turn's conversation history,
         the language this turn already resolved, and — for a revision — the
         prior criteria and the run's steps so far, without which the call
@@ -6135,11 +6136,15 @@ class AssistantAgent(ModelGroupAgent):
             response_language_gate_enabled=self._response_language_gate_enabled())
         if guide:
             prompt.append_text("formatting_guide", guide)
-        # The persona, exactly as the decide prompt carries it (a bare tag,
-        # same text), so the criteria know who is answering and at what
-        # level the user is met. It sits where decide puts it — after the
-        # guide — so the two prompts still share their prefix up to the
-        # guide's end; decide's user_profile block is what separates them.
+        # Calibration and persona, exactly as the decide prompt carries them
+        # (same tags, same text, same order: calibration directly after the
+        # profile slot, persona last), so the criteria know who is asking and
+        # at what level, and who is answering. Decide's user_profile block —
+        # absent here — is what ends the prefix the two prompts share, just
+        # after the guide.
+        if self._calibration_block:
+            prompt.append_text("knowledge_calibration", self._calibration_block,
+                               authority="context")
         if self._persona_block:
             prompt.append_text("assistant_persona", self._persona_block)
         prompt.append_turn_instructions(ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS)
@@ -6497,10 +6502,17 @@ class AssistantAgent(ModelGroupAgent):
 
     # Tier 1. Fixed order, and ordered so the per-call block SETS nest:
     #
-    #   classifier / criteria / recall_filter {identity}
-    #     ⊂ audit {identity, formatting}
-    #       ⊂ second_opinion {identity, formatting, profile}
-    #         ⊂ decide {identity, formatting, profile, persona, calibration}
+    #   classifier / recall_filter {identity}
+    #     ⊂ audit {identity, formatting, calibration}
+    #       ⊂ second_opinion {identity, formatting, profile, calibration}
+    #         ⊂ decide {identity, formatting, profile, calibration, persona}
+    #   (criteria: identity, its own formatting guide, calibration, persona —
+    #    the decide order minus profile, so it shares through the guide)
+    #
+    # Calibration sits directly after the profile: both say who is asking,
+    # and every call that judges a reply — audit, second opinion, criteria —
+    # carries it, so none of them judges with less of the asker than decide
+    # had. Persona sorts last because it is the block the fewest calls take.
     #
     # Every call takes `identity`, so it is the last block the whole turn has
     # in common — and with tier 0 identical across the calls (see
@@ -6520,7 +6532,7 @@ class AssistantAgent(ModelGroupAgent):
     # Within a turn nothing here changes, so it also sits ahead of everything
     # that does — consecutive decide steps share this tier and far beyond it.
     _ALL_STATIC_BLOCKS: tuple[str, ...] = (
-        "identity", "formatting", "profile", "persona", "calibration")
+        "identity", "formatting", "profile", "calibration", "persona")
 
     def _append_static_head(
         self, root: ET.Element, blocks: tuple[str, ...] = _ALL_STATIC_BLOCKS,
@@ -6554,12 +6566,12 @@ class AssistantAgent(ModelGroupAgent):
             ET.SubElement(
                 root, "user_profile", {"authority": "context"}
             ).text = self._profile_block
-        if "persona" in blocks and self._persona_block:
-            ET.SubElement(root, "assistant_persona").text = self._persona_block
         if "calibration" in blocks and self._calibration_block:
             ET.SubElement(
                 root, "knowledge_calibration", {"authority": "context"}
             ).text = self._calibration_block
+        if "persona" in blocks and self._persona_block:
+            ET.SubElement(root, "assistant_persona").text = self._persona_block
 
     @staticmethod
     def _append_turn_instructions(root: ET.Element, instructions: str) -> None:
