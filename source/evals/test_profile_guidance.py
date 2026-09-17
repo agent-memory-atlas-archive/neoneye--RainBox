@@ -105,13 +105,13 @@ def test_variants_toggle_blocks_in_the_real_prompt(case, monkeypatch):
                                       repetitions=1)
         seen[variant] = captured["prompts"][0][1]
     assert "<formatting_guide" not in seen["baseline"]
-    assert "<user_knowledge_yaml" not in seen["baseline"]
+    assert "<user_expertise_yaml" not in seen["baseline"]
     assert "<formatting_guide" in seen["formatting_only"]
-    assert "<user_knowledge_yaml" not in seen["formatting_only"]
+    assert "<user_expertise_yaml" not in seen["formatting_only"]
     assert "<formatting_guide" not in seen["calibration_only"]
-    assert "<user_knowledge_yaml" in seen["calibration_only"]   # Germany seeds rows
+    assert "<user_expertise_yaml" in seen["calibration_only"]   # Germany seeds rows
     assert "<formatting_guide" in seen["combined"]
-    assert "<user_knowledge_yaml" in seen["combined"]
+    assert "<user_expertise_yaml" in seen["combined"]
     # The identity block rides every variant (it is not gated).
     assert all("<user_settings_yaml" in p for p in seen.values())
     # The case message is the current request in the production prompt shape.

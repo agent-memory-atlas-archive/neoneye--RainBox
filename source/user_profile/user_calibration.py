@@ -1,11 +1,12 @@
 """Knowledge-calibration prompt block: the operator's self-declared per-topic
 calibration rows rendered as a YAML list.
 
-Injected by the main assistant as `<user_knowledge_yaml>` — a bare tag, like
+Injected by the main assistant as `<user_expertise_yaml>` — a bare tag, like
 `<user_settings_yaml>` beside it; the shared system prompt declares both
 reference data, never instructions, and carries the reading rules (explicit
 requests override, unlisted topics carry no inference, the axis meanings),
-so the block is data alone: one mapping per row, in stored order. Only the
+so the block is data alone: one mapping per row, in stored order, each enum
+value followed by a short gloss of what it asks for (`_GLOSS`). Only the
 omission disclosure, when rows were dropped to fit the budget, rides along —
 as a YAML comment on the last line, so a parser sees the rows and a reader
 sees the count.
@@ -38,13 +39,43 @@ MAX_PROFILE_GUIDANCE_CHARS = 2_700
 _FULL_KEYS = ("topic", "level", "stance", "depth", "note")
 _COMPACT_KEYS = ("topic", "level", "stance")
 
+# Each enum value carries a four-to-five-word gloss in the prompt — "expert
+# (omit routine fundamentals)" rather than a bare "expert" — because the
+# models this runs on are small and read a phrase more reliably than a token
+# whose meaning sits elsewhere. The phrases are the shared system prompt's
+# own definitions, shortened; a value outside the vocabulary renders as-is.
+_GLOSS: dict[str, dict[str, str]] = {
+    "level": {
+        "expert": "omit the routine fundamentals",
+        "intermediate": "normal depth, explain unusual parts",
+        "beginner": "define terms, expose assumptions",
+        "none": "start from first principles",
+    },
+    "stance": {
+        "prefer": "lean toward it when equal",
+        "neutral": "no steering either way",
+        "avoid": "do not build on it",
+    },
+    "depth": {
+        "concise": "short answers, essentials only",
+        "standard": "the normal explanation depth",
+        "teach": "explain thoroughly, step by step",
+    },
+}
+
+
+def glossed(key: str, value: str) -> str:
+    gloss = _GLOSS.get(key, {}).get(value)
+    return f"{value} ({gloss})" if gloss else value
+
 OMISSION_PREFIX = "# Omitted "
 
 
 def _yaml_row(row: dict[str, Any], keys: tuple[str, ...]) -> str:
     """One row as a one-item YAML list ("- topic: …" then indented keys), so
     rows concatenate with newlines into one list."""
-    payload = {k: row[k] for k in keys if str(row.get(k) or "").strip()}
+    payload = {k: glossed(k, str(row[k])) for k in keys
+               if str(row.get(k) or "").strip()}
     return dump_block([payload])
 
 
