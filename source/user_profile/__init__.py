@@ -7,7 +7,7 @@ creates or infers claims (derivation is the optional Phase 3.5 deriver). Named
 ``user_profile`` rather than ``profile`` to avoid shadowing the stdlib profiler.
 """
 
-from user_profile.calibration import (
+from user_profile.user_calibration import (
     MAX_PROFILE_GUIDANCE_CHARS,
     build_calibration_block,
     format_calibration,

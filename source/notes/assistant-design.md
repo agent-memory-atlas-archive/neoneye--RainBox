@@ -182,8 +182,9 @@ turn.
   profile-derived block with instruction authority, justified because every
   imperative sentence is code-owned and every interpolated value passed the
   strict prompt-boundary validation), the **knowledge calibration** block
-  (`authority="context"` — self-declared topic rows as JSONL from
-  `user_profile/calibration.py`, sharing a 2 700-char guidance budget with
+  (`<user_expertise_yaml>`, a bare tag the system prompt declares context —
+  self-declared topic rows as a YAML list from
+  `user_profile/user_calibration.py`, sharing a 2 700-char guidance budget with
   the formatting guide, formatting admitted first) — these two blocks sit
   behind independent default-off switches (`assistant.formatting_guide`,
   `assistant.knowledge_calibration`), flipped only after each block passes
@@ -532,10 +533,13 @@ formatting and phrasing its replies is exactly the continuity these criteria
 establish — plus `user_settings_yaml`, `reply_language_markdown`, the
 formatting guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
-injection), and `assistant_persona` when the room binds one — the same text
-and position as in the decide prompt, so the criteria know who answers and
-at what level the user is met without shortening the prefix the two calls
-share. NOT the action catalog — the call plans constraints, not actions.
+injection), the `user_expertise_yaml` rows when that switch is on, and
+`assistant_persona` when the room binds one — the same text and order as in
+the decide prompt. Calibration sits directly after `user_settings_yaml` in
+every call of the turn (classifier and recall filter included): the two are
+"who is asking", and one fixed slot in every prompt keeps them inside the
+head the whole turn shares instead of ending a prefix. Persona is last.
+NOT the action catalog — the call plans constraints, not actions.
 
 The result renders as an `<acceptance_criteria_markdown>` section directly
 after `<current_user_request>` in every decide step: a Markdown projection of

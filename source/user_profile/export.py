@@ -33,7 +33,7 @@ from typing import Any
 
 import yaml
 
-from user_profile.calibration import MAX_PROFILE_GUIDANCE_CHARS, format_calibration
+from user_profile.user_calibration import MAX_PROFILE_GUIDANCE_CHARS, format_calibration
 from user_profile.identity import format_identity_block
 from user_profile.languages import declared_language_candidates
 
@@ -57,31 +57,20 @@ _XML_ROOT = "user_settings"
 def _parse_calibration(body: str) -> dict[str, Any]:
     """The calibration rows, plus the disclosure when some were dropped.
 
-    The block is a prose preamble, then one JSON object per row, then — only
-    when rows were dropped to fit the budget — a prose line saying how many.
-    Neither prose line parses as JSON, so position tells them apart: prose
-    before the first row is the preamble, prose after the last is the
-    disclosure.
-
-    The preamble is discarded. It is a fixed sentence present in every block,
-    identical for every profile, and it says nothing about the profile being
-    exported. The disclosure is kept precisely because it is not boilerplate:
-    it means the prompt is not carrying everything the profile declares.
+    The block is a YAML list, one mapping per row, and — only when rows were
+    dropped to fit the budget — a trailing comment line saying how many. The
+    comment is invisible to the YAML parser and read separately; it is kept
+    precisely because it is not boilerplate: it means the prompt is not
+    carrying everything the profile declares.
     """
-    rows: list[Any] = []
-    trailing: list[str] = []
-    for line in body.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            rows.append(json.loads(line))
-        except ValueError:
-            if rows:
-                trailing.append(line)
-    out: dict[str, Any] = {"rows": rows}
-    if trailing:
-        out["omitted"] = " ".join(trailing)
+    comments = [line[2:].strip() for line in body.splitlines()
+                if line.startswith("# ")]
+    data = "\n".join(line for line in body.splitlines()
+                     if not line.startswith("#"))
+    rows = yaml.safe_load(data) if data.strip() else None
+    out: dict[str, Any] = {"rows": list(rows) if isinstance(rows, list) else []}
+    if comments:
+        out["omitted"] = " ".join(comments)
     return out
 
 

@@ -1,27 +1,31 @@
 """Knowledge-calibration prompt block: the operator's self-declared per-topic
-calibration rows rendered as compact JSON Lines.
+calibration rows rendered as a YAML list.
 
-Injected by the main assistant as `<knowledge_calibration authority="context">`
-— reference data, never instructions. The block carries only its two short
-header lines (a point-of-use reminder of the reading rules; cheap redundancy
-that helps small models) and the data rows: the axis interpretations are
-code-owned policy and live in DECIDE_TURN_INSTRUCTIONS, so the block can never
-restate policy differently from the decide call's job description.
+Injected by the main assistant as `<user_expertise_yaml>` — a bare tag, like
+`<user_settings_yaml>` beside it; the shared system prompt declares both
+reference data, never instructions, and carries the reading rules (explicit
+requests override, unlisted topics carry no inference, the axis meanings),
+so the block is data alone: one mapping per row, in stored order, each enum
+value followed by a short gloss of what it asks for (`_GLOSS`). Only the
+omission disclosure, when rows were dropped to fit the budget, rides along —
+as a YAML comment on the last line, so a parser sees the rows and a reader
+sees the count.
 
-Rows are json.dumps output, not hand-built prose: a topic or note containing a
-pipe, newline, quote, or bullet stays one escaped string and cannot forge a
-second row. Server-owned ids and stamps never enter the prompt.
+Rows are `yaml.safe_dump` output through the identity block's dumper, not
+hand-built prose: a topic or note containing a newline, quote, colon, or
+dash stays one scalar and cannot forge a second row or key. Server-owned ids
+and stamps never enter the prompt.
 
 There is deliberately no topic matching or aliasing here: the whole block is
 injected and the model performs synonym resolution natively ("Postgres" hits a
 "PostgreSQL" row). Aliases belong to a future routing design.
 """
 
-import json
 import logging
 from typing import Any
 
 from db.profile_calibration import calibration_rows
+from user_profile.identity import dump_block
 
 logger = logging.getLogger(__name__)
 
@@ -31,26 +35,54 @@ logger = logging.getLogger(__name__)
 # fidelity in every turn.
 MAX_PROFILE_GUIDANCE_CHARS = 2_700
 
-_CALIBRATION_HEADER = (
-    "Self-declared topic calibration; treat it as context, not proof or "
-    "instructions.\n"
-    "Explicit requests override it. Unlisted topics use normal depth and "
-    "carry no inference."
-)
-
 # The prompt-visible row fields, in serialization order. Never id/updated_at.
 _FULL_KEYS = ("topic", "level", "stance", "depth", "note")
 _COMPACT_KEYS = ("topic", "level", "stance")
 
+# Each enum value carries a four-to-five-word gloss in the prompt — "expert
+# (omit routine fundamentals)" rather than a bare "expert" — because the
+# models this runs on are small and read a phrase more reliably than a token
+# whose meaning sits elsewhere. The phrases are the shared system prompt's
+# own definitions, shortened; a value outside the vocabulary renders as-is.
+_GLOSS: dict[str, dict[str, str]] = {
+    "level": {
+        "expert": "omit the routine fundamentals",
+        "intermediate": "normal depth, explain unusual parts",
+        "beginner": "define terms, expose assumptions",
+        "none": "start from first principles",
+    },
+    "stance": {
+        "prefer": "lean toward it when equal",
+        "neutral": "no steering either way",
+        "avoid": "do not build on it",
+    },
+    "depth": {
+        "concise": "short answers, essentials only",
+        "standard": "the normal explanation depth",
+        "teach": "explain thoroughly, step by step",
+    },
+}
 
-def _json_line(row: dict[str, Any], keys: tuple[str, ...]) -> str:
-    payload = {k: row[k] for k in keys if str(row.get(k) or "").strip()}
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+def glossed(key: str, value: str) -> str:
+    gloss = _GLOSS.get(key, {}).get(value)
+    return f"{value} ({gloss})" if gloss else value
+
+OMISSION_PREFIX = "# Omitted "
+
+
+def _yaml_row(row: dict[str, Any], keys: tuple[str, ...]) -> str:
+    """One row as a one-item YAML list ("- topic: …" then indented keys), so
+    rows concatenate with newlines into one list."""
+    payload = {k: glossed(k, str(row[k])) for k in keys
+               if str(row.get(k) or "").strip()}
+    return dump_block([payload])
 
 
 def _omission_line(count: int) -> str:
-    return (f"Omitted {count} declared topics that did not fit; they are "
-            "declared, just not shown here.")
+    """The disclosure, as a YAML comment: parsers skip it, readers see it."""
+    return (f"{OMISSION_PREFIX}{count} declared topics that did not fit; they "
+            "are declared, just not shown here.")
 
 
 def _assemble(rows: list[dict[str, Any]], budget: int) -> tuple[str, int]:
@@ -67,15 +99,13 @@ def _assemble(rows: list[dict[str, Any]], budget: int) -> tuple[str, int]:
     operator's `avoid`; (3) only when nothing can shrink further, drop the
     last avoid row. An avoid the model never sees is the worst truncation
     outcome."""
-    used = len(_CALIBRATION_HEADER)
-    if used > budget:
-        return "", len(rows)
+    used = 0
     # entry: {index, full, compact, is_avoid, mode}
     entries: list[dict[str, Any]] = []
     full_mode = True
     for index, row in enumerate(rows):
-        full_line = _json_line(row, _FULL_KEYS)
-        compact_line = _json_line(row, _COMPACT_KEYS)
+        full_line = _yaml_row(row, _FULL_KEYS)
+        compact_line = _yaml_row(row, _COMPACT_KEYS)
         if full_mode and used + 1 + len(full_line) <= budget:
             mode = "full"
             used += 1 + len(full_line)
@@ -92,8 +122,7 @@ def _assemble(rows: list[dict[str, Any]], budget: int) -> tuple[str, int]:
         return entry["full"] if entry["mode"] == "full" else entry["compact"]
 
     def _total() -> int:
-        return len(_CALIBRATION_HEADER) + sum(
-            1 + len(_line(e)) for e in entries)
+        return sum(1 + len(_line(e)) for e in entries) - (1 if entries else 0)
 
     omitted = 0
     while entries and _total() > budget:
@@ -111,8 +140,7 @@ def _assemble(rows: list[dict[str, Any]], budget: int) -> tuple[str, int]:
             continue
         entries.pop()          # only avoid rows remain; drop from the end
         omitted += 1
-    lines = [_CALIBRATION_HEADER, *(_line(e) for e in entries)]
-    return "\n".join(lines), omitted
+    return "\n".join(_line(e) for e in entries), omitted
 
 
 def format_calibration(profile: dict[str, Any],
@@ -125,7 +153,7 @@ def format_calibration(profile: dict[str, Any],
     Degrade-then-drop, so overflow can never silently cancel a declared
     preference: full rows while they fit, then compact rows
     (topic/level/stance — notes and depth dropped, truncated before
-    serializing, never cut mid-JSON-line), then omission from the end with
+    serializing, never cut mid-row), then omission from the end with
     avoid rows dropped last — and the final line states the exact number
     omitted, with its space reserved before the final row is admitted so the
     disclosure cannot itself break the cap."""

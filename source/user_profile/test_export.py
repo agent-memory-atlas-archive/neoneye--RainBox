@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 import user_profile
 from profile_fields import PROFILE_FIELDS
-from user_profile.calibration import format_calibration
+from user_profile.user_calibration import format_calibration
 from user_profile.export import SECTION_KEYS, collect_sections, export_settings
 from user_profile.identity import dump_block, format_identity_block
 from user_profile.languages import declared_language_candidates
@@ -53,12 +53,10 @@ def test_language_section_is_the_prompt_candidate_list():
     assert all("position" not in row for row in doc["language"])
 
 
-def test_calibration_rows_are_the_block_jsonl():
+def test_calibration_rows_are_the_block_yaml():
     doc = collect_sections(PROFILE, ["calibration"])
     body = format_calibration(PROFILE)
-    jsonl = [json.loads(line) for line in body.splitlines()
-             if line.strip().startswith("{")]
-    assert doc["knowledge"]["rows"] == jsonl
+    assert doc["knowledge"]["rows"] == yaml.safe_load(body)
 
 
 def test_calibration_drops_the_boilerplate_preamble():
@@ -66,9 +64,7 @@ def test_calibration_drops_the_boilerplate_preamble():
     profile and says nothing about this one."""
     doc = collect_sections(PROFILE, ["calibration"])
     assert set(doc["knowledge"]) == {"rows"}
-    assert "Self-declared topic calibration" in format_calibration(PROFILE)
-    assert "Self-declared topic calibration" not in export_settings(
-        PROFILE, sections=["calibration"], fmt="json")
+    assert format_calibration(PROFILE).startswith("- topic: ")   # rows only, no preamble
 
 
 def test_profile_fields_are_the_documents_top_level():
