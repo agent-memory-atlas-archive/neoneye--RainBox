@@ -33,7 +33,7 @@ from typing import Any
 
 import yaml
 
-from user_profile.calibration import MAX_PROFILE_GUIDANCE_CHARS, format_calibration
+from user_profile.user_calibration import MAX_PROFILE_GUIDANCE_CHARS, format_calibration
 from user_profile.identity import format_identity_block
 from user_profile.languages import declared_language_candidates
 

@@ -1,12 +1,12 @@
 """Tests for the knowledge-calibration prompt renderer
-(user_profile.calibration): YAML rows in stored order, escaping, the
+(user_profile.user_calibration): YAML rows in stored order, escaping, the
 degrade-then-drop ladder with avoid-rows dropped last, the exact omission
 disclosure (a trailing YAML comment), and the absence of server-owned
 fields. Pure — no DB."""
 
 import yaml
 
-from user_profile.calibration import (
+from user_profile.user_calibration import (
     MAX_PROFILE_GUIDANCE_CHARS,
     OMISSION_PREFIX,
     _omission_line,

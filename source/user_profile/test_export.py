@@ -15,7 +15,7 @@ import xml.etree.ElementTree as ET
 
 import user_profile
 from profile_fields import PROFILE_FIELDS
-from user_profile.calibration import format_calibration
+from user_profile.user_calibration import format_calibration
 from user_profile.export import SECTION_KEYS, collect_sections, export_settings
 from user_profile.identity import dump_block, format_identity_block
 from user_profile.languages import declared_language_candidates

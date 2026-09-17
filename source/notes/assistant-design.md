@@ -184,7 +184,7 @@ turn.
   strict prompt-boundary validation), the **knowledge calibration** block
   (`<user_knowledge_yaml>`, a bare tag the system prompt declares context —
   self-declared topic rows as a YAML list from
-  `user_profile/calibration.py`, sharing a 2 700-char guidance budget with
+  `user_profile/user_calibration.py`, sharing a 2 700-char guidance budget with
   the formatting guide, formatting admitted first) — these two blocks sit
   behind independent default-off switches (`assistant.formatting_guide`,
   `assistant.knowledge_calibration`), flipped only after each block passes
