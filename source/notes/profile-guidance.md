@@ -7,7 +7,7 @@ blocks, all rendered from one per-turn context snapshot:
 |---|---|---|---|
 | `<user_settings_yaml>` | context (by system-prompt rule; the tag carries no attributes) | profile fields as YAML (`user_profile/identity.py`; opaque enums like `number_format` carry a code-owned `.comment` entry) | no — always on when a profile is selected |
 | `<formatting_guide>` | instructions | deterministic locale directives (`user_profile/formatting.py`) | **`assistant.formatting_guide`**, default off |
-| `<knowledge_calibration>` | context | self-declared topic rows as JSONL (`user_profile/calibration.py`) | **`assistant.knowledge_calibration`**, default off |
+| `<user_knowledge_yaml>` | context (by system-prompt rule; the tag carries no attributes) | self-declared topic rows as a YAML list (`user_profile/calibration.py`) | **`assistant.knowledge_calibration`**, default off |
 
 The formatting guide compiles the locale fields — date format, first day of
 week, time format + timezone (with the current UTC offset), measurement
@@ -136,8 +136,8 @@ This is the direct proof the assistant actually carries the blocks:
 3. Open `/assistant`, select the newest run, and inspect any step's **user
    prompt**. It must contain, in order: `<user_settings_yaml>`,
    `<formatting_guide authority="instructions">` with the profile's
-   directives, `<knowledge_calibration authority="context">` with the JSONL
-   rows (when the profile has calibration topics).
+   directives, `<user_knowledge_yaml>` with the YAML rows (when the profile
+   has calibration topics).
 4. In the same run, the final `reply` must be preceded by a `reply_audit`
    row carrying its own model, duration and prompts. Open it: the
    observation shows the verdict and any problems. A `revise` verdict must

@@ -47,9 +47,10 @@ def _represent_str(dumper: yaml.SafeDumper, value: str) -> yaml.ScalarNode:
 _BlockDumper.add_representer(str, _represent_str)
 
 
-def dump_block(payload: dict[str, str]) -> str:
-    """The block's YAML: registry order kept, unicode kept, no line folding,
-    no trailing document markers — a bare mapping the enclosing tag names."""
+def dump_block(payload: Any) -> str:
+    """A prompt block's YAML: key order kept, unicode kept, no line folding,
+    no document markers, no trailing newline — a bare mapping or list the
+    enclosing tag names. Shared by the identity and knowledge blocks."""
     return yaml.dump(
         payload, Dumper=_BlockDumper, allow_unicode=True, sort_keys=False,
         default_flow_style=False, width=10**6,

@@ -366,7 +366,7 @@ deterministic formatting guide (`user_profile/formatting.py` — lookup-driven
 directives with examples compiled from locale fields and effective language
 rows, strict prompt-boundary validation so free-text values can never become
 instructions), and the knowledge-calibration block
-(`user_profile/calibration.py` — JSONL rows under a shared guidance budget).
+(`user_profile/calibration.py` — YAML rows under a shared guidance budget).
 Switching `profile.current` changes identity, formatting, and calibration;
 it is **not an audience boundary** — handing the screen to another audience
 uses a fresh room and the demo database.

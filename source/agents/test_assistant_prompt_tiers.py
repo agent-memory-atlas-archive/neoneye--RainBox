@@ -188,7 +188,7 @@ DECIDE_EXPECTED = [
     # check below would reject a section the builder legitimately skipped.)
     "current_user_request", "conversation_history_xml",
     # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
-    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
+    "user_settings_yaml", "user_knowledge_yaml", "formatting_guide",
     "user_profile", "assistant_persona",
     # tier 2
     "turn_instructions",
@@ -245,7 +245,7 @@ def sample_decision():
 CRITERIA_EXPECTED = [
     "current_user_request", "current_user_request_summary_markdown",
     "conversation_history_xml",
-    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
+    "user_settings_yaml", "user_knowledge_yaml", "formatting_guide",
     "assistant_persona",
     "turn_instructions",
     "reply_language_markdown",
@@ -255,7 +255,7 @@ CRITERIA_EXPECTED = [
 
 SECOND_OPINION_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
+    "user_settings_yaml", "user_knowledge_yaml", "formatting_guide",
     "user_profile",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
@@ -303,7 +303,7 @@ def test_second_opinion_prompt_follows_tier_order(
 
 AUDIT_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
+    "user_settings_yaml", "user_knowledge_yaml", "formatting_guide",
     "turn_instructions",
     "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
@@ -317,7 +317,7 @@ AUDIT_EXPECTED = [
 # carries.
 CLASSIFIER_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "knowledge_calibration", "user_settings_languages_json",
+    "user_settings_yaml", "user_knowledge_yaml", "user_settings_languages_json",
     "turn_instructions", "classification_request",
 ]
 
@@ -487,7 +487,7 @@ def test_consecutive_decide_steps_share_everything_before_the_new_step(
 
 RECALL_FILTER_EXPECTED = [
     "current_user_request", "conversation_history_xml", "user_settings_yaml",
-    "knowledge_calibration",
+    "user_knowledge_yaml",
     "turn_instructions", "recall_candidates", "scoring_request",
 ]
 
@@ -774,7 +774,7 @@ def test_every_judging_call_carries_the_calibration_block_as_decide_does(
     the head the whole turn shares rather than a block that ends a prefix."""
     agent = fully_populated_agent
     messages = [{"sender_type": "human", "text": "convert 30C to F"}]
-    rendered = '<knowledge_calibration authority="context">calibration</knowledge_calibration>'
+    rendered = '<user_knowledge_yaml>calibration</user_knowledge_yaml>'
     decide = agent._build_user_prompt(messages=messages, scratchpad=[], step_index=0)
     criteria = agent._build_acceptance_criteria_prompt(messages)
     audit = agent._build_reply_audit_prompt(
@@ -786,4 +786,4 @@ def test_every_judging_call_carries_the_calibration_block_as_decide_does(
         assert rendered in prompt
         head = "<user_settings_yaml>identity</user_settings_yaml>\n" + rendered
         assert head in prompt                      # the same bytes, at the same spot
-    assert decide.index("<knowledge_calibration") < decide.index("<formatting_guide")
+    assert decide.index("<user_knowledge_yaml") < decide.index("<formatting_guide")

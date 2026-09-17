@@ -182,7 +182,8 @@ turn.
   profile-derived block with instruction authority, justified because every
   imperative sentence is code-owned and every interpolated value passed the
   strict prompt-boundary validation), the **knowledge calibration** block
-  (`authority="context"` — self-declared topic rows as JSONL from
+  (`<user_knowledge_yaml>`, a bare tag the system prompt declares context —
+  self-declared topic rows as a YAML list from
   `user_profile/calibration.py`, sharing a 2 700-char guidance budget with
   the formatting guide, formatting admitted first) — these two blocks sit
   behind independent default-off switches (`assistant.formatting_guide`,
@@ -532,7 +533,7 @@ formatting and phrasing its replies is exactly the continuity these criteria
 establish — plus `user_settings_yaml`, `reply_language_markdown`, the
 formatting guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
-injection), the `knowledge_calibration` rows when that switch is on, and
+injection), the `user_knowledge_yaml` rows when that switch is on, and
 `assistant_persona` when the room binds one — the same text and order as in
 the decide prompt. Calibration sits directly after `user_settings_yaml` in
 every call of the turn (classifier and recall filter included): the two are
