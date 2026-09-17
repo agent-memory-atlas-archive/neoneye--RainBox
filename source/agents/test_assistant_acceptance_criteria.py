@@ -935,3 +935,45 @@ def test_criteria_instructions_do_not_invite_a_language_decision(room):
     assert "timezone, currency or locale" not in text
     assert "reply_language_markdown" in text
     assert "never re-derive it" in text
+
+
+def test_criteria_call_sees_the_persona_after_the_guide(room):
+    """The criteria know who answers: the room's persona rides the criteria
+    prompt exactly as the decide prompt carries it — a bare assistant_persona
+    tag, placed after the formatting guide so the two prompts keep sharing
+    their prefix through the guide. A room without a persona gets no tag."""
+    from uuid import UUID
+    persona = db.persona_create(f"CriteriaPersona-{uuid4().hex[:8]}", None)
+    persona_uuid = UUID(persona["uuid"])
+    db.persona_update_content(persona_uuid, "Terse, technical, assumes a seasoned reader.")
+    db.set_member_persona(room.uuid, ASSISTANT_UUID, persona_uuid=persona_uuid)
+    try:
+        agent = _agent()
+        calls = []
+        _stub_criteria_seam(agent, [_criteria("step0")], calls)
+        prompts = _capture_decides(agent, [_reply()])
+        agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+        criteria_prompt = calls[0]["user_prompt"]
+        assert "<assistant_persona>" in criteria_prompt
+        assert "assumes a seasoned reader" in criteria_prompt
+        # (Order relative to the guide is pinned by test_assistant_prompt_tiers;
+        # this room has no current profile, hence no guide.)
+        assert criteria_prompt.index("<assistant_persona>") < criteria_prompt.index("<turn_instructions>")
+        decide_prompt = prompts[0]["user"]
+        assert "<assistant_persona>" in decide_prompt
+        tag = lambda p: p[p.index("<assistant_persona>"):p.index("</assistant_persona>")]
+        assert tag(criteria_prompt) == tag(decide_prompt)     # same text, same rendering
+    finally:
+        db.session.rollback()
+        db.set_member_persona(room.uuid, ASSISTANT_UUID, persona_uuid=None)
+        db.session.commit()
+        db.persona_delete(persona_uuid)
+
+
+def test_criteria_call_without_a_persona_has_no_persona_tag(room):
+    agent = _agent()
+    calls = []
+    _stub_criteria_seam(agent, [_criteria("step0")], calls)
+    _capture_decides(agent, [_reply()])
+    agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
+    assert "<assistant_persona" not in calls[0]["user_prompt"]

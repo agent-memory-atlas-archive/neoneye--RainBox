@@ -529,10 +529,13 @@ turn's conversation history of either role, both at the shared window
 (`MAX_RECENT_MESSAGES = 30`, owned by `AssistantPromptBuilder` so tier 0 is
 byte-identical across the turn's calls) — how the assistant has been
 formatting and phrasing its replies is exactly the continuity these criteria
-establish — plus `user_settings_yaml`, `reply_language_markdown`, and the
+establish — plus `user_settings_yaml`, `reply_language_markdown`, the
 formatting guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
-injection). NOT the action catalog — the call plans constraints, not actions.
+injection), and `assistant_persona` when the room binds one — the same text
+and position as in the decide prompt, so the criteria know who answers and
+at what level the user is met without shortening the prefix the two calls
+share. NOT the action catalog — the call plans constraints, not actions.
 
 The result renders as an `<acceptance_criteria_markdown>` section directly
 after `<current_user_request>` in every decide step: a Markdown projection of
