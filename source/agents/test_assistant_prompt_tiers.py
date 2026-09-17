@@ -188,8 +188,8 @@ DECIDE_EXPECTED = [
     # check below would reject a section the builder legitimately skipped.)
     "current_user_request", "conversation_history_xml",
     # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
-    "user_settings_yaml", "formatting_guide", "user_profile",
-    "knowledge_calibration", "assistant_persona",
+    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
+    "user_profile", "assistant_persona",
     # tier 2
     "turn_instructions",
     # tier 3
@@ -245,7 +245,7 @@ def sample_decision():
 CRITERIA_EXPECTED = [
     "current_user_request", "current_user_request_summary_markdown",
     "conversation_history_xml",
-    "user_settings_yaml", "formatting_guide", "knowledge_calibration",
+    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
     "assistant_persona",
     "turn_instructions",
     "reply_language_markdown",
@@ -255,8 +255,8 @@ CRITERIA_EXPECTED = [
 
 SECOND_OPINION_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "formatting_guide", "user_profile",
-    "knowledge_calibration",
+    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
+    "user_profile",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
     "proposed_step", "verdict_request", "current_local_time",
@@ -303,7 +303,7 @@ def test_second_opinion_prompt_follows_tier_order(
 
 AUDIT_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "formatting_guide", "knowledge_calibration",
+    "user_settings_yaml", "knowledge_calibration", "formatting_guide",
     "turn_instructions",
     "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
@@ -317,7 +317,7 @@ AUDIT_EXPECTED = [
 # carries.
 CLASSIFIER_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "user_settings_languages_json",
+    "user_settings_yaml", "knowledge_calibration", "user_settings_languages_json",
     "turn_instructions", "classification_request",
 ]
 
@@ -487,6 +487,7 @@ def test_consecutive_decide_steps_share_everything_before_the_new_step(
 
 RECALL_FILTER_EXPECTED = [
     "current_user_request", "conversation_history_xml", "user_settings_yaml",
+    "knowledge_calibration",
     "turn_instructions", "recall_candidates", "scoring_request",
 ]
 
@@ -768,10 +769,9 @@ def test_criteria_and_decide_prompts_share_the_head_through_the_guide(
 def test_every_judging_call_carries_the_calibration_block_as_decide_does(
     fully_populated_agent, sample_decision
 ):
-    """Calibration rides the criteria, audit, and second-opinion prompts with
-    the same tag, attribute, and text as the decide prompt — the calls that
-    judge a reply must not know less about the asker than the call that
-    wrote it."""
+    """Calibration rides every prompt with the same tag, attribute, and text,
+    at one fixed spot — directly after user_settings_yaml — so it is part of
+    the head the whole turn shares rather than a block that ends a prefix."""
     agent = fully_populated_agent
     messages = [{"sender_type": "human", "text": "convert 30C to F"}]
     rendered = '<knowledge_calibration authority="context">calibration</knowledge_calibration>'
@@ -781,8 +781,9 @@ def test_every_judging_call_carries_the_calibration_block_as_decide_does(
         "86 °F", messages=messages, scratchpad=[])
     second = agent._build_second_opinion_prompt(
         sample_decision, reasoning="because", messages=messages)
-    for prompt in (decide, criteria, audit, second):
+    classifier = agent._build_response_language_classifier_prompt(messages, agent._criteria_profile)
+    for prompt in (decide, criteria, audit, second, classifier):
         assert rendered in prompt
-        assert prompt.index("<formatting_guide") < prompt.index("<knowledge_calibration")
-    assert criteria.index("<knowledge_calibration") < criteria.index("<assistant_persona>")
-    assert decide.index("<user_profile") < decide.index("<knowledge_calibration") < decide.index("<assistant_persona>")
+        head = "<user_settings_yaml>identity</user_settings_yaml>\n" + rendered
+        assert head in prompt                      # the same bytes, at the same spot
+    assert decide.index("<knowledge_calibration") < decide.index("<formatting_guide")

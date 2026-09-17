@@ -1,6 +1,6 @@
 """Integration: the AssistantAgent renders identity + formatting guide from
 ONE declared-profile context snapshot per turn and injects them in order
-(identity → formatting_guide → user_profile), with no per-turn
+(identity → knowledge_calibration → formatting_guide → user_profile), with no per-turn
 `profile.current` setting lookup on the handle path. The assembled prompt is
 captured by stubbing the model call (_structured_completion)."""
 
@@ -199,14 +199,17 @@ def calibrated_profile(app_ctx):
         db.session.commit()
 
 
-def test_calibration_block_injected_as_context_after_formatting(room, calibrated_profile):
+def test_calibration_block_injected_as_context_right_after_identity(room, calibrated_profile):
+    """Calibration is "who is asking", so it follows user_settings_yaml at
+    once — the same slot in every call of the turn — and the guide comes
+    after both."""
     prompt = _run_capture(room)["user_prompt"]
     assert '<knowledge_calibration authority="context">' in prompt
     assert "Self-declared topic calibration" in prompt
     assert '{"topic":"Mathematics","level":"expert"' in prompt
     assert (prompt.index("<user_settings_yaml")
-            < prompt.index("<formatting_guide")
-            < prompt.index("<knowledge_calibration"))
+            < prompt.index("<knowledge_calibration")
+            < prompt.index("<formatting_guide"))
 
 
 def test_hostile_note_stays_escaped_context(room, calibrated_profile):

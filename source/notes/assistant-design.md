@@ -534,11 +534,11 @@ formatting guide rendered from the criteria snapshot profile regardless of the
 `assistant.formatting_guide` switch (which gates only the decide-prompt
 injection), the `knowledge_calibration` rows when that switch is on, and
 `assistant_persona` when the room binds one — the same text and order as in
-the decide prompt (calibration directly after the profile slot, persona
-last), so the criteria know who asks, at what level, and who answers,
-without shortening the prefix the two calls share. The reply audit and the
-second opinion carry the calibration block the same way. NOT the action
-catalog — the call plans constraints, not actions.
+the decide prompt. Calibration sits directly after `user_settings_yaml` in
+every call of the turn (classifier and recall filter included): the two are
+"who is asking", and one fixed slot in every prompt keeps them inside the
+head the whole turn shares instead of ending a prefix. Persona is last.
+NOT the action catalog — the call plans constraints, not actions.
 
 The result renders as an `<acceptance_criteria_markdown>` section directly
 after `<current_user_request>` in every decide step: a Markdown projection of
