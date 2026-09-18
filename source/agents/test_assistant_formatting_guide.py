@@ -97,8 +97,8 @@ def test_formatting_guide_rides_the_identity_block_as_comments(room):
                    prompt.index("</user_settings_yaml>")]
     assert ("number_format: 1.234.567,89  # Use DOT as thousands separator "
             "and COMMA as decimal separator.") in block
-    assert ("date_format: DD.MM.YYYY  # For example 31.12.2026; do not use "
-            "month-first dates.") in block
+    assert "date_format: DD.MM.YYYY  # Example 31.12.2026" in block
+    assert "temperature: Celsius (°C)" in block
     assert not any(line.startswith("#") for line in block.splitlines())
     assert "Language" not in block
     # The switch marker itself is filtered from model history.
@@ -120,7 +120,7 @@ def test_blocks_default_off_until_gated(room):
     assert "<user_expertise_yaml" not in prompt
     db.set_setting("assistant.formatting_guide", True)      # one alone
     prompt = _run_capture(room)["user_prompt"]
-    assert "date_format: DD.MM.YYYY  # For example" in prompt
+    assert "date_format: DD.MM.YYYY  # Example" in prompt
     assert "<user_expertise_yaml" not in prompt
 
 
@@ -145,7 +145,7 @@ def test_handle_path_never_rereads_profile_current(room, monkeypatch):
     import agents.assistant as assistant_mod
     monkeypatch.setattr(assistant_mod.db, "get_setting", spy)
     prompt = _run_capture(room)["user_prompt"]
-    assert "date_format: DD.MM.YYYY  # For example" in prompt   # still rendered
+    assert "date_format: DD.MM.YYYY  # Example" in prompt   # still rendered
     assert "profile.current" not in seen
     assert "profile.current_changed_at" not in seen
     assert "qa.facts_invalidated_at" not in seen

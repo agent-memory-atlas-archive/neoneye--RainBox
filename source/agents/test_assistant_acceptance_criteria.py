@@ -339,7 +339,7 @@ def test_criteria_call_reads_the_settings_comments_decide_reads(room):
                       prompt.index("</user_settings_yaml>")]
 
     criteria_settings = settings(calls[0]["user_prompt"])
-    assert "temperature: celsius  # Celsius (°C)." in criteria_settings
+    assert "temperature: Celsius (°C)" in criteria_settings
     assert criteria_settings == settings(prompts[0]["user"])
     assert "<formatting_guide" not in calls[0]["user_prompt"]
     assert "<formatting_guide" not in prompts[0]["user"]

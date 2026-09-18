@@ -82,36 +82,36 @@ NUMBER_FORMAT_COMMENTS: dict[str, str] = {
                   "separator.",
 }
 
-# stored value -> (example: 31 December 2026 in the selected order, the
-# ambiguity warning for the opposite convention)
-DATE_FORMATS: dict[str, tuple[str, str]] = {
-    "YYYY-MM-DD": ("2026-12-31", "do not use month-first dates"),
-    "DD/MM/YYYY": ("31/12/2026", "do not use month-first dates"),
-    "MM/DD/YYYY": ("12/31/2026", "do not use day-first dates"),
-    "DD.MM.YYYY": ("31.12.2026", "do not use month-first dates"),
-    "DD-MM-YYYY": ("31-12-2026", "do not use month-first dates"),
+# stored value -> the example: 31 December 2026 in the selected order. The
+# value names the order; the example is what the comment adds.
+DATE_FORMATS: dict[str, str] = {
+    "YYYY-MM-DD": "2026-12-31",
+    "DD/MM/YYYY": "31/12/2026",
+    "MM/DD/YYYY": "12/31/2026",
+    "DD.MM.YYYY": "31.12.2026",
+    "DD-MM-YYYY": "31-12-2026",
 }
 
-# stored value -> clock wording with the pinned example (23:59 / 11:59 pm)
+# stored value -> the example: 23:59 on that clock.
 TIME_FORMATS: dict[str, str] = {
-    "24h": "24-hour clock, for example 23:59",
-    "12h": "12-hour clock, for example 11:59 pm",
+    "24h": "23:59",
+    "12h": "11:59 pm",
 }
 
-# stored value -> the calendar comment. Monday-start pairs with ISO 8601
-# week numbering; naming that removes the models' habitual Sunday-first
-# calendar layout (and week-number arithmetic) for European profiles.
+# stored value -> what the value does not already say. Monday-start pairs
+# with ISO 8601 week numbering; naming that removes the models' habitual
+# Sunday-first calendar layout (and week-number arithmetic) for European
+# profiles. A Sunday or Saturday start says it all by itself.
 WEEK_STARTS: dict[str, str] = {
-    "monday": "weeks start on Monday (ISO 8601; week numbers follow ISO)",
-    "sunday": "weeks start on Sunday",
-    "saturday": "weeks start on Saturday",
+    "monday": "ISO 8601; week numbers follow ISO",
+    "sunday": "",
+    "saturday": "",
 }
 
 # stored value -> unit-system wording with the preferred unit names.
-# Temperature is deliberately NOT here — it renders on its own field's line
-# (the `temperature` field), because the combinations are real: UK
-# metric-leaning + Celsius, US customary + °F. Only when that field is unset
-# does the units-derived default join the units comment.
+# Temperature is deliberately NOT here — it renders on its own line (the
+# `temperature` field, derived from units when unset), because the
+# combinations are real: UK metric-leaning + Celsius, US customary + °F.
 UNITS: dict[str, str] = {
     "metric": "prefer km and kg",
     "imperial": "US customary; prefer mi and lb",
@@ -119,8 +119,9 @@ UNITS: dict[str, str] = {
           "distances",
 }
 
-# stored value -> the temperature comment; `_UNITS_DEFAULT_TEMPERATURE`
-# supplies the units-implied default when the field is unset.
+# stored value -> the display form that replaces the raw value on the line
+# (`temperature: Celsius (°C)`); `_UNITS_DEFAULT_TEMPERATURE` supplies the
+# units-implied default when the field is unset.
 TEMPERATURES: dict[str, str] = {
     "celsius": "Celsius (°C)",
     "fahrenheit": "Fahrenheit (°F)",
@@ -216,36 +217,39 @@ def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | 
 
 @dataclass(frozen=True)
 class FormattingGuide:
-    """The guide as the identity block renders it: one comment per profile
-    field it can say something about (registry key -> sentence, no leading
-    `#`). Language is not here: the reply language is the response-language
-    classifier's decision (reply_language_markdown), and the language rows
-    have no field in the block to sit on. Empty when no directive is
-    usable."""
+    """The guide as the identity block renders it: `comments` is one short
+    clause per profile field it can add something to (registry key -> text,
+    no leading `#`, no trailing period), and `values` is the display form a
+    field's line shows instead of its stored value (`temperature: Celsius
+    (°C)` for the stored `celsius`) — also for a field the profile leaves
+    unset when the guide derives it. A comment never restates the value: the
+    key names the topic, the value is the setting, the comment is the
+    example or the rule. Language is not here: the reply language is the
+    response-language classifier's decision (reply_language_markdown), and
+    the language rows have no field in the block to sit on. Empty when no
+    directive is usable."""
 
     comments: dict[str, str] = field(default_factory=dict)
+    values: dict[str, str] = field(default_factory=dict)
 
     def __bool__(self) -> bool:
-        return bool(self.comments)
+        return bool(self.comments or self.values)
 
     @property
     def chars(self) -> int:
         """The characters the guide adds to the prompt — what the shared
         guidance budget deducts before the calibration block takes the
         remainder."""
-        return sum(map(len, self.comments.values()))
+        return (sum(map(len, self.comments.values()))
+                + sum(map(len, self.values.values())))
 
 
-def _sentence(text: str) -> str:
-    """A comment starts with a capital and ends with a period, whatever
-    shape the lookup entry has (the entries read as clauses so they can be
-    joined). Whitespace collapses to single spaces: a comment is one line by
-    construction, and a newline would end it early."""
-    text = re.sub(r"\s+", " ", text).strip()
-    if not text:
-        return ""
-    text = text[0].upper() + text[1:]
-    return text if text.endswith((".", "!", "?")) else text + "."
+def _clause(text: str) -> str:
+    """A comment as it goes on the line: whitespace collapsed to single
+    spaces (a comment is one line by construction, and a newline would end
+    it early), a capital first letter, no trailing period."""
+    text = re.sub(r"\s+", " ", text).strip().rstrip(".")
+    return text[0].upper() + text[1:] if text else ""
 
 
 def format_formatting_guide(profile: dict[str, Any],
@@ -257,20 +261,19 @@ def format_formatting_guide(profile: dict[str, Any],
     if now is None:
         now = datetime.now(UTC)
     comments: dict[str, str] = {}
+    values: dict[str, str] = {}
 
-    date_entry = DATE_FORMATS.get(str(data.get("date_format") or "").strip())
-    if date_entry is not None:
-        example, warning = date_entry
-        comments["date_format"] = _sentence(
-            f"for example {example}; {warning}")
+    example = DATE_FORMATS.get(str(data.get("date_format") or "").strip())
+    if example is not None:
+        comments["date_format"] = _clause(f"example {example}")
 
     week = WEEK_STARTS.get(str(data.get("first_day_of_week") or "").strip())
-    if week is not None:
-        comments["first_day_of_week"] = _sentence(week)
+    if week:
+        comments["first_day_of_week"] = _clause(week)
 
-    clock = TIME_FORMATS.get(str(data.get("time_format") or "").strip())
-    if clock is not None:
-        comments["time_format"] = _sentence(clock)
+    example = TIME_FORMATS.get(str(data.get("time_format") or "").strip())
+    if example is not None:
+        comments["time_format"] = _clause(f"example {example}")
 
     zone = _valid_timezone(data.get("timezone"))
     if data.get("timezone") and zone is None:
@@ -278,29 +281,24 @@ def format_formatting_guide(profile: dict[str, Any],
                        data.get("timezone"))
     if zone is not None:
         offset = _utc_offset(zone, now)
-        where = f"{zone} (currently {offset})" if offset else zone
-        comments["timezone"] = _sentence(
-            f"present local times in {where}; name another zone when "
-            "relevant")
+        if offset:
+            comments["timezone"] = _clause(f"currently {offset}")
 
     units_value = str(data.get("units") or "").strip()
     units = UNITS.get(units_value)
-    temperature_value = str(data.get("temperature") or "").strip()
-    derived_temperature = (
-        None if temperature_value
-        else TEMPERATURES.get(_UNITS_DEFAULT_TEMPERATURE.get(units_value, "")))
     if units is not None:
-        # An unset temperature field has no line of its own to carry the
-        # units-derived default, so it rides the units comment.
-        derived = (f" Temperature in {derived_temperature}."
-                   if derived_temperature else "")
-        comments["units"] = _sentence(
-            f"{units}; preserve a source value when precision matters and "
-            f"add the conversion.{derived}")
+        comments["units"] = _clause(
+            f"{units}; keep a source value when precision matters and add "
+            "the conversion")
 
+    # The stored enum is opaque on the line; the display form replaces it.
+    # An unset field takes the units-derived default and gets a line of its
+    # own, so the block reads the same whether or not the operator set it.
+    temperature_value = (str(data.get("temperature") or "").strip()
+                         or _UNITS_DEFAULT_TEMPERATURE.get(units_value, ""))
     temperature = TEMPERATURES.get(temperature_value)
     if temperature is not None:
-        comments["temperature"] = _sentence(temperature)
+        values["temperature"] = temperature
 
     currency_examples = NUMBER_FORMATS.get(
         str(data.get("number_format") or "").strip())
@@ -320,23 +318,21 @@ def format_formatting_guide(profile: dict[str, Any],
             valid_codes.append((key, code))
     if valid_codes:
         primary_key, primary = valid_codes[0]
-        convert = ("Convert currencies only with a supplied or freshly "
-                   "retrieved rate.")
+        convert = "convert only with a supplied or freshly retrieved rate"
         if currency_examples is not None:
             digits = (0 if primary in ZERO_DECIMAL_CURRENCIES_V1
                       else 3 if primary in THREE_DECIMAL_CURRENCIES_V1 else 2)
-            comments[primary_key] = _sentence(
-                f"for example {currency_examples[digits]} {primary}. "
-                f"{convert}")
+            comments[primary_key] = _clause(
+                f"example {currency_examples[digits]} {primary}; {convert}")
         else:
             # Without a usable number_format the comment states the
             # conversion rule without inventing separators.
-            comments[primary_key] = _sentence(convert)
+            comments[primary_key] = _clause(convert)
         if len(valid_codes) > 1:
-            comments[valid_codes[1][0]] = _sentence(
-                "a secondary option when the task already involves it")
+            comments[valid_codes[1][0]] = _clause(
+                "secondary; when the task already involves it")
 
-    guide = FormattingGuide(comments=comments)
+    guide = FormattingGuide(comments=comments, values=values)
     if guide.chars > MAX_FORMATTING_GUIDE_CHARS:
         raise ValueError(
             f"formatting guide exceeds {MAX_FORMATTING_GUIDE_CHARS} chars "

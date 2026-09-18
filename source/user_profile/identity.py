@@ -21,7 +21,9 @@ that to rebuild the document from this string).
 
 The formatting guide rides the same block as YAML comments: each directive
 sits on the line of the field it derives from (`date_format: YYYY-MM-DD  #
-For example 2026-12-31; …`). The comments are code-owned text whose
+Example 2026-12-31`), and a field whose stored value is an opaque enum shows
+the guide's display form instead (`temperature: Celsius (°C)`, also when
+the guide derived it from the units). The comments are code-owned text whose
 interpolated values passed `user_profile/formatting.py`'s validators; they
 are invisible to the YAML parser, so the round trip above still holds.
 """
@@ -120,9 +122,10 @@ def format_identity_block(profile: dict[str, Any],
     cannot smuggle instructions into this context-authority block."""
     data = profile.get("data") or {}
     comments: dict[str, str] = dict(guide.comments) if guide else {}
+    shown: dict[str, str] = dict(guide.values) if guide else {}
     lines: list[str] = []
     for field in PROFILE_FIELDS:
-        value = str(data.get(field.key) or "").strip()
+        value = shown.get(field.key) or str(data.get(field.key) or "").strip()
         if not value:
             continue
         parts = [comments.get(field.key, "")]

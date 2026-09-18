@@ -64,6 +64,8 @@ def test_lookups_exhaustive_over_registry_enums():
     assert set(WEEK_STARTS) == set(fields["first_day_of_week"].choices)
     for examples in NUMBER_FORMATS.values():
         assert set(examples) == {0, 2, 3}
+    for example in (*DATE_FORMATS.values(), *TIME_FORMATS.values()):
+        assert example
 
 
 # ---- the golden full-profile rendering -----------------------------------
@@ -75,26 +77,26 @@ def test_germany_renders_expected_comments():
         first_day_of_week="monday",
     )
     guide = format_formatting_guide(profile, now=SUMMER)
-    # One comment per field, keyed by the registry key it attaches to, in
-    # the order the renderer emits them (the identity block re-sorts them
-    # into registry order anyway). The value is the example, so no comment
-    # repeats it; number_format has no guide comment at all — its own
-    # code-owned comment (NUMBER_FORMAT_COMMENTS) is the identity block's.
+    # One short clause per field, keyed by the registry key it attaches to
+    # (the identity block puts them in registry order). No comment restates
+    # its value: the key is the topic, the value the setting, the comment
+    # the example or the rule. number_format has no guide comment at all —
+    # its own code-owned comment (NUMBER_FORMAT_COMMENTS) is the identity
+    # block's. Temperature is a display VALUE, not a comment.
     assert guide.comments == {
-        "date_format": "For example 31.12.2026; do not use month-first "
-                       "dates.",
-        "first_day_of_week": "Weeks start on Monday (ISO 8601; week numbers "
-                             "follow ISO).",
-        "time_format": "24-hour clock, for example 23:59.",
-        "timezone": "Present local times in Europe/Berlin (currently "
-                    "UTC+02:00); name another zone when relevant.",
-        "units": "Prefer km and kg; preserve a source value when precision "
-                 "matters and add the conversion. Temperature in Celsius "
-                 "(°C).",
-        "currency": "For example 1.234,56 EUR. Convert currencies only with "
-                    "a supplied or freshly retrieved rate.",
+        "date_format": "Example 31.12.2026",
+        "first_day_of_week": "ISO 8601; week numbers follow ISO",
+        "time_format": "Example 23:59",
+        "timezone": "Currently UTC+02:00",
+        "units": "Prefer km and kg; keep a source value when precision "
+                 "matters and add the conversion",
+        "currency": "Example 1.234,56 EUR; convert only with a supplied or "
+                    "freshly retrieved rate",
     }
-    assert guide and guide.chars == sum(map(len, guide.comments.values()))
+    assert guide.values == {"temperature": "Celsius (°C)"}
+    assert guide and guide.chars == (
+        sum(map(len, guide.comments.values()))
+        + sum(map(len, guide.values.values())))
 
 
 def test_india_renders_indian_grouping_and_half_hour_offset():
@@ -104,50 +106,46 @@ def test_india_renders_indian_grouping_and_half_hour_offset():
     )
     guide = format_formatting_guide(profile, now=SUMMER)
     assert "number_format" not in guide.comments
-    assert guide.comments["time_format"] == "12-hour clock, for example 11:59 pm."
-    assert "Asia/Kolkata (currently UTC+05:30)" in guide.comments["timezone"]
+    assert guide.comments["time_format"] == "Example 11:59 pm"
+    assert guide.comments["timezone"] == "Currently UTC+05:30"
     # Indian grouping of 1234.56 has no lakh
-    assert guide.comments["currency"].startswith("For example 1,234.56 INR.")
+    assert guide.comments["currency"].startswith("Example 1,234.56 INR;")
 
 
 def test_imperial_and_negative_offset():
     guide = format_formatting_guide(
         _profile(units="imperial", timezone="America/Denver"), now=SUMMER)
     assert guide.comments["units"].startswith("US customary; prefer mi and lb")
-    # derived from units, and with no temperature field of its own to sit
-    # on, it rides the units comment
-    assert guide.comments["units"].endswith("Temperature in Fahrenheit (°F).")
+    # derived from units: the block gets a temperature line although the
+    # profile has no temperature field set
+    assert guide.values == {"temperature": "Fahrenheit (°F)"}
     assert "temperature" not in guide.comments
-    assert "America/Denver (currently UTC-06:00)" in guide.comments["timezone"]
+    assert guide.comments["timezone"] == "Currently UTC-06:00"
 
 
 def test_uk_hybrid_units_and_temperature_override():
-    uk = format_formatting_guide(_profile(units="uk")).comments
-    assert uk["units"].startswith(
+    uk = format_formatting_guide(_profile(units="uk"))
+    assert uk.comments["units"].startswith(
         "Metric with UK exceptions; prefer kg, but miles for road "
-        "distances; preserve a source value")
-    assert uk["units"].endswith("Temperature in Celsius (°C).")  # uk derives Celsius
-    # An explicit temperature always beats the units-implied default, and
-    # lands on its own field's line.
+        "distances; keep a source value")
+    assert uk.values == {"temperature": "Celsius (°C)"}   # uk derives Celsius
+    # An explicit temperature always beats the units-implied default.
     mixed = format_formatting_guide(
-        _profile(units="imperial", temperature="celsius")).comments
-    assert mixed["units"].startswith("US customary")
-    assert "Temperature" not in mixed["units"]
-    assert mixed["temperature"] == "Celsius (°C)."
-    assert "Fahrenheit" not in _text(format_formatting_guide(
-        _profile(units="imperial", temperature="celsius")))
+        _profile(units="imperial", temperature="celsius"))
+    assert mixed.comments["units"].startswith("US customary")
+    assert mixed.values == {"temperature": "Celsius (°C)"}
+    assert "Fahrenheit" not in _text(mixed)
     # Temperature alone renders without a units comment; neither field → none.
-    alone = format_formatting_guide(_profile(temperature="fahrenheit")).comments
-    assert alone == {"temperature": "Fahrenheit (°F)."}
-    assert "Temperature" not in _text(format_formatting_guide(
-        _profile(date_format="YYYY-MM-DD")))
+    alone = format_formatting_guide(_profile(temperature="fahrenheit"))
+    assert alone.comments == {} and alone.values == {"temperature": "Fahrenheit (°F)"}
+    assert not format_formatting_guide(_profile(date_format="YYYY-MM-DD")).values
 
 
 # ---- sparse profiles: only usable comments render -------------------------
 
 def test_empty_profile_renders_nothing():
     empty = format_formatting_guide(_profile())
-    assert not empty and empty.comments == {}
+    assert not empty and empty.comments == {} and empty.values == {}
     assert empty.chars == 0
     assert not format_formatting_guide({"uuid": "x", "name": "T", "data": None})
 
@@ -155,20 +153,18 @@ def test_empty_profile_renders_nothing():
 def test_sparse_profile_renders_only_available_comments():
     guide = format_formatting_guide(_profile(units="metric"))
     assert guide.comments == {
-        "units": "Prefer km and kg; preserve a source value when precision "
-                 "matters and add the conversion. Temperature in Celsius "
-                 "(°C).",   # derived from the units system
+        "units": "Prefer km and kg; keep a source value when precision "
+                 "matters and add the conversion",
     }
+    assert guide.values == {"temperature": "Celsius (°C)"}   # derived from units
 
 
 def test_time_and_timezone_comments_are_independent():
     clock_only = format_formatting_guide(_profile(time_format="24h")).comments
-    assert clock_only == {"time_format": "24-hour clock, for example 23:59."}
+    assert clock_only == {"time_format": "Example 23:59"}
     zone_only = format_formatting_guide(
         _profile(timezone="Europe/Berlin"), now=WINTER).comments
-    assert zone_only == {
-        "timezone": "Present local times in Europe/Berlin (currently "
-                    "UTC+01:00); name another zone when relevant."}
+    assert zone_only == {"timezone": "Currently UTC+01:00"}
 
 
 def test_dst_boundary_changes_only_the_offset():
@@ -179,30 +175,32 @@ def test_dst_boundary_changes_only_the_offset():
     assert summer.replace("UTC+02:00", "") == winter.replace("UTC+01:00", "")
 
 
-def test_month_first_date_warns_against_day_first():
+def test_month_first_date_shows_a_month_first_example():
     guide = format_formatting_guide(_profile(date_format="MM/DD/YYYY"))
-    assert guide.comments["date_format"] == (
-        "For example 12/31/2026; do not use day-first dates.")
+    assert guide.comments["date_format"] == "Example 12/31/2026"
 
 
 def test_first_day_of_week_comment_is_independent():
+    # The value says it all for a Sunday or Saturday start; ISO numbering
+    # is Monday's alone.
     sunday = format_formatting_guide(_profile(first_day_of_week="sunday"))
-    assert sunday.comments == {"first_day_of_week": "Weeks start on Sunday."}
-    assert "ISO" not in _text(sunday)              # ISO numbering is Monday's
+    assert sunday.comments == {}
     saturday = format_formatting_guide(_profile(first_day_of_week="saturday"))
-    assert saturday.comments["first_day_of_week"] == "Weeks start on Saturday."
+    assert saturday.comments == {}
+    monday = format_formatting_guide(_profile(first_day_of_week="monday"))
+    assert monday.comments == {"first_day_of_week": "ISO 8601; week numbers follow ISO"}
     assert "first_day_of_week" not in format_formatting_guide(
         _profile(units="metric")).comments
 
 
-def test_every_comment_is_one_sentence_on_one_line():
+def test_every_comment_is_one_clause_on_one_line():
     guide = format_formatting_guide(_profile(
         units="uk", timezone="Europe/London", date_format="DD/MM/YYYY",
         time_format="24h", currency="GBP", currency_2="EUR", number_format="1,234,567.89",
         first_day_of_week="monday"), now=SUMMER)
-    for text in guide.comments.values():
+    for text in (*guide.comments.values(), *guide.values.values()):
         assert "\n" not in text
-        assert not text[0].islower() and text.endswith(".")
+        assert not text[0].islower() and not text.endswith(".")
 
 
 # ---- currency minor-unit exceptions ---------------------------------------
@@ -210,14 +208,14 @@ def test_every_comment_is_one_sentence_on_one_line():
 def test_zero_decimal_currency_renders_integer_example():
     guide = format_formatting_guide(
         _profile(currency="JPY", number_format="1,234,567.89"))
-    assert guide.comments["currency"].startswith("For example 1,234 JPY.")
+    assert guide.comments["currency"].startswith("Example 1,234 JPY;")
     assert "1,234.00" not in _text(guide)
 
 
 def test_three_decimal_currency_renders_thousandths():
     guide = format_formatting_guide(
         _profile(currency="BHD", number_format="1,234,567.89"))
-    assert guide.comments["currency"].startswith("For example 1,234.567 BHD.")
+    assert guide.comments["currency"].startswith("Example 1,234.567 BHD;")
 
 
 def test_no_grouping_variants():
@@ -225,28 +223,26 @@ def test_no_grouping_variants():
     example still demonstrates the decimal separator."""
     point = format_formatting_guide(_profile(
         number_format="1234567.89", currency="EUR")).comments
-    assert point["currency"].startswith("For example 1234.56 EUR.")
+    assert point["currency"].startswith("Example 1234.56 EUR;")
     comma = format_formatting_guide(_profile(
         number_format="1234567,89", currency="DKK")).comments
-    assert comma["currency"].startswith("For example 1234,56 DKK.")
+    assert comma["currency"].startswith("Example 1234,56 DKK;")
     yen = format_formatting_guide(_profile(
         number_format="1234567.89", currency="JPY")).comments
-    assert yen["currency"].startswith("For example 1234 JPY.")
+    assert yen["currency"].startswith("Example 1234 JPY;")
 
 
 def test_currency_without_number_format_states_the_rule_only():
     guide = format_formatting_guide(_profile(currency="EUR"))
     assert guide.comments == {
-        "currency": "Convert currencies only with a supplied or freshly "
-                    "retrieved rate."}
+        "currency": "Convert only with a supplied or freshly retrieved rate"}
 
 
 def test_secondary_currency_is_a_fallback_mention():
     guide = format_formatting_guide(
         _profile(currency="DKK", currency_2="EUR", number_format="1.234.567,89"))
-    assert guide.comments["currency"].startswith("For example 1.234,56 DKK.")
-    assert guide.comments["currency_2"] == (
-        "A secondary option when the task already involves it.")
+    assert guide.comments["currency"].startswith("Example 1.234,56 DKK;")
+    assert guide.comments["currency_2"] == "Secondary; when the task already involves it"
 
 
 def test_invalid_primary_currency_promotes_secondary():
@@ -257,7 +253,7 @@ def test_invalid_primary_currency_promotes_secondary():
     # raw value stays uncommented (the identity block still prints it).
     assert "currency" not in guide.comments
     assert guide.comments["currency_2"].startswith(
-        "For example 1,234.56 USD.")    # canonicalized to uppercase
+        "Example 1,234.56 USD;")    # canonicalized to uppercase
     assert "not-a-code" not in _text(guide)
 
 

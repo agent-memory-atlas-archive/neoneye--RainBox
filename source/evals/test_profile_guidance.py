@@ -107,7 +107,7 @@ def test_variants_toggle_blocks_in_the_real_prompt(case, monkeypatch):
     # The formatting guide is the comments inside user_settings_yaml; the
     # Germany template's date comment is the marker that the variant
     # rendered them.
-    header = "date_format: DD.MM.YYYY  # For example"
+    header = "date_format: DD.MM.YYYY  # Example"
     assert header not in seen["baseline"]
     assert "<user_expertise_yaml" not in seen["baseline"]
     assert header in seen["formatting_only"]

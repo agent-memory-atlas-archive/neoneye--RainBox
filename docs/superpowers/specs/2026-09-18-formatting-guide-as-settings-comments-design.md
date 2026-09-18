@@ -27,9 +27,10 @@ currency: DKK</user_settings_yaml>
 After:
 
 ```
-<user_settings_yaml>date_format: YYYY-MM-DD  # For example 2026-12-31; do not use month-first dates.
+<user_settings_yaml>temperature: Celsius (°C)
+date_format: YYYY-MM-DD  # Example 2026-12-31
 number_format: '1234567.89'  # Don't show thousand separators. Use DOT as decimal separator.
-currency: DKK  # For example 1234.56 DKK. Convert currencies only with a supplied or freshly retrieved rate.</user_settings_yaml>
+currency: DKK  # Example 1234.56 DKK; convert only with a supplied or freshly retrieved rate</user_settings_yaml>
 ```
 
 One block instead of two, every directive next to the value it explains,
@@ -44,11 +45,18 @@ decision (`reply_language_markdown`), not a settings comment.
 `user_profile/formatting.py` keeps its lookup tables and prompt-boundary
 validation but returns a `FormattingGuide` value instead of a body string:
 
-- `comments: dict[str, str]` — registry field key → one comment sentence
-  (no leading `#`). Keys: `date_format`, `first_day_of_week`, `time_format`,
-  `timezone`, `units`, `temperature`, `currency`, `currency_2`.
-- `chars` — total comment length, the number the shared guidance budget
-  deducts before the calibration block takes the remainder.
+- `comments: dict[str, str]` — registry field key → one short clause (no
+  leading `#`, no trailing period) that never restates the value: the key
+  is the topic, the value the setting, the comment the example or the
+  rule. Keys: `date_format`, `first_day_of_week` (Monday only — a Sunday or
+  Saturday start says it all), `time_format`, `timezone`, `units`,
+  `currency`, `currency_2`.
+- `values: dict[str, str]` — a display form that replaces an opaque stored
+  value on its line: `temperature: Celsius (°C)` for the stored `celsius`.
+  Rendered also when the profile leaves temperature unset and the guide
+  derives it from the units, so the block reads the same either way.
+- `chars` — total comment and display-value length, the number the shared
+  guidance budget deducts before the calibration block takes the remainder.
 
 The guide has no language part. The old Language line (mirror the
 conversation, use the declared tags only on request, the variant clause)
@@ -56,16 +64,16 @@ goes with the block; `mirror_conversation` and the `has_history` plumbing
 that fed it go too. `valid_profile_languages` stays: the classifier's
 `user_settings_languages_json` reads it.
 
-Wording moves from "- Dates: YYYY-MM-DD, for example …" to "For example …":
-the key names the topic and the value is the example, so the comment
-states only what the value does not. Two directives that used to share a
-line or derive from another field split or move:
+Wording moves from "- Dates: YYYY-MM-DD, for example 2026-12-31; do not use
+month-first dates." to "Example 2026-12-31": the key names the topic and the
+value is the setting, so the comment carries only the example or the rule.
+Directives that used to share a line or derive from another field split
+or move:
 
 - Time and timezone were one "Times:" line; they are two fields and get
-  two comments. Timezone alone still says "Present local times in …".
-- A temperature derived from `units` when the `temperature` field is unset
-  has no key to sit on; it joins the `units` comment ("Temperature in
-  Celsius (°C).") so the derived default is not lost.
+  two comments (`Example 23:59`, `Currently UTC+02:00`).
+- Temperature is a display value, not a comment; an unset field still gets
+  its line from the units-derived default.
 - A currency whose primary value fails validation still promotes the
   secondary: the comment attaches to whichever key holds the first valid
   code, and the invalid raw value stays in the block uncommented (as it

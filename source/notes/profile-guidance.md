@@ -15,16 +15,22 @@ the measurement system when unset, in which case it rides the units
 comment), number format, currency — into code-owned comments with examples
 (free-text profile values pass a strict prompt boundary or are omitted —
 they can never become instructions). Each comment sits on the line of its
-own field, after the value, so the value is the example and the comment
-says only what the value does not; the guide adds nothing else to the
-block, no header and no trailing line:
+own field, after the value, and never restates it: the key is the topic,
+the value the setting, the comment the example or the rule, one short
+clause. A field whose stored value is an opaque enum shows the guide's
+display form instead (`temperature: Celsius (°C)` for the stored
+`celsius`, also when derived from the units). The guide adds nothing else
+to the block, no header and no trailing line:
 
 ```yaml
 full_name: Karl Weierstraß
-units: metric  # Prefer km and kg; preserve a source value when precision matters and add the conversion.
-date_format: DD.MM.YYYY  # For example 31.12.2026; do not use month-first dates.
+units: metric  # Prefer km and kg; keep a source value when precision matters and add the conversion
+temperature: Celsius (°C)
+timezone: Europe/Berlin  # Currently UTC+02:00
+date_format: DD.MM.YYYY  # Example 31.12.2026
+time_format: 24h  # Example 23:59
 number_format: 1.234.567,89  # Use DOT as thousands separator and COMMA as decimal separator.
-currency: EUR  # For example 1.234,56 EUR. Convert currencies only with a supplied or freshly retrieved rate.
+currency: EUR  # Example 1.234,56 EUR; convert only with a supplied or freshly retrieved rate
 ```
 
 Comments are invisible to a YAML parser, so the block still round-trips
@@ -148,8 +154,9 @@ This is the direct proof the assistant actually carries the blocks:
 2. In a chat room with the assistant, ask anything ("how far is 100 km?").
 3. Open `/assistant`, select the newest run, and inspect any step's **user
    prompt**. It must contain, in order: `<user_settings_yaml>` carrying a
-   `# …` comment on each locale field, then `<user_expertise_yaml>` with the
-   YAML rows (when the profile has calibration topics).
+   `# …` comment on each locale field (and `temperature:` in its display
+   form), then `<user_expertise_yaml>` with the YAML rows (when the profile
+   has calibration topics).
 4. In the same run, the final `reply` must be preceded by a `reply_audit`
    row carrying its own model, duration and prompts. Open it: the
    observation shows the verdict and any problems. A `revise` verdict must

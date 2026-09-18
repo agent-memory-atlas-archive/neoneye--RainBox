@@ -121,38 +121,43 @@ def test_guide_comments_sit_on_their_fields_lines(app_ctx):
     lines = block.splitlines()
     assert lines[0] == "full_name: Ada Lovelace"
     assert not any(line.startswith("#") for line in lines)
-    assert ("units: metric  # Prefer km and kg; preserve a source value when "
-            "precision matters and add the conversion. Temperature in "
-            "Celsius (°C).") in lines
-    assert ("timezone: Europe/Berlin  # Present local times in Europe/Berlin "
-            "(currently UTC+02:00); name another zone when relevant.") in lines
-    assert ("date_format: DD.MM.YYYY  # For example 31.12.2026; do not use "
-            "month-first dates.") in lines
-    assert "time_format: 24h  # 24-hour clock, for example 23:59." in lines
-    assert ("first_day_of_week: monday  # Weeks start on Monday (ISO 8601; "
-            "week numbers follow ISO).") in lines
+    assert ("units: metric  # Prefer km and kg; keep a source value when "
+            "precision matters and add the conversion") in lines
+    # The profile sets no temperature: the guide derives it from the units
+    # and the block gets the line anyway, in its registry slot, as the
+    # display form rather than the enum.
+    assert "temperature: Celsius (°C)" in lines
+    assert "timezone: Europe/Berlin  # Currently UTC+02:00" in lines
+    assert "date_format: DD.MM.YYYY  # Example 31.12.2026" in lines
+    assert "time_format: 24h  # Example 23:59" in lines
+    assert "first_day_of_week: monday  # ISO 8601; week numbers follow ISO" in lines
     assert ("number_format: 1.234.567,89  # Use DOT as thousands separator "
             "and COMMA as decimal separator.") in lines
-    assert ("currency: EUR  # For example 1.234,56 EUR. Convert currencies "
-            "only with a supplied or freshly retrieved rate.") in lines
+    assert ("currency: EUR  # Example 1.234,56 EUR; convert only with a "
+            "supplied or freshly retrieved rate") in lines
     assert lines[-1] == "city: Berlin"
-    # Registry order is untouched by the comments.
+    # Registry order is untouched by the comments and the derived line.
     keys = [line.split(":")[0] for line in lines]
-    assert keys == ["full_name", "units", "timezone", "date_format",
-                    "time_format", "first_day_of_week", "number_format",
-                    "currency", "city"]
+    assert keys == ["full_name", "units", "temperature", "timezone",
+                    "date_format", "time_format", "first_day_of_week",
+                    "number_format", "currency", "city"]
     parsed = _parse_block(block)
     assert parsed == {
         "full_name": "Ada Lovelace", "units": "metric",
+        "temperature": "Celsius (°C)",
         "timezone": "Europe/Berlin", "date_format": "DD.MM.YYYY",
         "time_format": "24h", "first_day_of_week": "monday",
         "number_format": "1.234.567,89", "currency": "EUR", "city": "Berlin"}
-    # Without the guide, the same profile renders the fields alone (plus the
-    # switch-independent number_format comment).
+    # Without the guide, the same profile renders the stored fields alone
+    # (plus the switch-independent number_format comment): no derived
+    # temperature line, no display forms.
     bare = format_identity_block(profile)
     assert bare.splitlines() == [
         line if line.startswith("number_format:") else line.split("  # ")[0]
-        for line in lines]
+        for line in lines if not line.startswith("temperature:")]
+    explicit = format_identity_block(
+        {"uuid": "x", "name": "P", "data": {"temperature": "fahrenheit"}})
+    assert explicit == "temperature: fahrenheit"
 
 
 def test_an_empty_guide_changes_nothing(app_ctx):
