@@ -28,7 +28,8 @@ def test_form_fieldsets_from_registry():
     body = _page()
     for legend in ("Identity", "Locale &amp; formats", "Contact &amp; location"):
         assert f"<legend>{legend}</legend>" in body
-    for key in ("full_name", "native_name", "preferred_name", "handle", "gender",
+    for key in ("full_name", "native_name", "given_name", "handle",
+                "address_as", "mention_as", "gender",
                 "about", "birthday", "units", "timezone", "date_format",
                 "time_format", "currency", "currency_2",
                 "country", "city", "address", "email"):

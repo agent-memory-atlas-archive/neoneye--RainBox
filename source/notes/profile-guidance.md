@@ -24,6 +24,8 @@ to the block, no header and no trailing line:
 
 ```yaml
 full_name: Karl Weierstraß
+given_name: Karl
+address_as: you # address the user as "you", never by name
 units: metric # Prefer km and kg; keep a source value when precision matters and add the conversion
 temperature: Celsius (°C)
 timezone: Europe/Berlin # Currently UTC+02:00
@@ -33,8 +35,10 @@ number_format: 1.234.567,89 # Use DOT as thousands separator and COMMA as decima
 currency: EUR # Example 1.234,56 EUR; convert only with a supplied or freshly retrieved rate
 ```
 
-Comments are invisible to a YAML parser, so the block still round-trips
-exactly through `yaml.safe_load` (`user_profile/export.py` relies on that).
+An enum field's registry gloss renders the same way (`address_as`,
+`mention_as`, `number_format`). Comments are invisible to a YAML parser, so the block still
+round-trips exactly through `yaml.safe_load` (`user_profile/export.py`
+relies on that).
 The system prompt says what the comments are (the profile's formatting
 defaults, overridden by the current request and exact source notation), so
 the block does not repeat it.

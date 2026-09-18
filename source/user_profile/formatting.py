@@ -27,6 +27,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from language_tags import canonical_language_tag, effective_language_rows
+from profile_fields import FIELDS_BY_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -60,27 +61,11 @@ NUMBER_FORMATS: dict[str, dict[int, str]] = {
     "1234567,89": {2: "1234,56", 0: "1234", 3: "1234,567"},
 }
 
-# stored value -> the code-owned comment the identity block attaches to the
-# number_format line whether or not the guide is on. The bare stored value
-# is opaque to a small model reading the block; this spells the convention
-# out. Derived from the validated enum only — never operator text — so it is
-# safe inside the context-authority block.
-NUMBER_FORMAT_COMMENTS: dict[str, str] = {
-    "1,234,567.89": "Use COMMA as thousands separator and DOT as decimal "
-                    "separator.",
-    "1.234.567,89": "Use DOT as thousands separator and COMMA as decimal "
-                    "separator.",
-    "1 234 567,89": "Use SPACE as thousands separator and COMMA as decimal "
-                    "separator.",
-    "1'234'567.89": "Use APOSTROPHE as thousands separator and DOT as "
-                    "decimal separator.",
-    "12,34,567.89": "Use Indian digit grouping with COMMA separators and "
-                    "DOT as decimal separator.",
-    "1234567.89": "Don't show thousand separators. Use DOT as decimal "
-                  "separator.",
-    "1234567,89": "Don't show thousand separators. Use COMMA as decimal "
-                  "separator.",
-}
+# The number_format samples' comments live on the registry field as its
+# glosses (the identity block renders every enum's gloss the same way);
+# this name stays for the callers and tests that read the table here.
+NUMBER_FORMAT_COMMENTS: dict[str, str] = dict(
+    FIELDS_BY_KEY["number_format"].glosses)
 
 # stored value -> the example: 31 December 2026 in the selected order. The
 # value names the order; the example is what the comment adds.

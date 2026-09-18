@@ -24,7 +24,7 @@ def app_ctx():
 
 def test_registry_shape():
     keys = [f.key for f in profile_fields.PROFILE_FIELDS]
-    assert len(keys) == len(set(keys)) == 20
+    assert len(keys) == len(set(keys)) == 22
     assert keys[0] == "full_name"
     assert profile_fields.FIELD_GROUPS == [
         "Identity", "Locale & formats", "Contact & location"]

@@ -36,7 +36,7 @@ import yaml
 
 import db
 from profile_fields import PROFILE_FIELDS
-from user_profile.formatting import NUMBER_FORMAT_COMMENTS, FormattingGuide
+from user_profile.formatting import FormattingGuide
 
 logger = logging.getLogger(__name__)
 
@@ -115,10 +115,10 @@ def format_identity_block(profile: dict[str, Any],
     the single place to experiment with identity prompt formatting.
 
     `guide` is the formatting guide to render as comments (see the module
-    docstring); None renders the fields alone. One comment is independent
-    of the guide: a `number_format` whose raw value is opaque (the sample
-    string) always gets the code-owned comment spelling the convention out
-    — looked up from the validated enum value, never operator text, so it
+    docstring); None renders the fields alone. One comment renders whether
+    or not a guide is given: an enum value's registry gloss
+    (`number_format`'s separators, `address_as`'s rule) follows the value —
+    looked up from the validated enum value, never operator text, so it
     cannot smuggle instructions into this context-authority block."""
     data = profile.get("data") or {}
     comments: dict[str, str] = dict(guide.comments) if guide else {}
@@ -128,9 +128,7 @@ def format_identity_block(profile: dict[str, Any],
         value = shown.get(field.key) or str(data.get(field.key) or "").strip()
         if not value:
             continue
-        parts = [comments.get(field.key, "")]
-        if field.key == "number_format" and value in NUMBER_FORMAT_COMMENTS:
-            parts.append(NUMBER_FORMAT_COMMENTS[value])
+        parts = [comments.get(field.key, ""), field.glosses.get(value, "")]
         comment = _comment(" ".join(p for p in parts if p))
         lines.extend(_field_lines(field.key, value, comment))
     return "\n".join(lines)

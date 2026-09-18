@@ -86,8 +86,13 @@ profile                           -- one person
 `choices`, `multiline`, `datalist`). Every field is optional. Three groups,
 rendered as one `<fieldset>` each in registry order:
 
-- **Identity** — names (full, native-script, "address them as", internet
-  handle), gender (enum), a multiline "About", birthday (date).
+- **Identity** — names (full, native-script, given name, internet handle),
+  two addressing policies (`address_as`: `you|given_name|handle|full_name`;
+  `mention_as`: `handle|given_name|full_name` — how
+  the operator is referred to in the third person; both enums carry a gloss
+  the prompt block renders as a comment), gender (enum), a multiline
+  "About", birthday (date). The given name is declared, never guessed from
+  the unsplit full name.
 - **Locale & formats** — units (`metric|imperial|uk` — `uk` is the hybrid:
   kg and °C but miles on roads; `imperial` is US customary), temperature
   (`celsius|fahrenheit`, derived from units when unset), date/time format,
