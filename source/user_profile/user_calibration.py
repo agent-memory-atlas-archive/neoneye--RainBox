@@ -75,7 +75,7 @@ OMISSION_PREFIX = "# Omitted "
 def _yaml_row(row: dict[str, Any], keys: tuple[str, ...]) -> str:
     """One row as a one-item YAML list ("- topic: …" then indented keys), so
     rows concatenate with newlines into one list. An enum value carries its
-    gloss as a comment on its own line (`level: expert  # omit the routine
+    gloss as a comment on its own line (`level: expert # omit the routine
     fundamentals`): the value stays the bare enum the export reads back, and
     the parser never sees the gloss. Every glossed key is a validated enum
     that dumps on one line, so the comment lands on that line by key."""
@@ -86,7 +86,7 @@ def _yaml_row(row: dict[str, Any], keys: tuple[str, ...]) -> str:
     for line in lines:
         key = line.lstrip("- ").split(":", 1)[0]
         comment = gloss(key, payload.get(key, "")) if key in payload else ""
-        out.append(f"{line}  # {comment}" if comment else line)
+        out.append(f"{line} # {comment}" if comment else line)
     return "\n".join(out)
 
 

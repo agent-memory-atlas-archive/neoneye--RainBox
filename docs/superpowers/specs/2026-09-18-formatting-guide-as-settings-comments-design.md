@@ -28,9 +28,9 @@ After:
 
 ```
 <user_settings_yaml>temperature: Celsius (°C)
-date_format: YYYY-MM-DD  # Example 2026-12-31
-number_format: '1234567.89'  # Don't show thousand separators. Use DOT as decimal separator.
-currency: DKK  # Example 1234.56 DKK; convert only with a supplied or freshly retrieved rate</user_settings_yaml>
+date_format: YYYY-MM-DD # Example 2026-12-31
+number_format: '1234567.89' # Don't show thousand separators. Use DOT as decimal separator.
+currency: DKK # Example 1234.56 DKK; convert only with a supplied or freshly retrieved rate</user_settings_yaml>
 ```
 
 One block instead of two, every directive next to the value it explains,
@@ -89,7 +89,7 @@ the per-minor-unit currency examples.
 `user_profile/identity.py` gains the comment placement:
 `format_identity_block(profile, guide=None)`. Each field is dumped on its
 own through the existing `_BlockDumper`, and the comment is appended to the
-field's first line as `  # …`; the guide adds no other lines. Comments are
+field's first line as ` # …`; the guide adds no other lines. Comments are
 code-owned text; every interpolated value passed the same validators as
 before, and a defensive collapse of whitespace guarantees a comment can
 never contain a newline. A field value cannot end a comment or start one:

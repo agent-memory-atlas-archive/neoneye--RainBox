@@ -748,7 +748,7 @@ def test_criteria_and_decide_prompts_share_the_settings_with_their_comments(
                         "number_format": "1.234.567,89"}}
     agent._identity_block = format_identity_block(
         profile, format_formatting_guide(profile))
-    assert "  # " in agent._identity_block  # the profile must render comments
+    assert " # " in agent._identity_block  # the profile must render comments
 
     decide = agent._build_user_prompt(
         messages=TURN_MESSAGES, scratchpad=[], step_index=0)

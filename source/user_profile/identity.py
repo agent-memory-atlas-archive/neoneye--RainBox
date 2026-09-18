@@ -94,14 +94,14 @@ def _comment(text: str) -> str:
 
 def _field_lines(key: str, value: str, comment: str) -> list[str]:
     """One field dumped on its own, the comment appended to its first line.
-    A single-line scalar makes `key: value  # comment`; a multi-line value
+    A single-line scalar makes `key: value # comment`; a multi-line value
     renders as a literal block and the comment follows the block indicator
-    (`key: |-  # comment`), which YAML allows — the indented lines below
+    (`key: |- # comment`), which YAML allows — the indented lines below
     stay content. A value cannot start a comment of its own: the dumper
     quotes any scalar containing ` #`."""
     lines = dump_block({key: value}).splitlines()
     if comment:
-        lines[0] = f"{lines[0]}  # {comment}"
+        lines[0] = f"{lines[0]} # {comment}"
     return lines
 
 

@@ -24,13 +24,13 @@ to the block, no header and no trailing line:
 
 ```yaml
 full_name: Karl Weierstraß
-units: metric  # Prefer km and kg; keep a source value when precision matters and add the conversion
+units: metric # Prefer km and kg; keep a source value when precision matters and add the conversion
 temperature: Celsius (°C)
-timezone: Europe/Berlin  # Currently UTC+02:00
-date_format: DD.MM.YYYY  # Example 31.12.2026
-time_format: 24h  # Example 23:59
-number_format: 1.234.567,89  # Use DOT as thousands separator and COMMA as decimal separator.
-currency: EUR  # Example 1.234,56 EUR; convert only with a supplied or freshly retrieved rate
+timezone: Europe/Berlin # Currently UTC+02:00
+date_format: DD.MM.YYYY # Example 31.12.2026
+time_format: 24h # Example 23:59
+number_format: 1.234.567,89 # Use DOT as thousands separator and COMMA as decimal separator.
+currency: EUR # Example 1.234,56 EUR; convert only with a supplied or freshly retrieved rate
 ```
 
 Comments are invisible to a YAML parser, so the block still round-trips

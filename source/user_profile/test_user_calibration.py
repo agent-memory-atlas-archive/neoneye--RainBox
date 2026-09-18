@@ -41,8 +41,8 @@ def test_rows_render_in_stored_order_as_a_yaml_list():
         {"topic": "Python", "level": "beginner", "stance": "prefer",
          "depth": "teach", "note": "Knows concepts from other languages."},
     ]))
-    assert body.startswith("- topic: Mathematics\n  level: expert  # omit the routine fundamentals\n")
-    assert not any(l.startswith("#") for l in body.splitlines())  # nothing omitted
+    assert body.startswith("- topic: Mathematics\n  level: expert # omit the routine fundamentals\n")
+    assert not any(l.startswith("#") for l in body.splitlines()) # nothing omitted
     rows = _rows(body)
     assert rows[0] == {"topic": "Mathematics",
                        "level": "expert",
@@ -68,7 +68,7 @@ def test_every_vocabulary_value_carries_a_gloss_and_unknown_values_get_none():
             line = next(l for l in format_calibration(_profile(
                 [{"topic": "T", key: value}])).splitlines()
                 if l.lstrip("- ").startswith(f"{key}:"))
-            assert line.endswith(f"{key}: {value}  # {out}")
+            assert line.endswith(f"{key}: {value} # {out}")
     assert gloss("level", "wizard") == ""
     assert gloss("topic", "Python") == ""
 

@@ -95,9 +95,9 @@ def test_formatting_guide_rides_the_identity_block_as_comments(room):
     assert "<user_settings_yaml>full_name: Karl" in prompt
     block = prompt[prompt.index("<user_settings_yaml>"):
                    prompt.index("</user_settings_yaml>")]
-    assert ("number_format: 1.234.567,89  # Use DOT as thousands separator "
+    assert ("number_format: 1.234.567,89 # Use DOT as thousands separator "
             "and COMMA as decimal separator.") in block
-    assert "date_format: DD.MM.YYYY  # Example 31.12.2026" in block
+    assert "date_format: DD.MM.YYYY # Example 31.12.2026" in block
     assert "temperature: Celsius (°C)" in block
     assert not any(line.startswith("#") for line in block.splitlines())
     assert "Language" not in block
@@ -116,11 +116,11 @@ def test_blocks_default_off_until_gated(room):
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" in prompt                  # never gated
     assert "date_format: DD.MM.YYYY\n" in prompt           # bare field
-    assert "number_format: 1.234.567,89  # Use DOT as" in prompt
+    assert "number_format: 1.234.567,89 # Use DOT as" in prompt
     assert "<user_expertise_yaml" not in prompt
     db.set_setting("assistant.formatting_guide", True)      # one alone
     prompt = _run_capture(room)["user_prompt"]
-    assert "date_format: DD.MM.YYYY  # Example" in prompt
+    assert "date_format: DD.MM.YYYY # Example" in prompt
     assert "<user_expertise_yaml" not in prompt
 
 
@@ -145,7 +145,7 @@ def test_handle_path_never_rereads_profile_current(room, monkeypatch):
     import agents.assistant as assistant_mod
     monkeypatch.setattr(assistant_mod.db, "get_setting", spy)
     prompt = _run_capture(room)["user_prompt"]
-    assert "date_format: DD.MM.YYYY  # Example" in prompt   # still rendered
+    assert "date_format: DD.MM.YYYY # Example" in prompt   # still rendered
     assert "profile.current" not in seen
     assert "profile.current_changed_at" not in seen
     assert "qa.facts_invalidated_at" not in seen
@@ -162,7 +162,7 @@ def test_formatting_failure_drops_only_the_comments(room, monkeypatch):
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" in prompt            # identity unaffected
     assert "date_format: DD.MM.YYYY\n" in prompt     # the fields, uncommented
-    assert "  # " not in prompt.split("<user_settings_yaml>")[1].split(
+    assert " # " not in prompt.split("<user_settings_yaml>")[1].split(
         "number_format:")[0]
 
 
@@ -206,7 +206,7 @@ def test_calibration_block_injected_as_context_right_after_identity(room, calibr
     instructions come after both."""
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_expertise_yaml>" in prompt
-    assert "- topic: Mathematics\n  level: expert  # omit the routine fundamentals" in prompt
+    assert "- topic: Mathematics\n  level: expert # omit the routine fundamentals" in prompt
     assert (prompt.index("<user_settings_yaml")
             < prompt.index("<user_expertise_yaml")
             < prompt.index("<turn_instructions"))
