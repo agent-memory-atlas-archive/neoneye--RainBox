@@ -104,14 +104,19 @@ def test_variants_toggle_blocks_in_the_real_prompt(case, monkeypatch):
         pg.run_profile_guidance_suite([case.uuid], variant=variant,
                                       repetitions=1)
         seen[variant] = captured["prompts"][0][1]
-    assert "<formatting_guide" not in seen["baseline"]
+    # The formatting guide is the comments inside user_settings_yaml; the
+    # Germany template's date comment is the marker that the variant
+    # rendered them.
+    header = "date_format: DD.MM.YYYY  # Example"
+    assert header not in seen["baseline"]
     assert "<user_expertise_yaml" not in seen["baseline"]
-    assert "<formatting_guide" in seen["formatting_only"]
+    assert header in seen["formatting_only"]
     assert "<user_expertise_yaml" not in seen["formatting_only"]
-    assert "<formatting_guide" not in seen["calibration_only"]
+    assert header not in seen["calibration_only"]
     assert "<user_expertise_yaml" in seen["calibration_only"]   # Germany seeds rows
-    assert "<formatting_guide" in seen["combined"]
+    assert header in seen["combined"]
     assert "<user_expertise_yaml" in seen["combined"]
+    assert all("<formatting_guide" not in p for p in seen.values())
     # The identity block rides every variant (it is not gated).
     assert all("<user_settings_yaml" in p for p in seen.values())
     # The case message is the current request in the production prompt shape.
@@ -234,7 +239,7 @@ def test_inline_profile_override(app_ctx, monkeypatch):
         run = pg.run_profile_guidance_suite([c.uuid], variant="formatting_only",
                                             repetitions=1)
         assert db.list_eval_results_for_run(run.uuid)[0].score == 1.0
-        assert "Prefer mi and lb" in captured["prompts"][0][1]
+        assert "prefer mi and lb" in captured["prompts"][0][1]
     finally:
         db.session.rollback()
         for run in db.session.query(db.EvalRun).all():

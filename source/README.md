@@ -376,7 +376,7 @@ Helpers in `db/` (all use `db.session` under a pushed Flask app context — no c
 | `data/` | the base Q&A knowledge file (`question_answer.jsonl`) |
 | `voice_tts_kokoro/`, `voice_stt_whisper/`, `reranker/`, `telegram_service/`, `discord_service/` | standalone processes with their own venvs (TTS, STT, cross-encoder reranking, Telegram and Discord bridges) — the core talks to/with them over HTTP only; the Discord bridge runs one process per connector configured on `/bridges` (`db/bridges.py`, `webapp/bridges_api.py`), started by the launcher |
 
-Tests are colocated inside each package next to the modules they test (`<pkg>/test_*.py`); the root `conftest.py` pins every pytest run to the `rainbox_claude` database.
+Tests are colocated inside each package next to the modules they test (`<pkg>/test_*.py`); the root `conftest.py` pins every pytest run to the `rainbox_claude` database and loads `tools/pytest_rainbox.py` (progress bar with ETA, a guard that refuses live-model connections, LLM KPIs in the summary — see `notes/testing.md`).
 
 ## As a loop for running AI agents
 

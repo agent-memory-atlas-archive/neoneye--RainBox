@@ -1,33 +1,54 @@
 # Profile guidance — formatting guide + knowledge calibration
 
-The profile selected by `profile.current` drives three assistant prompt
-blocks, all rendered from one per-turn context snapshot:
+The profile selected by `profile.current` drives two assistant prompt
+blocks, both rendered from one per-turn context snapshot:
 
 | Block | Authority | Source | Gated? |
 |---|---|---|---|
-| `<user_settings_yaml>` | context (by system-prompt rule; the tag carries no attributes) | profile fields as YAML (`user_profile/identity.py`; opaque enums like `number_format` carry a code-owned `.comment` entry) | no — always on when a profile is selected |
-| `<formatting_guide>` | instructions | deterministic locale directives (`user_profile/formatting.py`) | **`assistant.formatting_guide`**, default off |
+| `<user_settings_yaml>` | context (by system-prompt rule; the tag carries no attributes); ranked in `source_priority` where its comments' defaults belong | profile fields as YAML (`user_profile/identity.py`), with the formatting guide as `#` comments on the fields it derives from (`user_profile/formatting.py`) | the fields: no — always on when a profile is selected. The guide's comments: **`assistant.formatting_guide`**, default off (the `number_format` comment spelling its opaque value out is the one comment that stays on) |
 | `<user_expertise_yaml>` | context (by system-prompt rule; the tag carries no attributes) | self-declared topic rows as a YAML list (`user_profile/user_calibration.py`) | **`assistant.knowledge_calibration`**, default off |
 
 The formatting guide compiles the locale fields — date format, first day of
-week, time format + timezone (with the current UTC offset), measurement
+week, time format, timezone (with the current UTC offset), measurement
 system (metric / US customary / the UK hybrid), temperature (derived from
-the measurement system when unset), number format, currency, language — into
-code-owned directives with examples (free-text profile values pass a strict
-prompt boundary or are omitted — they can never become instructions).
+the measurement system when unset, in which case it rides the units
+comment), number format, currency — into code-owned comments with examples
+(free-text profile values pass a strict prompt boundary or are omitted —
+they can never become instructions). Each comment sits on the line of its
+own field, after the value, and never restates it: the key is the topic,
+the value the setting, the comment the example or the rule, one short
+clause. A field whose stored value is an opaque enum shows the guide's
+display form instead (`temperature: Celsius (°C)` for the stored
+`celsius`, also when derived from the units). The guide adds nothing else
+to the block, no header and no trailing line:
 
-The language directive is rendered from the declared tag itself, so no
-language is built in: a tag carrying a region or script subtag (`en-GB`,
-`pt-BR`, `zh-Hans`) states that variant — spelling and vocabulary alike,
-since a directive naming only spelling gets applied to orthography alone —
-and a bare primary tag (`en`, `da`) has no variant to state. The variant is
-always NAMED by its tag and never exemplified: contrastive example words in
-a prompt get parroted into unrelated replies.
+```yaml
+full_name: Karl Weierstraß
+units: metric  # Prefer km and kg; keep a source value when precision matters and add the conversion
+temperature: Celsius (°C)
+timezone: Europe/Berlin  # Currently UTC+02:00
+date_format: DD.MM.YYYY  # Example 31.12.2026
+time_format: 24h  # Example 23:59
+number_format: 1.234.567,89  # Use DOT as thousands separator and COMMA as decimal separator.
+currency: EUR  # Example 1.234,56 EUR; convert only with a supplied or freshly retrieved rate
+```
+
+Comments are invisible to a YAML parser, so the block still round-trips
+exactly through `yaml.safe_load` (`user_profile/export.py` relies on that).
+The system prompt says what the comments are (the profile's formatting
+defaults, overridden by the current request and exact source notation), so
+the block does not repeat it.
+
+Language is not a formatting comment. The reply language is decided by the
+response-language classifier and delivered as `reply_language_markdown`
+(see `assistant-design.md`); the declared language rows reach the
+classifier through its own `user_settings_languages_json` block.
 Knowledge calibration is the operator's per-topic declaration (level, stance,
 depth, note), edited on `/profile` and injected under a shared 2 700-char
-budget with an honest degrade-then-drop ladder. Explicit requests in the
-current message always override both. Switching `profile.current` changes all
-three blocks and posts a one-time context marker into each room; it preserves
+budget with an honest degrade-then-drop ladder (the guide's comments are
+admitted first, calibration takes the remainder). Explicit requests in the
+current message always override both. Switching `profile.current` changes
+both blocks and posts a one-time context marker into each room; it preserves
 history and is **not an audience boundary**.
 
 The `reply` action carries one argument, `{"message": ...}`: the answer
@@ -40,9 +61,9 @@ call after the message exists.
 
 That call is the **reply audit**: a reviewer that did not write the message
 reads it against the request (every sentence and sub-question answered),
-`acceptance_criteria_markdown`, `user_settings_yaml`, the formatting guide
-(separators, dates, units, currency, language and its variant) and the
-turn's observations. It returns a typed
+`acceptance_criteria_markdown`, `user_settings_yaml` with its formatting
+comments (separators, dates, units, currency, language and its variant) and
+the turn's observations. It returns a typed
 `{reason, problems[], verdict: send|revise}` — a verdict the code reads,
 not prose it parses. A `revise` bounces the reply as a rejected step: the
 message is not posted, the problems flow into the scratchpad, and the model
@@ -61,15 +82,13 @@ unbound or unreachable auditor sends the message rather than losing the
 turn's answer. Every verdict lands in its own `reply_audit` trace row with
 the model, duration and prompts that produced it.
 
-The two gated blocks ship dark: each switch is flipped only after its block
+The two gated pieces ship dark: each switch is flipped only after its piece
 passes the live release gate below. Everything else on this page (the
-`/profile` editor, calibration storage/API, the identity block) is active
-regardless of the switches. One consumer bypasses the formatting switch on
-purpose: the acceptance-criteria call (see `assistant-design.md` §Acceptance
-criteria, which has no switch — it runs on every turn) always receives the
-formatting guide rendered from its snapshot profile — the switch gates only
-the decide-prompt injection, and the criteria step needs the guide's
-derived defaults (units → temperature, separators) either way.
+`/profile` editor, calibration storage/API, the identity fields) is active
+regardless of the switches. The identity block is rendered once per turn
+and every call of the turn — the acceptance-criteria call included —
+carries that one rendering, so the formatting switch decides for all of
+them together whether the comments are there.
 
 ## Where things live
 
@@ -134,9 +153,9 @@ This is the direct proof the assistant actually carries the blocks:
    verifying — see section 6 for the gated rollout).
 2. In a chat room with the assistant, ask anything ("how far is 100 km?").
 3. Open `/assistant`, select the newest run, and inspect any step's **user
-   prompt**. It must contain, in order: `<user_settings_yaml>`,
-   `<formatting_guide authority="instructions">` with the profile's
-   directives, `<user_expertise_yaml>` with the YAML rows (when the profile
+   prompt**. It must contain, in order: `<user_settings_yaml>` carrying a
+   `# …` comment on each locale field (and `temperature:` in its display
+   form), then `<user_expertise_yaml>` with the YAML rows (when the profile
    has calibration topics).
 4. In the same run, the final `reply` must be preceded by a `reply_audit`
    row carrying its own model, duration and prompts. Open it: the
@@ -149,9 +168,10 @@ This is the direct proof the assistant actually carries the blocks:
    preceded by a visible one-time notice ("the active profile switched to
    …"); the marker itself must NOT appear inside the model's prompt.
 6. Set both switches back to unset — the next run's prompt must carry the
-   identity block only.
+   identity fields only (no locale comments; the `number_format` comment
+   stays).
 
-If a block is missing when expected, expand the step's collapsed **log**
+If a block or the comments are missing when expected, expand the step's collapsed **log**
 (above the model request) first — it records the active profile (with a
 `/profile` deep link) and both switch states for that exact turn. Then
 check: is the switch on; is `profile.current` set (unset = no blocks at
@@ -225,8 +245,8 @@ allowed enablement: {'formatting_alone': …, 'calibration_alone': …, 'both': 
 
 Flip only what the gate allowed, on `/settings`:
 `assistant.formatting_guide` and/or `assistant.knowledge_calibration` →
-`true`. Rollback is the same switch back to unset — the blocks vanish from
-the next turn; nothing else depends on them.
+`true`. Rollback is the same switch back to unset — the comments and the
+calibration block vanish from the next turn; nothing else depends on them.
 
 ## Known limitations
 

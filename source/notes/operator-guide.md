@@ -46,13 +46,15 @@ fallback.
   `profile.current` setting drives the assistant's identity block, its
   formatting defaults (dates, first day of week, times, measurement system,
   temperature, number/currency separators, language), and its knowledge
-  calibration; explicit requests in a message always override the defaults. The formatting and calibration blocks sit
-  behind the default-off `assistant.formatting_guide` and
-  `assistant.knowledge_calibration` settings — enable each only after its
-  live release gate passes. The full verification and enablement runbook
-  (tests → browser → prompt inspection → live evals → gate) is
-  `notes/profile-guidance.md`. Switching `profile.current` changes those
-  three blocks and posts a one-time notice into each room — room history is
+  calibration; explicit requests in a message always override the defaults.
+  The formatting defaults render as comments inside the identity block; they
+  and the calibration block sit behind the default-off
+  `assistant.formatting_guide` and `assistant.knowledge_calibration`
+  settings — enable each only after its live release gate passes. The full
+  verification and enablement runbook (tests → browser → prompt inspection
+  → live evals → gate) is `notes/profile-guidance.md`. Switching
+  `profile.current` changes both blocks and posts a one-time notice into
+  each room — room history is
   preserved, and the switch is **not** an audience boundary: to hand the
   screen to someone else, use a fresh room and the demo database.
 - `/assistant` — assistant run inspector (traces, steps, write intents, and

@@ -18,7 +18,7 @@ from user_profile.context import (
 )
 from user_profile.formatting import (
     MAX_FORMATTING_GUIDE_CHARS,
-    build_formatting_guide,
+    FormattingGuide,
     format_formatting_guide,
     valid_language_tag,
     valid_profile_languages,
@@ -47,6 +47,7 @@ from user_profile.retrieval import (
 
 __all__ = [
     "FORMATS",
+    "FormattingGuide",
     "MAX_FORMATTING_GUIDE_CHARS",
     "MAX_PROFILE_GUIDANCE_CHARS",
     "ProfileContext",
@@ -61,7 +62,6 @@ __all__ = [
     "MAX_PROFILE_BLOCK_CHARS",
     "MAX_PROFILE_FACTS",
     "RetrievedProfileFact",
-    "build_formatting_guide",
     "build_identity_block",
     "build_profile_block",
     "current_profile",

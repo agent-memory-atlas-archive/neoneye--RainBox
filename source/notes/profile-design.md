@@ -99,8 +99,8 @@ rendered as one `<fieldset>` each in registry order:
   differing only in separators; two no-grouping variants (`1234567.89` /
   `1234567,89`) serve programmers who want digits unseparated.
   `first_day_of_week`
-  (`monday|sunday|saturday`) feeds the formatting guide's Calendar
-  directive; Monday additionally pins ISO 8601 week numbering.
+  (`monday|sunday|saturday`) feeds the formatting guide's comment on that
+  field; Monday additionally pins ISO 8601 week numbering.
 - **Contact & location** — country, city, address, email.
 
 Four kinds — `text`, `enum`, `date`, `email` — the complete set for v1.
@@ -357,15 +357,16 @@ version lineage is recorded — duplication is a convenience, not ancestry
 
 ## Prompt rendering
 
-The profile selected by `profile.current` feeds three assistant prompt
-blocks, all rendered from one per-turn context snapshot (see
-`assistant-design.md`): the identity JSON (`user_profile/identity.py` —
-registry fields only, no tree label; opaque enums such as `number_format`
-carry a code-owned `.comment` entry spelling the convention out), the
-deterministic formatting guide (`user_profile/formatting.py` — lookup-driven
-directives with examples compiled from locale fields and effective language
-rows, strict prompt-boundary validation so free-text values can never become
-instructions), and the knowledge-calibration block
+The profile selected by `profile.current` feeds two assistant prompt
+blocks, both rendered from one per-turn context snapshot (see
+`assistant-design.md`): the identity YAML (`user_profile/identity.py` —
+registry fields only, no tree label) carrying the deterministic formatting
+guide as `#` comments on the fields it derives from
+(`user_profile/formatting.py` — lookup-driven comments with examples
+compiled from locale fields and effective language rows, strict
+prompt-boundary validation so free-text values can never become
+instructions; the opaque `number_format` value keeps its code-owned comment
+even with the guide off), and the knowledge-calibration block
 (`user_profile/user_calibration.py` — YAML rows under a shared guidance budget).
 Switching `profile.current` changes identity, formatting, and calibration;
 it is **not an audience boundary** — handing the screen to another audience

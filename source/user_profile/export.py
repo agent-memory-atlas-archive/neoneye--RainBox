@@ -107,9 +107,9 @@ def collect_sections(
 
 def _xml_name(key: str) -> str:
     """A key rendered as an XML element name. Profile keys are registry
-    identifiers so this is normally a no-op, but `number_format.comment` shows
-    that keys are not guaranteed to be bare identifiers, and an invalid name
-    would produce a document no parser accepts."""
+    identifiers so this is normally a no-op, but keys are not guaranteed to
+    be bare identifiers, and an invalid name would produce a document no
+    parser accepts."""
     name = re.sub(r"[^\w.\-]", "_", str(key))
     if not name or not (name[0].isalpha() or name[0] == "_"):
         name = "_" + name

@@ -52,7 +52,6 @@ def fully_populated_agent():
     agent._caps = _base_enabled_capabilities()
     agent._identity_block = "identity"
     agent._persona_block = "persona"
-    agent._formatting_block = "formatting"
     agent._calibration_block = "calibration"
     agent._profile_block = "profile"
     agent._skill_block = "skills"
@@ -60,10 +59,8 @@ def fully_populated_agent():
     agent._reply_language_markdown = "language"
     agent._long_request_summary_markdown = ""
     agent.step_limit = 8
-    # The criteria call's formatting_guide comes from _criteria_formatting_guide(),
-    # not _formatting_block (it stays populated even when the decide-prompt
-    # injection is switched off — see test_criteria_call_sees_formatting_guide_
-    # despite_gated_switch). A minimal real profile so that section renders.
+    # The classifier's user_settings_languages_json renders from the profile
+    # dict itself; a minimal real one so that section renders.
     agent._criteria_profile = {"data": {"units": "metric"}}
     return agent
 
@@ -188,7 +185,7 @@ DECIDE_EXPECTED = [
     # check below would reject a section the builder legitimately skipped.)
     "current_user_request", "conversation_history_xml",
     # tier 1 — ordered so the per-call block sets nest (see _ALL_STATIC_BLOCKS)
-    "user_settings_yaml", "user_expertise_yaml", "formatting_guide",
+    "user_settings_yaml", "user_expertise_yaml",
     "user_profile", "assistant_persona",
     # tier 2
     "turn_instructions",
@@ -245,7 +242,7 @@ def sample_decision():
 CRITERIA_EXPECTED = [
     "current_user_request", "current_user_request_summary_markdown",
     "conversation_history_xml",
-    "user_settings_yaml", "user_expertise_yaml", "formatting_guide",
+    "user_settings_yaml", "user_expertise_yaml",
     "assistant_persona",
     "turn_instructions",
     "reply_language_markdown",
@@ -255,7 +252,7 @@ CRITERIA_EXPECTED = [
 
 SECOND_OPINION_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "user_expertise_yaml", "formatting_guide",
+    "user_settings_yaml", "user_expertise_yaml",
     "user_profile",
     "turn_instructions",
     "reply_language_markdown", "acceptance_criteria_markdown",
@@ -270,7 +267,7 @@ SECOND_OPINION_EXPECTED = [
 # (prior_acceptance_criteria on a revision, the request summary on a
 # truncated request) are deliberately absent from it.
 CRITERIA_ALWAYS = [
-    "user_settings_yaml", "formatting_guide", "turn_instructions",
+    "user_settings_yaml", "turn_instructions",
     "conversation_history_xml", "current_user_request", "criteria_request",
 ]
 SECOND_OPINION_ALWAYS = [
@@ -303,7 +300,7 @@ def test_second_opinion_prompt_follows_tier_order(
 
 AUDIT_EXPECTED = [
     "current_user_request", "conversation_history_xml",
-    "user_settings_yaml", "user_expertise_yaml", "formatting_guide",
+    "user_settings_yaml", "user_expertise_yaml",
     "turn_instructions",
     "acceptance_criteria_markdown",
     "reply_language_markdown", "turn_observations", "proposed_reply",
@@ -327,7 +324,7 @@ SUMMARY_EXPECTED = ["turn_instructions", "current_user_request"]
 # As in Task 4: the order check filters by what was found, so these lists are
 # what stops a builder silently dropping a section it must always emit.
 AUDIT_ALWAYS = [
-    "user_settings_yaml", "formatting_guide", "turn_instructions",
+    "user_settings_yaml", "turn_instructions",
     "conversation_history_xml", "proposed_reply", "current_user_request",
     "current_local_time",
 ]
@@ -415,12 +412,12 @@ def test_decide_and_audit_prompts_share_the_request_and_static_head(
     of both strings.
 
     The request leads because the two calls carry different-length static
-    heads — decide takes all five blocks via the default
-    `blocks=_ALL_STATIC_BLOCKS`, audit takes only ("identity", "formatting")
+    heads — decide takes all four blocks via the default
+    `blocks=_ALL_STATIC_BLOCKS`, audit takes only ("identity", "calibration")
     — so anything placed after those heads sits at a different offset in each
     prompt and can never be shared. With the request at position 0 and
     _ALL_STATIC_BLOCKS ordered so audit's set is a prefix of decide's, the
-    overlap runs through the request and on into formatting_guide."""
+    overlap runs through the request and on into user_expertise_yaml."""
     agent = fully_populated_agent
     messages = [{"sender_type": "human", "text": "what is 2+2"}]
 
@@ -436,10 +433,10 @@ def test_decide_and_audit_prompts_share_the_request_and_static_head(
         "<current_user_request>what is 2+2</current_user_request>")
     # Nesting: audit's whole static head is inside the shared region, so the
     # overlap does not stop at the first block decide carries and audit does
-    # not. Reordering _ALL_STATIC_BLOCKS to put persona or calibration before
-    # formatting would break this.
+    # not. Reordering _ALL_STATIC_BLOCKS to put persona or profile before
+    # calibration would break this.
     assert "<user_settings_yaml>identity</user_settings_yaml>" in decide[:shared]
-    assert "<formatting_guide" in decide[:shared]
+    assert "<user_expertise_yaml>calibration</user_expertise_yaml>" in decide[:shared]
 
 
 def test_consecutive_decide_steps_share_everything_before_the_new_step(
@@ -735,35 +732,32 @@ def test_criteria_prompt_shares_the_decide_prompts_history(
     assert history(criteria) == history(decide)
 
 
-def test_criteria_and_decide_prompts_share_the_head_through_the_guide(
+def test_criteria_and_decide_prompts_share_the_settings_with_their_comments(
     fully_populated_agent,
 ):
-    """formatting_guide is the last block the criteria call and the decide
-    call can share — criteria's head ends there while decide's continues
-    into user_profile — so the guide only pays off as shared prefix
-    while both render its tag identically. Reuse runs up to the point two
-    prompts first differ, so an attribute on one side and not the other ends
-    the shared run at the opening tag and makes decide prefill the guide
-    again.
+    """The formatting guide reaches the criteria call and the decide call
+    inside one block — user_settings_yaml, comments included — rendered once
+    per turn, so the two prompts share it byte for byte. Reuse runs up to
+    the point two prompts first differ, so a guide rendered separately for
+    one of them (as a block of its own once was) would end the shared run
+    wherever the two renderings disagreed."""
+    from user_profile import format_formatting_guide, format_identity_block
 
-    The fixture populates the two guides from different sources
-    (_formatting_block vs the criteria snapshot profile), so the test points
-    both at one string: production renders them from the same profile
-    through the same format_formatting_guide, and a fixture that disagreed
-    would hide the very byte-equality this asserts."""
     agent = fully_populated_agent
-    agent._formatting_block = agent._criteria_formatting_guide(
-        has_history=True)
-    assert agent._formatting_block  # the profile must render something
+    profile = {"data": {"units": "metric", "date_format": "DD.MM.YYYY",
+                        "number_format": "1.234.567,89"}}
+    agent._identity_block = format_identity_block(
+        profile, format_formatting_guide(profile))
+    assert "  # " in agent._identity_block  # the profile must render comments
 
     decide = agent._build_user_prompt(
         messages=TURN_MESSAGES, scratchpad=[], step_index=0)
     criteria = agent._build_acceptance_criteria_prompt(TURN_MESSAGES)
 
     shared = decide[:common_prefix_len(decide, criteria)]
-    assert "<formatting_guide>" in shared
-    assert agent._formatting_block in shared
-    assert "</formatting_guide>" in shared
+    block = f"<user_settings_yaml>{agent._identity_block}</user_settings_yaml>"
+    assert block in shared
+    assert "<formatting_guide" not in decide and "<formatting_guide" not in criteria
 
 
 def test_every_judging_call_carries_the_calibration_block_as_decide_does(
@@ -786,4 +780,4 @@ def test_every_judging_call_carries_the_calibration_block_as_decide_does(
         assert rendered in prompt
         head = "<user_settings_yaml>identity</user_settings_yaml>\n" + rendered
         assert head in prompt                      # the same bytes, at the same spot
-    assert decide.index("<user_expertise_yaml") < decide.index("<formatting_guide")
+    assert decide.index("<user_expertise_yaml") < decide.index("<user_profile")

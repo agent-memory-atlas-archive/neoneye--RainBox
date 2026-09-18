@@ -18,6 +18,14 @@ values render as literal blocks, values that would read as another type are
 quoted), the registry keys stay stable machine identifiers, and the round
 trip through `yaml.safe_load` is exact (`user_profile/export.py` depends on
 that to rebuild the document from this string).
+
+The formatting guide rides the same block as YAML comments: each directive
+sits on the line of the field it derives from (`date_format: YYYY-MM-DD  #
+Example 2026-12-31`), and a field whose stored value is an opaque enum shows
+the guide's display form instead (`temperature: Celsius (°C)`, also when
+the guide derived it from the units). The comments are code-owned text whose
+interpolated values passed `user_profile/formatting.py`'s validators; they
+are invisible to the YAML parser, so the round trip above still holds.
 """
 
 import logging
@@ -28,6 +36,7 @@ import yaml
 
 import db
 from profile_fields import PROFILE_FIELDS
+from user_profile.formatting import NUMBER_FORMAT_COMMENTS, FormattingGuide
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +85,28 @@ def current_profile() -> dict[str, Any] | None:
     return profile
 
 
-def format_identity_block(profile: dict[str, Any]) -> str:
+def _comment(text: str) -> str:
+    """One comment's text as it goes on the line: whitespace collapsed to
+    single spaces, so it can never contain the newline that would end the
+    comment early and turn its tail into YAML."""
+    return " ".join(text.split())
+
+
+def _field_lines(key: str, value: str, comment: str) -> list[str]:
+    """One field dumped on its own, the comment appended to its first line.
+    A single-line scalar makes `key: value  # comment`; a multi-line value
+    renders as a literal block and the comment follows the block indicator
+    (`key: |-  # comment`), which YAML allows — the indented lines below
+    stay content. A value cannot start a comment of its own: the dumper
+    quotes any scalar containing ` #`."""
+    lines = dump_block({key: value}).splitlines()
+    if comment:
+        lines[0] = f"{lines[0]}  # {comment}"
+    return lines
+
+
+def format_identity_block(profile: dict[str, Any],
+                          guide: FormattingGuide | None = None) -> str:
     """Render one profile as a prompt block: a YAML mapping of the filled-in
     fields under their registry keys, in registry order. No preamble line
     and no profile display name: the enclosing <user_settings_yaml> tag
@@ -84,22 +114,26 @@ def format_identity_block(profile: dict[str, Any]) -> str:
     bookkeeping (it rides the per-step debug log, not the prompt). This is
     the single place to experiment with identity prompt formatting.
 
-    A field whose raw value is opaque (number_format's sample string) gets a
-    code-owned "<key>.comment" entry spelling the convention out — looked up
-    from the validated enum value, never operator text, so it cannot smuggle
-    instructions into this context-authority block."""
-    from user_profile.formatting import NUMBER_FORMAT_COMMENTS
-
+    `guide` is the formatting guide to render as comments (see the module
+    docstring); None renders the fields alone. One comment is independent
+    of the guide: a `number_format` whose raw value is opaque (the sample
+    string) always gets the code-owned comment spelling the convention out
+    — looked up from the validated enum value, never operator text, so it
+    cannot smuggle instructions into this context-authority block."""
     data = profile.get("data") or {}
-    payload: dict[str, str] = {}
+    comments: dict[str, str] = dict(guide.comments) if guide else {}
+    shown: dict[str, str] = dict(guide.values) if guide else {}
+    lines: list[str] = []
     for field in PROFILE_FIELDS:
-        value = str(data.get(field.key) or "").strip()
+        value = shown.get(field.key) or str(data.get(field.key) or "").strip()
         if not value:
             continue
-        payload[field.key] = value
+        parts = [comments.get(field.key, "")]
         if field.key == "number_format" and value in NUMBER_FORMAT_COMMENTS:
-            payload["number_format.comment"] = NUMBER_FORMAT_COMMENTS[value]
-    return dump_block(payload)
+            parts.append(NUMBER_FORMAT_COMMENTS[value])
+        comment = _comment(" ".join(p for p in parts if p))
+        lines.extend(_field_lines(field.key, value, comment))
+    return "\n".join(lines)
 
 
 def build_identity_block() -> str:

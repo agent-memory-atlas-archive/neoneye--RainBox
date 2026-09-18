@@ -618,6 +618,20 @@ class TestFailuresOnThePage:
     only place it surfaces at all: the call sites swallow these so that
     retrieval degrades instead of stopping."""
 
+    @pytest.fixture(autouse=True)
+    def _only_this_tests_failures(self, client):
+        """The panel shows every failure in the window, whoever caused it,
+        and the sandbox database collects failures from other tests and from
+        sandbox experiments: earlier tests in the same run that reach the
+        embedder without a fake record a refused connection each. The
+        assertions here are about the rows this test adds, so the window
+        starts empty."""
+        db.session.query(LlmCall).filter(
+            LlmCall.ok.is_(False),
+            LlmCall.started_at >= datetime.now(UTC) - timedelta(hours=24),
+        ).delete(synchronize_session=False)
+        db.session.commit()
+
     def test_a_failed_call_shows_its_traceback_on_the_page(self, client, model):
         add_failed_call(model)
         body = client.get("/activity?range=24h").get_data(as_text=True)
@@ -654,9 +668,11 @@ class TestFailuresOnThePage:
         assert "No LLM calls recorded" not in body
 
     def test_a_failure_outside_the_window_is_not_shown(self, client, model):
+        """The failures panel is windowed; the un-windowed "Recent calls"
+        table below it may still list the row, so the check is the panel."""
         add_failed_call(model, minutes_ago=60 * 24 * 3)
         body = client.get("/activity?range=1h").get_data(as_text=True)
-        assert "openai.APITimeoutError" not in body
+        assert "<h2>Failures</h2>" not in body
 
     def test_the_panel_is_capped_and_says_so(self, client, model):
         from webapp.activity_views import MAX_ERRORS_SHOWN
