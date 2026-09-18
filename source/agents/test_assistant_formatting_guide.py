@@ -206,7 +206,7 @@ def test_calibration_block_injected_as_context_right_after_identity(room, calibr
     instructions come after both."""
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_expertise_yaml>" in prompt
-    assert "- topic: Mathematics\n  level: expert (omit the routine fundamentals)" in prompt
+    assert "- topic: Mathematics\n  level: expert  # omit the routine fundamentals" in prompt
     assert (prompt.index("<user_settings_yaml")
             < prompt.index("<user_expertise_yaml")
             < prompt.index("<turn_instructions"))

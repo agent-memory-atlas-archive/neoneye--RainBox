@@ -6,7 +6,7 @@ Injected by the main assistant as `<user_expertise_yaml>` — a bare tag, like
 reference data, never instructions, and carries the reading rules (explicit
 requests override, unlisted topics carry no inference, the axis meanings),
 so the block is data alone: one mapping per row, in stored order, each enum
-value followed by a short gloss of what it asks for (`_GLOSS`). Only the
+value with a short gloss of what it asks for as a comment (`_GLOSS`). Only the
 omission disclosure, when rows were dropped to fit the budget, rides along —
 as a YAML comment on the last line, so a parser sees the rows and a reader
 sees the count.
@@ -64,19 +64,30 @@ _GLOSS: dict[str, dict[str, str]] = {
 }
 
 
-def glossed(key: str, value: str) -> str:
-    gloss = _GLOSS.get(key, {}).get(value)
-    return f"{value} ({gloss})" if gloss else value
+def gloss(key: str, value: str) -> str:
+    """The comment that follows an enum value on its line, or "" for a value
+    with none (a topic, a note, an off-enum value)."""
+    return _GLOSS.get(key, {}).get(value, "")
 
 OMISSION_PREFIX = "# Omitted "
 
 
 def _yaml_row(row: dict[str, Any], keys: tuple[str, ...]) -> str:
     """One row as a one-item YAML list ("- topic: …" then indented keys), so
-    rows concatenate with newlines into one list."""
-    payload = {k: glossed(k, str(row[k])) for k in keys
+    rows concatenate with newlines into one list. An enum value carries its
+    gloss as a comment on its own line (`level: expert  # omit the routine
+    fundamentals`): the value stays the bare enum the export reads back, and
+    the parser never sees the gloss. Every glossed key is a validated enum
+    that dumps on one line, so the comment lands on that line by key."""
+    payload = {k: str(row[k]) for k in keys
                if str(row.get(k) or "").strip()}
-    return dump_block([payload])
+    lines = dump_block([payload]).splitlines()
+    out: list[str] = []
+    for line in lines:
+        key = line.lstrip("- ").split(":", 1)[0]
+        comment = gloss(key, payload.get(key, "")) if key in payload else ""
+        out.append(f"{line}  # {comment}" if comment else line)
+    return "\n".join(out)
 
 
 def _omission_line(count: int) -> str:

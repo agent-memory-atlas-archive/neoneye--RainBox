@@ -41,29 +41,36 @@ def test_rows_render_in_stored_order_as_a_yaml_list():
         {"topic": "Python", "level": "beginner", "stance": "prefer",
          "depth": "teach", "note": "Knows concepts from other languages."},
     ]))
-    assert body.startswith("- topic: Mathematics\n  level: expert (omit the routine fundamentals)\n")
-    assert "#" not in body                        # nothing omitted, no comment
+    assert body.startswith("- topic: Mathematics\n  level: expert  # omit the routine fundamentals\n")
+    assert not any(l.startswith("#") for l in body.splitlines())  # nothing omitted
     rows = _rows(body)
     assert rows[0] == {"topic": "Mathematics",
-                       "level": "expert (omit the routine fundamentals)",
-                       "stance": "prefer (lean toward it when equal)",
-                       "depth": "concise (short answers, essentials only)"}
+                       "level": "expert",
+                       "stance": "prefer",
+                       "depth": "concise"}
     assert rows[1]["note"] == "Knows concepts from other languages."
     assert list(rows[1]) == ["topic", "level", "stance", "depth", "note"]   # serialization order
 
 
-def test_every_vocabulary_value_carries_a_gloss_and_unknown_values_pass_through():
+def test_every_vocabulary_value_carries_a_gloss_and_unknown_values_get_none():
+    """Each enum value's gloss is a four-to-five-word comment on its own
+    line; a value the vocabulary does not know, and a non-enum key, get no
+    comment at all."""
     from db.profile_calibration import (
         CALIBRATION_DEPTHS, CALIBRATION_LEVELS, CALIBRATION_STANCES)
-    from user_profile.user_calibration import glossed
+    from user_profile.user_calibration import gloss
     for key, values in (("level", CALIBRATION_LEVELS), ("stance", CALIBRATION_STANCES),
                         ("depth", CALIBRATION_DEPTHS)):
         for value in values:
-            out = glossed(key, value)
-            assert out.startswith(f"{value} (") and out.endswith(")")
-            assert 4 <= len(out[len(value) + 2:-1].split()) <= 5      # four to five words
-    assert glossed("level", "wizard") == "wizard"
-    assert glossed("topic", "Python") == "Python"
+            out = gloss(key, value)
+            assert 4 <= len(out.split()) <= 5      # four to five words
+            assert "\n" not in out and "(" not in out
+            line = next(l for l in format_calibration(_profile(
+                [{"topic": "T", key: value}])).splitlines()
+                if l.lstrip("- ").startswith(f"{key}:"))
+            assert line.endswith(f"{key}: {value}  # {out}")
+    assert gloss("level", "wizard") == ""
+    assert gloss("topic", "Python") == ""
 
 
 def test_ids_and_stamps_never_enter_the_prompt():
