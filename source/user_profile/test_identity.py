@@ -41,9 +41,9 @@ def app_ctx():
 def profile_row(app_ctx):
     """A user-owned profile row, cleaned up (with the setting) afterwards."""
     row = Profile(uuid=uuid4(), name="Test Operator", position=0, data={
-        "full_name": "Ada Lovelace",
-        "preferred_name": "Ada",
-        "about": "mathematician, first programmer",
+        "full_name": "Sarah Connor",
+        "given_name": "Sarah",
+        "about": "waitress, then the mother of the resistance",
         "units": "metric",
     })
     db.session.add(row)
@@ -69,11 +69,61 @@ def test_format_identity_block_renders_filled_fields_in_registry_order(profile_r
     # The profile's tree label ("Test Operator") is deliberately absent:
     # operator bookkeeping rides the per-step debug log, not the prompt.
     assert list(payload.items()) == [
-        ("full_name", "Ada Lovelace"),
-        ("preferred_name", "Ada"),
-        ("about", "mathematician, first programmer"),
+        ("full_name", "Sarah Connor"),
+        ("given_name", "Sarah"),
+        ("about", "waitress, then the mother of the resistance"),
         ("units", "metric"),
     ]
+
+
+def test_addressing_policy_renders_as_glossed_enums(app_ctx):
+    """The three fields that replaced preferred_name: a declared given name,
+    and two enums whose gloss rides the line as a comment, so the policy
+    reads as a rule rather than a name reading as "use this name"."""
+    block = format_identity_block({"uuid": "x", "name": "P", "data": {
+        "full_name": "Sarah Connor", "given_name": "Sarah",
+        "handle": "sconnor", "address_as": "you", "mention_as": "handle"}})
+    assert block.splitlines() == [
+        "full_name: Sarah Connor",
+        "given_name: Sarah",
+        "handle: sconnor",
+        'address_as: you # address the user as "you", never by name',
+        "mention_as: handle # refer to the user by handle",
+    ]
+    assert _parse_block(block)["address_as"] == "you"
+    by_name = format_identity_block({"uuid": "x", "name": "P", "data": {
+        "given_name": "John", "address_as": "given_name"}})
+    assert "address_as: given_name # address the user by given name" in by_name
+    unset = format_identity_block({"uuid": "x", "name": "P", "data": {
+        "handle": "kreese"}})
+    assert unset == "handle: kreese"                 # unset renders nothing
+
+
+def test_preferred_name_migrates_to_given_name(app_ctx):
+    """A stored preferred_name becomes given_name; a row that already has a
+    given name keeps it and only loses the old key; rows without the old
+    key are untouched; running twice changes nothing."""
+    from db import _migrate_profile_preferred_name
+
+    legacy = Profile(uuid=uuid4(), name="Legacy", position=0,
+                     data={"full_name": "Miles Dyson", "preferred_name": "Miles"})
+    both = Profile(uuid=uuid4(), name="Both", position=0,
+                   data={"preferred_name": "Kyle", "given_name": "Reese"})
+    clean = Profile(uuid=uuid4(), name="Clean", position=0,
+                    data={"full_name": "John Connor"})
+    db.session.add_all([legacy, both, clean])
+    db.session.commit()
+    try:
+        _migrate_profile_preferred_name()
+        _migrate_profile_preferred_name()
+        assert db.profile_get(legacy.uuid)["data"] == {
+            "full_name": "Miles Dyson", "given_name": "Miles"}
+        assert db.profile_get(both.uuid)["data"] == {"given_name": "Reese"}
+        assert db.profile_get(clean.uuid)["data"] == {"full_name": "John Connor"}
+    finally:
+        for row in (legacy, both, clean):
+            db.session.delete(row)
+        db.session.commit()
 
 
 def test_number_format_gets_a_code_owned_comment(app_ctx):
@@ -233,7 +283,7 @@ def test_setting_selects_profile_and_builds_block(profile_row):
     db.set_setting("profile.current", str(profile_row.uuid))
     profile = current_profile()
     assert profile is not None and profile["name"] == "Test Operator"
-    assert _parse_block(build_identity_block())["full_name"] == "Ada Lovelace"
+    assert _parse_block(build_identity_block())["full_name"] == "Sarah Connor"
 
 
 def test_deleted_profile_degrades_to_empty_block(app_ctx):

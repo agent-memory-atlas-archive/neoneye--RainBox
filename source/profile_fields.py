@@ -6,7 +6,7 @@ page's data schema. One row per field; drives server-side validation
 connector-written observations live under data["dynamic"], which is not a
 registry field and is never writable through the human-facing PUT.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,11 @@ class Field:
     label: str
     hint: str = ""
     choices: tuple[str, ...] = ()
+    # Enum value -> the code-owned comment that follows it in the prompt
+    # block (`address_as: you # address the user as "you", never by name`)
+    # and after it in the form's picker. A bare enum is opaque to a small
+    # model; the gloss says what choosing it asks for.
+    glosses: dict[str, str] = field(default_factory=dict)
     multiline: bool = False
     datalist: str = ""  # datalist id suffix in the form ("tz", "lang", …)
 
@@ -29,16 +34,37 @@ PROFILE_FIELDS = [
     Field("native_name",    "Identity", kind="text",  label="Native name",
           hint="The name in its native script when that differs from the "
                "Latin form — e.g. 湯川秀樹, יובל נאמן, యల్లాప్రగడ సుబ్బారావు."),
-    Field("preferred_name", "Identity", kind="text",  label="Address them as",
-          hint="What the assistant calls them, e.g. “Simon” or “you”."),
+    # Declared, never guessed from full_name: that field is one unsplit
+    # string in any script or order, so the first token is not a given name.
+    Field("given_name",     "Identity", kind="text",  label="Given name",
+          hint="The name to use when a name is unavoidable, e.g. “Sarah”."),
     Field("handle",         "Identity", kind="text",  label="Internet nickname",
-          hint="Online handle / username, e.g. “neoneye”."),
+          hint="Online handle / username, e.g. “sconnor”."),
+    # How a reply addresses the operator, and how the operator is referred
+    # to in the third person. Two policies, not names: a name field alone
+    # reads as "use this name", which is the one thing most operators do
+    # not want in every reply. Unset, like any field, renders nothing.
+    Field("address_as",     "Identity", kind="enum",  label="Address as",
+          choices=("you", "given_name", "handle", "full_name"),
+          glosses={
+              "you": 'address the user as "you", never by name',
+              "given_name": "address the user by given name",
+              "handle": "address the user by handle",
+              "full_name": "address the user by full name",
+          }),
+    Field("mention_as",     "Identity", kind="enum",  label="Mention as",
+          choices=("handle", "given_name", "full_name"),
+          glosses={
+              "handle": "refer to the user by handle",
+              "given_name": "refer to the user by given name",
+              "full_name": "refer to the user by full name",
+          }),
     Field("gender",         "Identity", kind="enum",  label="Gender",
           choices=("male", "female", "other")),
     Field("about",          "Identity", kind="text",  label="About",
           multiline=True,
-          hint="Self-description in their own words, e.g. “programmer, "
-               "modern day alchemist doing code”."),
+          hint="Self-description in their own words, e.g. “waitress, "
+               "then the mother of the resistance”."),
     Field("birthday",       "Identity", kind="date",  label="Birthday"),
     # group "Locale & formats"
     # "uk" is the hybrid macOS calls "Measurement System: UK": kilograms and
@@ -69,12 +95,30 @@ PROFILE_FIELDS = [
     # enum, not full CLDR coverage; unsupported conventions stay unset. The
     # space-grouping value stores a normal ASCII space (rendering may swap in
     # a non-breaking space, storage does not).
+    # The glosses spell each sample's separators out: the bare sample is
+    # opaque to a small model reading the block.
     Field("number_format",  "Locale & formats", kind="enum", label="Number format",
           choices=("1,234,567.89", "1.234.567,89", "1 234 567,89",
                    "1'234'567.89", "12,34,567.89",
                    # No-grouping variants — programmers often want digits
                    # unseparated (and unambiguous when pasted into code).
-                   "1234567.89", "1234567,89")),
+                   "1234567.89", "1234567,89"),
+          glosses={
+              "1,234,567.89": "Use COMMA as thousands separator and DOT as "
+                              "decimal separator.",
+              "1.234.567,89": "Use DOT as thousands separator and COMMA as "
+                              "decimal separator.",
+              "1 234 567,89": "Use SPACE as thousands separator and COMMA "
+                              "as decimal separator.",
+              "1'234'567.89": "Use APOSTROPHE as thousands separator and "
+                              "DOT as decimal separator.",
+              "12,34,567.89": "Use Indian digit grouping with COMMA "
+                              "separators and DOT as decimal separator.",
+              "1234567.89": "Don't show thousand separators. Use DOT as "
+                            "decimal separator.",
+              "1234567,89": "Don't show thousand separators. Use COMMA as "
+                            "decimal separator.",
+          }),
     Field("currency",       "Locale & formats", kind="text", label="Currency (primary)",
           datalist="currency", hint="ISO 4217, e.g. DKK, USD"),
     Field("currency_2",     "Locale & formats", kind="text", label="Currency (secondary)",

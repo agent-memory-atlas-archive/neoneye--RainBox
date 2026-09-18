@@ -10,7 +10,7 @@
       "name": "US",
       "data": {
         "full_name": "Raymond Davis Jr.",
-        "preferred_name": "Raymond",
+        "given_name": "Raymond",
         "gender": "male",
         "about": "detected solar neutrinos",
         "birthday": "1984-10-19",
@@ -62,7 +62,7 @@
       "name": "Canada",
       "data": {
         "full_name": "Mieczysław Grzegorz Bekker",
-        "preferred_name": "Mieczysław",
+        "given_name": "Mieczysław",
         "gender": "male",
         "about": "founded terramechanics; designed the lunar rover's wheels",
         "birthday": "1990-04-03",
@@ -97,7 +97,7 @@
       "name": "Mexico",
       "data": {
         "full_name": "Ynés Mexía",
-        "preferred_name": "Ynés",
+        "given_name": "Ynés",
         "gender": "female",
         "about": "discovered some 500 new plant species",
         "birthday": "1988-05-24",
@@ -132,7 +132,7 @@
       "name": "Brazil",
       "data": {
         "full_name": "Maurício Rocha e Silva",
-        "preferred_name": "Maurício",
+        "given_name": "Maurício",
         "gender": "male",
         "about": "discovered bradykinin, the blood-pressure peptide",
         "birthday": "1992-09-19",
@@ -167,7 +167,7 @@
       "name": "UK",
       "data": {
         "full_name": "D'Arcy Wentworth Thompson",
-        "preferred_name": "D'Arcy",
+        "given_name": "D'Arcy",
         "gender": "male",
         "about": "founded mathematical biology (On Growth and Form)",
         "birthday": "1986-05-02",
@@ -197,7 +197,7 @@
       "name": "France",
       "data": {
         "full_name": "Émilie du Châtelet",
-        "preferred_name": "Émilie",
+        "given_name": "Émilie",
         "gender": "female",
         "about": "showed kinetic energy scales with velocity squared",
         "birthday": "1993-12-17",
@@ -232,7 +232,7 @@
       "name": "Germany",
       "data": {
         "full_name": "Karl Weierstraß",
-        "preferred_name": "Karl",
+        "given_name": "Karl",
         "gender": "male",
         "about": "made calculus rigorous (ε–δ)",
         "birthday": "1985-10-31",
@@ -279,7 +279,7 @@
       "name": "Netherlands",
       "data": {
         "full_name": "Jacobus van 't Hoff",
-        "preferred_name": "Jacobus",
+        "given_name": "Jacobus",
         "gender": "male",
         "about": "founded stereochemistry",
         "birthday": "1987-08-30",
@@ -314,7 +314,7 @@
       "name": "Spain",
       "data": {
         "full_name": "Santiago Ramón y Cajal",
-        "preferred_name": "Santiago",
+        "given_name": "Santiago",
         "gender": "male",
         "about": "showed the brain is made of neurons",
         "birthday": "1989-05-01",
@@ -349,7 +349,7 @@
       "name": "Italy",
       "data": {
         "full_name": "Rita Levi-Montalcini",
-        "preferred_name": "Rita",
+        "given_name": "Rita",
         "gender": "female",
         "about": "discovered nerve growth factor",
         "birthday": "1991-04-22",
@@ -384,7 +384,7 @@
       "name": "Denmark",
       "data": {
         "full_name": "Øjvind Winge",
-        "preferred_name": "Øjvind",
+        "given_name": "Øjvind",
         "gender": "male",
         "about": "founded the genetics of yeast",
         "birthday": "1983-05-19",
@@ -419,7 +419,7 @@
       "name": "Sweden",
       "data": {
         "full_name": "Anders Jonas Ångström",
-        "preferred_name": "Anders",
+        "given_name": "Anders",
         "gender": "male",
         "about": "pioneered spectroscopy",
         "birthday": "1994-08-13",
@@ -454,7 +454,7 @@
       "name": "Norway",
       "data": {
         "full_name": "Fredrik Carl Mülertz Størmer",
-        "preferred_name": "Fredrik",
+        "given_name": "Fredrik",
         "gender": "male",
         "about": "computed the charged-particle orbits behind the aurora",
         "birthday": "1991-09-03",
@@ -489,7 +489,7 @@
       "name": "Poland",
       "data": {
         "full_name": "Zofia Kielan-Jaworowska",
-        "preferred_name": "Zofia",
+        "given_name": "Zofia",
         "gender": "female",
         "about": "led the Gobi expeditions that rewrote early-mammal evolution",
         "birthday": "1982-04-25",
@@ -525,7 +525,7 @@
       "data": {
         "full_name": "Yuval Ne’eman",
         "native_name": "יובל נאמן",
-        "preferred_name": "Yuval",
+        "given_name": "Yuval",
         "gender": "male",
         "about": "ordered the particle zoo (SU(3))",
         "birthday": "1990-05-14",
@@ -561,7 +561,7 @@
       "data": {
         "full_name": "Yallāpragaḍa Subbārāvu",
         "native_name": "యల్లాప్రగడ సుబ్బారావు",
-        "preferred_name": "Subbārāvu",
+        "given_name": "Subbārāvu",
         "gender": "male",
         "about": "co-created methotrexate chemotherapy",
         "birthday": "1995-01-12",
@@ -597,7 +597,7 @@
       "data": {
         "full_name": "Wu Chien-Shiung",
         "native_name": "吳健雄",
-        "preferred_name": "Chien-Shiung",
+        "given_name": "Chien-Shiung",
         "gender": "female",
         "about": "overthrew parity conservation",
         "birthday": "1987-05-31",
@@ -633,7 +633,7 @@
       "data": {
         "full_name": "Hideki Yukawa",
         "native_name": "湯川秀樹",
-        "preferred_name": "Hideki",
+        "given_name": "Hideki",
         "gender": "male",
         "about": "predicted the meson",
         "birthday": "1989-01-23",
@@ -669,7 +669,7 @@
       "data": {
         "full_name": "Woo Jang-choon",
         "native_name": "우장춘",
-        "preferred_name": "Jang-choon",
+        "given_name": "Jang-choon",
         "gender": "male",
         "about": "the triangle of U",
         "birthday": "1996-04-08",
@@ -705,7 +705,7 @@
       "data": {
         "full_name": "Wu Lien-teh",
         "native_name": "伍連德",
-        "preferred_name": "Lien-teh",
+        "given_name": "Lien-teh",
         "gender": "male",
         "about": "pioneered modern epidemic control",
         "birthday": "1986-03-10",
@@ -740,7 +740,7 @@
       "name": "Australia",
       "data": {
         "full_name": "Ferdinand Jakob Heinrich von Mueller",
-        "preferred_name": "Ferdinand",
+        "given_name": "Ferdinand",
         "gender": "male",
         "about": "documented Australia's flora",
         "birthday": "1984-06-30",

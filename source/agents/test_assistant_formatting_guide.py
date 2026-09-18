@@ -162,8 +162,9 @@ def test_formatting_failure_drops_only_the_comments(room, monkeypatch):
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" in prompt            # identity unaffected
     assert "date_format: DD.MM.YYYY\n" in prompt     # the fields, uncommented
-    assert " # " not in prompt.split("<user_settings_yaml>")[1].split(
-        "number_format:")[0]
+    settings = prompt.split("<user_settings_yaml>")[1].split("number_format:")[0]
+    assert not [line for line in settings.splitlines()
+                if " # " in line and not line.startswith("address_as:")]
 
 
 def test_system_prompt_names_the_new_blocks(room):

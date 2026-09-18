@@ -48,7 +48,9 @@ def _form_fields_html() -> str:
             parts.append(f'<label for="{fid}"{hint}>{escape(f.label)}</label>')
             if f.kind == "enum":
                 opts = ['<option value=""></option>'] + [
-                    f'<option value="{escape(c)}">{escape(c)}</option>' for c in f.choices]
+                    f'<option value="{escape(c)}">{escape(c)}'
+                    f'{" — " + escape(f.glosses[c]) if c in f.glosses else ""}'
+                    '</option>' for c in f.choices]
                 parts.append(f'<select id="{fid}" data-key="{f.key}">{"".join(opts)}</select>')
             elif f.multiline:
                 parts.append(f'<textarea id="{fid}" data-key="{f.key}" rows="3"{hint}></textarea>')

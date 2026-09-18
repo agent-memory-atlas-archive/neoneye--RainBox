@@ -120,6 +120,27 @@ def _migrate_cron_message_targets() -> None:
         db.session.commit()
 
 
+def _migrate_profile_preferred_name() -> None:
+    """Rename the profile data key `preferred_name` to `given_name`: the old
+    key was a name posing as an addressing policy; the policy is now the
+    `address_as` enum and the name is `given_name`. Idempotent — a row
+    without the old key is untouched; a row that already has `given_name`
+    keeps it and drops the old key. Nothing else is written: the addressing
+    policy is the operator's to set on /profile."""
+    changed = False
+    for row in db.session.query(Profile):
+        data = dict(row.data or {})
+        if "preferred_name" not in data:
+            continue
+        old = data.pop("preferred_name")
+        if not str(data.get("given_name") or "").strip() and str(old or "").strip():
+            data["given_name"] = old
+        row.data = data
+        changed = True
+    if changed:
+        db.session.commit()
+
+
 def _column_exists(table: str, column: str) -> bool:
     return db.session.execute(
         sa.text(
@@ -658,6 +679,7 @@ def init_db(app: Flask) -> None:
         db.session.commit()
         _migrate_ollama_native_args()
         _migrate_cron_message_targets()
+        _migrate_profile_preferred_name()
         # Seed an (unassigned) model binding for each code-defined agent.
         from agents.config import agent_config
 
