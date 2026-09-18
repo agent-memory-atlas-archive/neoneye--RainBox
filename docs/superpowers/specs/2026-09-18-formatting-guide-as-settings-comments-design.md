@@ -27,15 +27,17 @@ currency: DKK</user_settings_yaml>
 After:
 
 ```
-<user_settings_yaml># The comments are formatting defaults; the current request or exact source notation overrides them.
-date_format: YYYY-MM-DD  # For example 2026-12-31; do not use month-first dates.
+<user_settings_yaml>date_format: YYYY-MM-DD  # For example 2026-12-31; do not use month-first dates.
 number_format: '1234567.89'  # Don't show thousand separators. Use DOT as decimal separator.
-currency: DKK  # For example 1234.56 DKK. Convert currencies only with a supplied or freshly retrieved rate.
-# Language: reply in the language of the current message; never switch on your own. Use en-US only when the message asks for it; an explicit request always wins. When writing en, use the en-US variant — spelling and vocabulary alike; never mix in another variant of the same language.</user_settings_yaml>
+currency: DKK  # For example 1234.56 DKK. Convert currencies only with a supplied or freshly retrieved rate.</user_settings_yaml>
 ```
 
 One block instead of two, every directive next to the value it explains,
-and the value itself is the example where it used to be repeated.
+and the value itself is the example where it used to be repeated. The
+guide's header sentence and its Language line do not carry over: the
+system prompt already says the comments are defaults the request
+overrides, and the reply language is the response-language classifier's
+decision (`reply_language_markdown`), not a settings comment.
 
 ## Rendering
 
@@ -45,11 +47,14 @@ validation but returns a `FormattingGuide` value instead of a body string:
 - `comments: dict[str, str]` — registry field key → one comment sentence
   (no leading `#`). Keys: `date_format`, `first_day_of_week`, `time_format`,
   `timezone`, `units`, `temperature`, `currency`, `currency_2`.
-- `language: str` — the language directive, which has no field of its own
-  in the block (language rows are not rendered there), so it renders as a
-  trailing comment line prefixed `Language:`.
 - `chars` — total comment length, the number the shared guidance budget
   deducts before the calibration block takes the remainder.
+
+The guide has no language part. The old Language line (mirror the
+conversation, use the declared tags only on request, the variant clause)
+goes with the block; `mirror_conversation` and the `has_history` plumbing
+that fed it go too. `valid_profile_languages` stays: the classifier's
+`user_settings_languages_json` reads it.
 
 Wording moves from "- Dates: YYYY-MM-DD, for example …" to "For example …":
 the key names the topic and the value is the example, so the comment
@@ -76,9 +81,7 @@ the per-minor-unit currency examples.
 `user_profile/identity.py` gains the comment placement:
 `format_identity_block(profile, guide=None)`. Each field is dumped on its
 own through the existing `_BlockDumper`, and the comment is appended to the
-field's first line as `  # …`. When the guide has anything, the block opens
-with one header comment (the old guide header, reworded for its new place)
-and closes with the language comment when there is one. Comments are
+field's first line as `  # …`; the guide adds no other lines. Comments are
 code-owned text; every interpolated value passed the same validators as
 before, and a defensive collapse of whitespace guarantees a comment can
 never contain a newline. A field value cannot end a comment or start one:
@@ -128,10 +131,11 @@ does the turn log's `formatting_guide: on|off` entry. The eval harness's
 ## Tests
 
 - `user_profile/test_formatting.py`: the golden Germany rendering becomes a
-  dict of comments plus the language line; every "line is independent" test
-  reads a key instead of searching a body.
-- `user_profile/test_identity.py`: comment placement, header and trailing
-  language line, round trip through `yaml.safe_load`, a hostile value
+  dict of comments; every "line is independent" test reads a key instead of
+  searching a body; the language-line tests go, one boundary test for
+  `valid_profile_languages` stays.
+- `user_profile/test_identity.py`: comment placement (and nothing else
+  added), round trip through `yaml.safe_load`, a hostile value
   containing ` #` stays inside its scalar, and a multi-line value with a
   comment still parses.
 - `agents/test_assistant_formatting_guide.py`, `test_assistant_prompt_tiers.py`,

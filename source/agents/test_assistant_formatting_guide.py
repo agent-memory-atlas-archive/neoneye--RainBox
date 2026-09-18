@@ -12,9 +12,6 @@ import pytest
 import db
 from agents.assistant import AssistantActionName, AssistantAgent, AssistantStepDecision
 from agents.config import ASSISTANT_UUID
-from user_profile.formatting import GUIDE_HEADER
-
-HEADER_LINE = f"# {GUIDE_HEADER}"
 
 KEYS = ("profile.current", "qa.facts_invalidated_at",
         "profile.current_changed_at",
@@ -89,34 +86,23 @@ def _run_capture(room):
 
 
 def test_formatting_guide_rides_the_identity_block_as_comments(room):
-    """The guide is not a block of its own: it opens user_settings_yaml with
-    its header comment, annotates the fields it derives from, and closes
-    the block with the language line."""
+    """The guide is not a block of its own: it annotates the fields of
+    user_settings_yaml it derives from, and nothing else — no header, no
+    language line (the reply language is the classifier's)."""
     db.set_current_profile(_germany_uuid())
     prompt = _run_capture(room)["user_prompt"]
     assert "<formatting_guide" not in prompt
-    assert f"<user_settings_yaml>{HEADER_LINE}\n" in prompt
+    assert "<user_settings_yaml>full_name: Karl" in prompt
     block = prompt[prompt.index("<user_settings_yaml>"):
                    prompt.index("</user_settings_yaml>")]
     assert ("number_format: 1.234.567,89  # Use DOT as thousands separator "
             "and COMMA as decimal separator.") in block
     assert ("date_format: DD.MM.YYYY  # For example 31.12.2026; do not use "
             "month-first dates.") in block
-    assert block.splitlines()[-1].startswith("# Language: ")
+    assert not any(line.startswith("#") for line in block.splitlines())
+    assert "Language" not in block
     # The switch marker itself is filtered from model history.
     assert "switched to Germany" not in prompt
-
-
-def test_first_turn_language_line_unchanged_with_gate_off(room):
-    """`assistant.response_language_gate` ships off by default, and the
-    `room` fixture posts the room's only message -- no history behind it.
-    With the gate off this must not suppress anything: the guide's Language
-    line has always carried the full mirroring clause on a room's first
-    turn, and the gate switch being off must reproduce that unchanged."""
-    db.set_current_profile(_germany_uuid())
-    prompt = _run_capture(room)["user_prompt"]
-    assert ("# Language: reply in the language of the current message; "
-            "never switch on your own.") in prompt
 
 
 def test_blocks_default_off_until_gated(room):
@@ -129,14 +115,11 @@ def test_blocks_default_off_until_gated(room):
     db.set_setting("assistant.knowledge_calibration", None)
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" in prompt                  # never gated
-    assert HEADER_LINE not in prompt
-    assert "# Language:" not in prompt
     assert "date_format: DD.MM.YYYY\n" in prompt           # bare field
     assert "number_format: 1.234.567,89  # Use DOT as" in prompt
     assert "<user_expertise_yaml" not in prompt
     db.set_setting("assistant.formatting_guide", True)      # one alone
     prompt = _run_capture(room)["user_prompt"]
-    assert HEADER_LINE in prompt
     assert "date_format: DD.MM.YYYY  # For example" in prompt
     assert "<user_expertise_yaml" not in prompt
 
@@ -145,7 +128,6 @@ def test_unset_profile_emits_neither_block(room):
     db.set_current_profile(None)
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" not in prompt
-    assert HEADER_LINE not in prompt
 
 
 def test_handle_path_never_rereads_profile_current(room, monkeypatch):
@@ -163,7 +145,7 @@ def test_handle_path_never_rereads_profile_current(room, monkeypatch):
     import agents.assistant as assistant_mod
     monkeypatch.setattr(assistant_mod.db, "get_setting", spy)
     prompt = _run_capture(room)["user_prompt"]
-    assert HEADER_LINE in prompt                      # blocks still rendered
+    assert "date_format: DD.MM.YYYY  # For example" in prompt   # still rendered
     assert "profile.current" not in seen
     assert "profile.current_changed_at" not in seen
     assert "qa.facts_invalidated_at" not in seen
@@ -180,8 +162,8 @@ def test_formatting_failure_drops_only_the_comments(room, monkeypatch):
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" in prompt            # identity unaffected
     assert "date_format: DD.MM.YYYY\n" in prompt     # the fields, uncommented
-    assert HEADER_LINE not in prompt
-    assert "# Language:" not in prompt
+    assert "  # " not in prompt.split("<user_settings_yaml>")[1].split(
+        "number_format:")[0]
 
 
 def test_system_prompt_names_the_new_blocks(room):
@@ -444,5 +426,4 @@ def test_profile_switch_field_changes_only_its_directive(room):
     american = _run_capture(room)["user_prompt"]
     assert "Use DOT as thousands separator and COMMA as decimal" in german
     assert "Use COMMA as thousands separator and DOT as decimal" in american
-    assert HEADER_LINE in german and HEADER_LINE in american
     assert "MM/DD/YYYY" in american and "DD.MM.YYYY" in german

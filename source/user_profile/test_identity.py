@@ -14,7 +14,7 @@ import yaml
 
 import db
 from db.models import Profile
-from user_profile.formatting import GUIDE_HEADER, format_formatting_guide
+from user_profile.formatting import format_formatting_guide
 from user_profile.identity import (
     build_identity_block,
     current_profile,
@@ -112,15 +112,15 @@ def _germany():
 
 def test_guide_comments_sit_on_their_fields_lines(app_ctx):
     """Each guide comment lands on the line of the field it derives from,
-    after the value; the header opens the block and the language line —
-    which has no field in the block — closes it. Fields the guide says
-    nothing about render bare, and the parse ignores every comment."""
+    after the value, and that is all the guide adds: no header, no trailing
+    line. Fields the guide says nothing about render bare, and the parse
+    ignores every comment."""
     profile = _germany()
     guide = format_formatting_guide(profile, now=SUMMER)
     block = format_identity_block(profile, guide)
     lines = block.splitlines()
-    assert lines[0] == f"# {GUIDE_HEADER}"
-    assert lines[1] == "full_name: Ada Lovelace"
+    assert lines[0] == "full_name: Ada Lovelace"
+    assert not any(line.startswith("#") for line in lines)
     assert ("units: metric  # Prefer km and kg; preserve a source value when "
             "precision matters and add the conversion. Temperature in "
             "Celsius (°C).") in lines
@@ -135,12 +135,9 @@ def test_guide_comments_sit_on_their_fields_lines(app_ctx):
             "and COMMA as decimal separator.") in lines
     assert ("currency: EUR  # For example 1.234,56 EUR. Convert currencies "
             "only with a supplied or freshly retrieved rate.") in lines
-    assert "city: Berlin" in lines
-    assert lines[-1] == f"# {guide.language}"
-    assert lines[-1].startswith("# Language: reply in the language of the "
-                                "current message")
+    assert lines[-1] == "city: Berlin"
     # Registry order is untouched by the comments.
-    keys = [line.split(":")[0] for line in lines if not line.startswith("#")]
+    keys = [line.split(":")[0] for line in lines]
     assert keys == ["full_name", "units", "timezone", "date_format",
                     "time_format", "first_day_of_week", "number_format",
                     "currency", "city"]
@@ -151,15 +148,14 @@ def test_guide_comments_sit_on_their_fields_lines(app_ctx):
         "time_format": "24h", "first_day_of_week": "monday",
         "number_format": "1.234.567,89", "currency": "EUR", "city": "Berlin"}
     # Without the guide, the same profile renders the fields alone (plus the
-    # switch-independent number_format comment): no header, no language.
+    # switch-independent number_format comment).
     bare = format_identity_block(profile)
-    assert "Language" not in bare and GUIDE_HEADER not in bare
     assert bare.splitlines() == [
         line if line.startswith("number_format:") else line.split("  # ")[0]
-        for line in lines[1:-1]]
+        for line in lines]
 
 
-def test_an_empty_guide_renders_neither_header_nor_language_line(app_ctx):
+def test_an_empty_guide_changes_nothing(app_ctx):
     profile = {"uuid": "x", "name": "P", "data": {"full_name": "Ada Lovelace"}}
     guide = format_formatting_guide(profile)
     assert not guide

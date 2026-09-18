@@ -324,8 +324,6 @@ def test_criteria_call_reads_the_settings_comments_decide_reads(room):
     user_settings_yaml — the one block rendered for the turn, so the
     criteria and decide prompts carry it byte for byte, derived defaults
     (metric -> Celsius) included. One switch gates the comments in both."""
-    from user_profile.formatting import GUIDE_HEADER
-
     db.set_setting("assistant.formatting_guide", True)
     germany = next(e for e in db.profile_templates_entries()
                    if e["name"] == "Germany")["uuid"]
@@ -341,8 +339,7 @@ def test_criteria_call_reads_the_settings_comments_decide_reads(room):
                       prompt.index("</user_settings_yaml>")]
 
     criteria_settings = settings(calls[0]["user_prompt"])
-    assert f"# {GUIDE_HEADER}" in criteria_settings
-    assert "Celsius (°C)." in criteria_settings
+    assert "temperature: celsius  # Celsius (°C)." in criteria_settings
     assert criteria_settings == settings(prompts[0]["user"])
     assert "<formatting_guide" not in calls[0]["user_prompt"]
     assert "<formatting_guide" not in prompts[0]["user"]

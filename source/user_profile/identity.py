@@ -21,11 +21,9 @@ that to rebuild the document from this string).
 
 The formatting guide rides the same block as YAML comments: each directive
 sits on the line of the field it derives from (`date_format: YYYY-MM-DD  #
-For example 2026-12-31; …`), a header comment opens the block, and the
-language directive — which has no field of its own here — closes it. The
-comments are code-owned text whose interpolated values passed
-`user_profile/formatting.py`'s validators; they are invisible to the YAML
-parser, so the round trip above still holds.
+For example 2026-12-31; …`). The comments are code-owned text whose
+interpolated values passed `user_profile/formatting.py`'s validators; they
+are invisible to the YAML parser, so the round trip above still holds.
 """
 
 import logging
@@ -36,11 +34,7 @@ import yaml
 
 import db
 from profile_fields import PROFILE_FIELDS
-from user_profile.formatting import (
-    GUIDE_HEADER,
-    NUMBER_FORMAT_COMMENTS,
-    FormattingGuide,
-)
+from user_profile.formatting import NUMBER_FORMAT_COMMENTS, FormattingGuide
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +121,6 @@ def format_identity_block(profile: dict[str, Any],
     data = profile.get("data") or {}
     comments: dict[str, str] = dict(guide.comments) if guide else {}
     lines: list[str] = []
-    if guide:
-        lines.append(f"# {_comment(GUIDE_HEADER)}")
     for field in PROFILE_FIELDS:
         value = str(data.get(field.key) or "").strip()
         if not value:
@@ -138,8 +130,6 @@ def format_identity_block(profile: dict[str, Any],
             parts.append(NUMBER_FORMAT_COMMENTS[value])
         comment = _comment(" ".join(p for p in parts if p))
         lines.extend(_field_lines(field.key, value, comment))
-    if guide and guide.language:
-        lines.append(f"# {_comment(guide.language)}")
     return "\n".join(lines)
 
 

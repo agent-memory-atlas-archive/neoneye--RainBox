@@ -17,7 +17,6 @@ from user_profile.context import (
     current_profile_context,
 )
 from user_profile.formatting import (
-    GUIDE_HEADER,
     MAX_FORMATTING_GUIDE_CHARS,
     FormattingGuide,
     format_formatting_guide,
@@ -49,7 +48,6 @@ from user_profile.retrieval import (
 __all__ = [
     "FORMATS",
     "FormattingGuide",
-    "GUIDE_HEADER",
     "MAX_FORMATTING_GUIDE_CHARS",
     "MAX_PROFILE_GUIDANCE_CHARS",
     "ProfileContext",

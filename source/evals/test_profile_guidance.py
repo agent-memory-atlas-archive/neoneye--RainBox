@@ -104,10 +104,10 @@ def test_variants_toggle_blocks_in_the_real_prompt(case, monkeypatch):
         pg.run_profile_guidance_suite([case.uuid], variant=variant,
                                       repetitions=1)
         seen[variant] = captured["prompts"][0][1]
-    # The formatting guide is the comments inside user_settings_yaml; its
-    # header line is the marker that the variant rendered them.
-    from user_profile.formatting import GUIDE_HEADER
-    header = f"# {GUIDE_HEADER}"
+    # The formatting guide is the comments inside user_settings_yaml; the
+    # Germany template's date comment is the marker that the variant
+    # rendered them.
+    header = "date_format: DD.MM.YYYY  # For example"
     assert header not in seen["baseline"]
     assert "<user_expertise_yaml" not in seen["baseline"]
     assert header in seen["formatting_only"]

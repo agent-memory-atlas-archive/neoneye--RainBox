@@ -130,34 +130,6 @@ _UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
     "metric": "celsius", "uk": "celsius", "imperial": "fahrenheit",
 }
 
-def _variant_clause(tag: str | None) -> str:
-    """The variant clause for one declared tag, or "" when it has none.
-
-    A tag carrying a region or script subtag ("en-GB", "pt-BR", "zh-Hans")
-    names a specific variant of its language; a bare primary tag ("en",
-    "da") does not, and there is no default variant to state. The clause is
-    rendered from the tag itself rather than from a table of languages: a
-    per-language table would need an entry before any language could be
-    handled, which makes English structurally privileged and every other
-    language an addition. It also says spelling AND vocabulary, because a
-    clause naming only spelling gets applied to orthography alone — a
-    live run wrote one variant's spelling beside the other's word choice.
-
-    The variant is NAMED by its tag and never exemplified: contrastive
-    example words in a prompt get parroted into unrelated replies.
-    """
-    if not tag or "-" not in tag:
-        return ""
-    return (f" When writing {tag.split('-')[0]}, use the {tag} variant — "
-            f"spelling and vocabulary alike; never mix in another variant "
-            f"of the same language.")
-
-# The one comment that opens the block when the guide renders anything: it
-# says what the comments are, and that they are defaults.
-GUIDE_HEADER = ("The comments are formatting defaults; the current request "
-                "or exact source notation overrides them.")
-
-
 # ---- prompt-boundary validation (stricter than the form's soft checks) ----
 
 def _valid_timezone(raw: Any) -> str | None:
@@ -246,26 +218,22 @@ def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | 
 class FormattingGuide:
     """The guide as the identity block renders it: one comment per profile
     field it can say something about (registry key -> sentence, no leading
-    `#`), plus the language comment, which has no field of its own in the
-    block (language rows are not rendered there) and so closes the block as
-    a trailing comment. Empty when no directive is usable — the identity
-    block then renders no header and no trailing line."""
+    `#`). Language is not here: the reply language is the response-language
+    classifier's decision (reply_language_markdown), and the language rows
+    have no field in the block to sit on. Empty when no directive is
+    usable."""
 
     comments: dict[str, str] = field(default_factory=dict)
-    language: str = ""
 
     def __bool__(self) -> bool:
-        return bool(self.comments or self.language)
+        return bool(self.comments)
 
     @property
     def chars(self) -> int:
         """The characters the guide adds to the prompt — what the shared
         guidance budget deducts before the calibration block takes the
-        remainder. The header counts once, like every other line."""
-        if not self:
-            return 0
-        return (len(GUIDE_HEADER) + sum(map(len, self.comments.values()))
-                + len(self.language))
+        remainder."""
+        return sum(map(len, self.comments.values()))
 
 
 def _sentence(text: str) -> str:
@@ -281,16 +249,10 @@ def _sentence(text: str) -> str:
 
 
 def format_formatting_guide(profile: dict[str, Any],
-                            now: datetime | None = None, *,
-                            mirror_conversation: bool = True) -> FormattingGuide:
+                            now: datetime | None = None) -> FormattingGuide:
     """Render one profile's locale fields as the guide's comments
     (deterministic; no DB access). `now` is the injectable clock for the
-    timezone offset; tests pin it on both sides of a DST boundary.
-    `mirror_conversation` says whether the language comment may state
-    "reply in the language of the current message; never switch on your
-    own" — see the language block below for why only that one clause is
-    conditional, and why the default renders it. The caller computes this:
-    it is not a setting, so nothing here reads one."""
+    timezone offset; tests pin it on both sides of a DST boundary."""
     data = profile.get("data") or {}
     if now is None:
         now = datetime.now(UTC)
@@ -374,36 +336,7 @@ def format_formatting_guide(profile: dict[str, Any],
             comments[valid_codes[1][0]] = _sentence(
                 "a secondary option when the task already involves it")
 
-    language_line = ""
-    language, secondary_language = valid_profile_languages(profile)
-    if language is not None:
-        # The preferred language is NOT the output language: replies mirror
-        # the conversation. Small models read a bare "prefer da" as a
-        # directive to switch, so the rule is spelled out as absolute and
-        # the profile languages are demoted to explicit-request-only.
-        #
-        # Only the mirroring sentence is conditional on `mirror_conversation`.
-        # A room's first message has no conversation to mirror, so "reply in
-        # the language of the current message" points at nothing the turn
-        # can read yet -- the caller passes False there. The explicit-request
-        # clause and the variant clause need no conversation to be true: an
-        # explicit request and a declared variant are both well-defined with
-        # no history at all, so they render regardless.
-        known = (
-            f"{language} or {secondary_language}"
-            if secondary_language else language)
-        # The first declared tag that names a variant states it; a profile
-        # whose tags are all bare adds nothing.
-        variant = next(
-            (c for c in (_variant_clause(language),
-                         _variant_clause(secondary_language)) if c), "")
-        mirror = ("reply in the language of the current message; never "
-                  "switch on your own. " if mirror_conversation else "")
-        language_line = _sentence(
-            f"Language: {mirror}Use {known} only when the message asks for "
-            f"it; an explicit request always wins.{variant}")
-
-    guide = FormattingGuide(comments=comments, language=language_line)
+    guide = FormattingGuide(comments=comments)
     if guide.chars > MAX_FORMATTING_GUIDE_CHARS:
         raise ValueError(
             f"formatting guide exceeds {MAX_FORMATTING_GUIDE_CHARS} chars "

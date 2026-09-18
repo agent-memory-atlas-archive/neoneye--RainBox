@@ -3885,9 +3885,7 @@ class AssistantAgent(ModelGroupAgent):
                 self._build_declared_profile_blocks(
                     context.profile,
                     formatting_enabled=formatting_on,
-                    calibration_enabled=calibration_on,
-                    has_history=self._has_history(messages),
-                    response_language_gate_enabled=gate_on)
+                    calibration_enabled=calibration_on)
             )
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             # The acceptance-criteria step 0: code-driven (the model cannot
@@ -4578,8 +4576,6 @@ class AssistantAgent(ModelGroupAgent):
         self, profile: dict[str, Any] | None, *,
         formatting_enabled: bool | None = None,
         calibration_enabled: bool | None = None,
-        has_history: bool = True,
-        response_language_gate_enabled: bool = False,
     ) -> tuple[str, str]:
         """(identity, calibration) bodies rendered from the turn's snapshot
         profile. The identity block carries the formatting guide as YAML
@@ -4599,19 +4595,7 @@ class AssistantAgent(ModelGroupAgent):
         harness passes explicit booleans so its variants never depend on
         production state. The identity fields themselves are not gated, and
         neither is the `number_format` comment (the one comment that spells
-        an opaque enum value out regardless of the switch).
-
-        `has_history` and `response_language_gate_enabled` together decide
-        `format_formatting_guide`'s `mirror_conversation`: the guide's
-        mirroring clause is suppressed only when the gate switch is on AND
-        the turn has no history, because only then does "reply in the
-        language of the current message" point at nothing the turn can
-        read yet — see that function's docstring. Every production caller
-        derives `has_history` from its own `messages` via `_has_history` and
-        `response_language_gate_enabled` from
-        `_response_language_gate_enabled()`; the eval harness, which never
-        depends on a live production switch, keeps both defaults — `False`
-        never suppresses the clause, reproducing today's guide unchanged."""
+        an opaque enum value out regardless of the switch)."""
         if profile is None:
             return "", ""
         if formatting_enabled is None or calibration_enabled is None:
@@ -4625,10 +4609,7 @@ class AssistantAgent(ModelGroupAgent):
         guide: "user_profile.FormattingGuide | None" = None
         if formatting_enabled:
             try:
-                guide = user_profile.format_formatting_guide(
-                    profile,
-                    mirror_conversation=not (
-                        response_language_gate_enabled and not has_history))
+                guide = user_profile.format_formatting_guide(profile)
             except Exception:
                 logger.warning("assistant: formatting guide failed",
                                exc_info=True)
@@ -4687,18 +4668,10 @@ class AssistantAgent(ModelGroupAgent):
         measure the guide alone. Nothing persists: `self._run` is None on an
         eval agent, so the classifier's checkpoint and step rows are
         skipped."""
-        # Derived from THESE messages, the same way every production call
-        # site does — a case with no prior message renders exactly what a
-        # room's first turn renders. `response_language_gate_enabled` is left
-        # at its default (False), the same eval-only override every other
-        # switch here gets: the harness never depends on the live
-        # `assistant.response_language_gate` setting, so the guide's
-        # mirroring clause always renders here regardless of `has_history`.
         identity, calibration = (
             self._build_declared_profile_blocks(
                 profile, formatting_enabled=include_formatting,
-                calibration_enabled=include_calibration,
-                has_history=self._has_history(messages)))
+                calibration_enabled=include_calibration))
         self._identity_block = identity
         self._calibration_block = calibration
         self._profile_block = ""
@@ -6360,9 +6333,7 @@ class AssistantAgent(ModelGroupAgent):
         self._identity_block, self._calibration_block = (
             self._build_declared_profile_blocks(
                 context.profile, formatting_enabled=formatting_on,
-                calibration_enabled=calibration_on,
-                has_history=self._has_history(messages),
-                response_language_gate_enabled=gate_on))
+                calibration_enabled=calibration_on))
         self._criteria_profile = context.profile
         self._run_acceptance_criteria_call(
             step_index=step_index, messages=messages, scratchpad=scratchpad,
@@ -6450,15 +6421,6 @@ class AssistantAgent(ModelGroupAgent):
     @staticmethod
     def _message_role(message: dict[str, Any]) -> str:
         return "user" if message.get("sender_type") == "human" else "assistant"
-
-    @staticmethod
-    def _has_history(messages: list[dict[str, Any]]) -> bool:
-        """Whether `messages` carries anything before the current one — the
-        same emptiness test that leaves `conversation_history_xml` as
-        `<none/>`. A room's very first message has nothing before it to
-        mirror, which is what the formatting guide's language comment
-        assumes it can read."""
-        return bool(messages[:-1])
 
     # Tier 1. Fixed order, and ordered so the per-call block SETS nest:
     #

@@ -12,34 +12,31 @@ The formatting guide compiles the locale fields — date format, first day of
 week, time format, timezone (with the current UTC offset), measurement
 system (metric / US customary / the UK hybrid), temperature (derived from
 the measurement system when unset, in which case it rides the units
-comment), number format, currency, language — into code-owned comments
-with examples (free-text profile values pass a strict prompt boundary or
-are omitted — they can never become instructions). Each comment sits on the
-line of its own field, after the value, so the value is the example and the
-comment says only what the value does not:
+comment), number format, currency — into code-owned comments with examples
+(free-text profile values pass a strict prompt boundary or are omitted —
+they can never become instructions). Each comment sits on the line of its
+own field, after the value, so the value is the example and the comment
+says only what the value does not; the guide adds nothing else to the
+block, no header and no trailing line:
 
 ```yaml
-# The comments are formatting defaults; the current request or exact source notation overrides them.
 full_name: Karl Weierstraß
 units: metric  # Prefer km and kg; preserve a source value when precision matters and add the conversion.
 date_format: DD.MM.YYYY  # For example 31.12.2026; do not use month-first dates.
 number_format: 1.234.567,89  # Use DOT as thousands separator and COMMA as decimal separator.
 currency: EUR  # For example 1.234,56 EUR. Convert currencies only with a supplied or freshly retrieved rate.
-# Language: reply in the language of the current message; never switch on your own. Use de or en only when the message asks for it; an explicit request always wins.
 ```
 
-The header comment opens the block and the language comment closes it —
-the language rows have no field in the block to sit on. Comments are
-invisible to a YAML parser, so the block still round-trips exactly through
-`yaml.safe_load` (`user_profile/export.py` relies on that).
+Comments are invisible to a YAML parser, so the block still round-trips
+exactly through `yaml.safe_load` (`user_profile/export.py` relies on that).
+The system prompt says what the comments are (the profile's formatting
+defaults, overridden by the current request and exact source notation), so
+the block does not repeat it.
 
-The language comment is rendered from the declared tag itself, so no
-language is built in: a tag carrying a region or script subtag (`en-GB`,
-`pt-BR`, `zh-Hans`) states that variant — spelling and vocabulary alike,
-since a clause naming only spelling gets applied to orthography alone —
-and a bare primary tag (`en`, `da`) has no variant to state. The variant is
-always NAMED by its tag and never exemplified: contrastive example words in
-a prompt get parroted into unrelated replies.
+Language is not a formatting comment. The reply language is decided by the
+response-language classifier and delivered as `reply_language_markdown`
+(see `assistant-design.md`); the declared language rows reach the
+classifier through its own `user_settings_languages_json` block.
 Knowledge calibration is the operator's per-topic declaration (level, stance,
 depth, note), edited on `/profile` and injected under a shared 2 700-char
 budget with an honest degrade-then-drop ladder (the guide's comments are
@@ -150,8 +147,7 @@ This is the direct proof the assistant actually carries the blocks:
    verifying — see section 6 for the gated rollout).
 2. In a chat room with the assistant, ask anything ("how far is 100 km?").
 3. Open `/assistant`, select the newest run, and inspect any step's **user
-   prompt**. It must contain, in order: `<user_settings_yaml>` opening with
-   the `# The comments are formatting defaults…` header and carrying a
+   prompt**. It must contain, in order: `<user_settings_yaml>` carrying a
    `# …` comment on each locale field, then `<user_expertise_yaml>` with the
    YAML rows (when the profile has calibration topics).
 4. In the same run, the final `reply` must be preceded by a `reply_audit`
@@ -165,8 +161,8 @@ This is the direct proof the assistant actually carries the blocks:
    preceded by a visible one-time notice ("the active profile switched to
    …"); the marker itself must NOT appear inside the model's prompt.
 6. Set both switches back to unset — the next run's prompt must carry the
-   identity fields only (no header comment, no `# Language:` line; the
-   `number_format` comment stays).
+   identity fields only (no locale comments; the `number_format` comment
+   stays).
 
 If a block or the comments are missing when expected, expand the step's collapsed **log**
 (above the model request) first — it records the active profile (with a

@@ -178,8 +178,8 @@ turn.
   names its comments as the formatting defaults), no preamble and no tree
   label; the **formatting guide** rides it as `#` comments on the lines of
   the fields it derives from — deterministic locale defaults with examples
-  compiled by `user_profile/formatting.py`, a header comment opening the
-  block and the language comment closing it; every comment sentence is
+  compiled by `user_profile/formatting.py`, nothing else added to the
+  block; every comment sentence is
   code-owned and every interpolated value passed the strict prompt-boundary
   validation, and the opaque `number_format` value keeps its code-owned
   comment even with the guide off), the **knowledge calibration** block
