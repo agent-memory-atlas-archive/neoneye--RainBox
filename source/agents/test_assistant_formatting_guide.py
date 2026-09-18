@@ -1,8 +1,9 @@
-"""Integration: the AssistantAgent renders identity + formatting guide from
-ONE declared-profile context snapshot per turn and injects them in order
-(identity → user_expertise_yaml → formatting_guide → user_profile), with no per-turn
-`profile.current` setting lookup on the handle path. The assembled prompt is
-captured by stubbing the model call (_structured_completion)."""
+"""Integration: the AssistantAgent renders identity (with the formatting
+guide as comments on its fields) + calibration from ONE declared-profile
+context snapshot per turn and injects them in order (user_settings_yaml →
+user_expertise_yaml → user_profile), with no per-turn `profile.current`
+setting lookup on the handle path. The assembled prompt is captured by
+stubbing the model call (_structured_completion)."""
 
 from uuid import uuid4
 
@@ -11,6 +12,9 @@ import pytest
 import db
 from agents.assistant import AssistantActionName, AssistantAgent, AssistantStepDecision
 from agents.config import ASSISTANT_UUID
+from user_profile.formatting import GUIDE_HEADER
+
+HEADER_LINE = f"# {GUIDE_HEADER}"
 
 KEYS = ("profile.current", "qa.facts_invalidated_at",
         "profile.current_changed_at",
@@ -84,14 +88,21 @@ def _run_capture(room):
     return captured
 
 
-def test_formatting_guide_injected_after_identity(room):
+def test_formatting_guide_rides_the_identity_block_as_comments(room):
+    """The guide is not a block of its own: it opens user_settings_yaml with
+    its header comment, annotates the fields it derives from, and closes
+    the block with the language line."""
     db.set_current_profile(_germany_uuid())
     prompt = _run_capture(room)["user_prompt"]
-    assert "<user_settings_yaml>" in prompt
-    assert "<formatting_guide>" in prompt
-    assert "Use these defaults unless the current request" in prompt
-    assert "- Numbers: decimal comma with point grouping" in prompt
-    assert prompt.index("<user_settings_yaml") < prompt.index("<formatting_guide")
+    assert "<formatting_guide" not in prompt
+    assert f"<user_settings_yaml>{HEADER_LINE}\n" in prompt
+    block = prompt[prompt.index("<user_settings_yaml>"):
+                   prompt.index("</user_settings_yaml>")]
+    assert ("number_format: 1.234.567,89  # Use DOT as thousands separator "
+            "and COMMA as decimal separator.") in block
+    assert ("date_format: DD.MM.YYYY  # For example 31.12.2026; do not use "
+            "month-first dates.") in block
+    assert block.splitlines()[-1].startswith("# Language: ")
     # The switch marker itself is filtered from model history.
     assert "switched to Germany" not in prompt
 
@@ -104,24 +115,29 @@ def test_first_turn_language_line_unchanged_with_gate_off(room):
     turn, and the gate switch being off must reproduce that unchanged."""
     db.set_current_profile(_germany_uuid())
     prompt = _run_capture(room)["user_prompt"]
-    assert ("- Language: reply in the language of the current message; "
+    assert ("# Language: reply in the language of the current message; "
             "never switch on your own.") in prompt
 
 
 def test_blocks_default_off_until_gated(room):
-    """The formatting and calibration switches default OFF (each block ships
-    only after its release gate passes); the identity block is not gated.
+    """The formatting and calibration switches default OFF (each ships only
+    after its release gate passes); the identity fields are not gated, and
+    neither is the number_format comment that spells its opaque value out.
     The switches are independent."""
     db.set_current_profile(_germany_uuid())
     db.set_setting("assistant.formatting_guide", None)      # back to default
     db.set_setting("assistant.knowledge_calibration", None)
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" in prompt                  # never gated
-    assert "<formatting_guide" not in prompt
+    assert HEADER_LINE not in prompt
+    assert "# Language:" not in prompt
+    assert "date_format: DD.MM.YYYY\n" in prompt           # bare field
+    assert "number_format: 1.234.567,89  # Use DOT as" in prompt
     assert "<user_expertise_yaml" not in prompt
-    db.set_setting("assistant.formatting_guide", True)      # one block alone
+    db.set_setting("assistant.formatting_guide", True)      # one alone
     prompt = _run_capture(room)["user_prompt"]
-    assert "<formatting_guide" in prompt
+    assert HEADER_LINE in prompt
+    assert "date_format: DD.MM.YYYY  # For example" in prompt
     assert "<user_expertise_yaml" not in prompt
 
 
@@ -129,7 +145,7 @@ def test_unset_profile_emits_neither_block(room):
     db.set_current_profile(None)
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" not in prompt
-    assert "<formatting_guide" not in prompt
+    assert HEADER_LINE not in prompt
 
 
 def test_handle_path_never_rereads_profile_current(room, monkeypatch):
@@ -147,29 +163,32 @@ def test_handle_path_never_rereads_profile_current(room, monkeypatch):
     import agents.assistant as assistant_mod
     monkeypatch.setattr(assistant_mod.db, "get_setting", spy)
     prompt = _run_capture(room)["user_prompt"]
-    assert "<formatting_guide" in prompt              # blocks still rendered
+    assert HEADER_LINE in prompt                      # blocks still rendered
     assert "profile.current" not in seen
     assert "profile.current_changed_at" not in seen
     assert "qa.facts_invalidated_at" not in seen
 
 
-def test_formatting_failure_empties_only_its_block(room, monkeypatch):
+def test_formatting_failure_drops_only_the_comments(room, monkeypatch):
     db.set_current_profile(_germany_uuid())
     import agents.assistant as assistant_mod
 
-    def boom(profile):
+    def boom(profile, **_kw):
         raise RuntimeError("renderer exploded")
 
     monkeypatch.setattr(assistant_mod.user_profile, "format_formatting_guide", boom)
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_settings_yaml" in prompt            # identity unaffected
-    assert "<formatting_guide" not in prompt
+    assert "date_format: DD.MM.YYYY\n" in prompt     # the fields, uncommented
+    assert HEADER_LINE not in prompt
+    assert "# Language:" not in prompt
 
 
 def test_system_prompt_names_the_new_blocks(room):
     db.set_current_profile(None)
     user_prompt = _run_capture(room)["user_prompt"]
-    assert "formatting_guide" in user_prompt
+    assert "its comments are the default formatting" in user_prompt
+    assert "formatting_guide" not in user_prompt      # no such block any more
     assert "user_expertise_yaml" in user_prompt
     assert 'authority="context"' in user_prompt       # non-executable policy
     assert "not an audience boundary" in user_prompt
@@ -201,14 +220,14 @@ def calibrated_profile(app_ctx):
 
 def test_calibration_block_injected_as_context_right_after_identity(room, calibrated_profile):
     """Calibration is "who is asking", so it follows user_settings_yaml at
-    once — the same slot in every call of the turn — and the guide comes
-    after both."""
+    once — the same slot in every call of the turn — and the call's own
+    instructions come after both."""
     prompt = _run_capture(room)["user_prompt"]
     assert "<user_expertise_yaml>" in prompt
     assert "- topic: Mathematics\n  level: expert (omit the routine fundamentals)" in prompt
     assert (prompt.index("<user_settings_yaml")
             < prompt.index("<user_expertise_yaml")
-            < prompt.index("<formatting_guide"))
+            < prompt.index("<turn_instructions"))
 
 
 def test_hostile_note_stays_escaped_context(room, calibrated_profile):
@@ -250,10 +269,10 @@ def test_calibration_budget_is_the_formatting_remainder(room, calibrated_profile
 
     monkeypatch.setattr(assistant_mod.user_profile, "format_calibration", spy)
     prompt = _run_capture(room)["user_prompt"]
-    guide_len = len(assistant_mod.user_profile.format_formatting_guide(
-        db.profile_get(calibrated_profile)))
+    guide_chars = assistant_mod.user_profile.format_formatting_guide(
+        db.profile_get(calibrated_profile)).chars
     assert seen["max_chars"] == (
-        assistant_mod.user_profile.MAX_PROFILE_GUIDANCE_CHARS - guide_len)
+        assistant_mod.user_profile.MAX_PROFILE_GUIDANCE_CHARS - guide_chars)
     assert "<user_expertise_yaml" in prompt
 
 
@@ -415,7 +434,7 @@ def test_system_prompt_documents_the_reply_args(room):
 
 def test_profile_switch_field_changes_only_its_directive(room):
     """Counterfactual: switching Germany → US changes the formatting guide's
-    directives, while the guide's code-owned frame stays identical."""
+    comments, while the guide's code-owned frame stays identical."""
     db.set_current_profile(_germany_uuid())
     german = _run_capture(room)["user_prompt"]
     us_uuid = next(e for e in db.profile_templates_entries()
@@ -423,6 +442,7 @@ def test_profile_switch_field_changes_only_its_directive(room):
     db.set_current_profile(us_uuid)
     # The switch marker posts on the next turn; capture again.
     american = _run_capture(room)["user_prompt"]
-    assert "decimal comma with point grouping" in german
-    assert "decimal point with comma grouping" in american
+    assert "Use DOT as thousands separator and COMMA as decimal" in german
+    assert "Use COMMA as thousands separator and DOT as decimal" in american
+    assert HEADER_LINE in german and HEADER_LINE in american
     assert "MM/DD/YYYY" in american and "DD.MM.YYYY" in german

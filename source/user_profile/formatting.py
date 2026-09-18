@@ -1,24 +1,27 @@
 """Deterministic formatting guide: compile the active person profile's locale
-fields into code-owned prompt directives with examples.
+fields into code-owned comments with examples, one per field.
 
-Injected by the main assistant as `<formatting_guide>` next to
-`<user_settings_yaml>`. The guide reads as the defaults the reply follows, so
-every imperative sentence here is owned by code and every interpolated value
-passes the strict prompt-boundary validation below — the profile form
-deliberately accepts uncommon free-text timezone/language/currency values, and
-a value such as "ignore previous instructions" must never reach the model
-inside a code-owned directive merely because it was stored in a locale field.
-Unusable values are omitted and logged, never spliced into a directive.
+Rendered by `user_profile/identity.py` as YAML comments inside
+`<user_settings_yaml>`, each next to the field it derives from — the value
+is the example, the comment says what the value does not. The comments read
+as the defaults the reply follows, so every sentence here is owned by code
+and every interpolated value passes the strict prompt-boundary validation
+below — the profile form deliberately accepts uncommon free-text
+timezone/language/currency values, and a value such as "ignore previous
+instructions" must never reach the model inside a code-owned comment merely
+because it was stored in a locale field. Unusable values are omitted and
+logged, never spliced into a comment.
 
-Everything is lookup-driven from two fixed samples (1234567.89 for the numbers
-line, 1234.56 for the currency line): enum-derived wording and examples are
-exhaustive-table output, never free-typed templates, so the prompt examples
-stay deterministic for tests. The browser preview may use the current year;
-this module's examples are pinned (31 December 2026, 23:59).
+Everything is lookup-driven from one fixed sample (1234.56 for the currency
+comment): enum-derived wording and examples are exhaustive-table output,
+never free-typed templates, so the prompt examples stay deterministic for
+tests. The browser preview may use the current year; this module's examples
+are pinned (31 December 2026, 23:59).
 """
 
 import logging
 import re
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -28,7 +31,7 @@ from language_tags import canonical_language_tag, effective_language_rows
 logger = logging.getLogger(__name__)
 
 # Construction is bounded; exceeding the cap raises (fail loudly in
-# development) rather than truncating a rule mid-directive.
+# development) rather than truncating a comment mid-sentence.
 MAX_FORMATTING_GUIDE_CHARS = 1_200
 
 # Prompt-example minor-unit exceptions, not an ISO 4217 validator: zero-decimal
@@ -43,32 +46,25 @@ THREE_DECIMAL_CURRENCIES_V1 = frozenset({"BHD", "KWD", "OMR", "JOD", "TND", "LYD
 # exhaustiveness test in test_formatting.py keeps these in lockstep with
 # profile_fields.PROFILE_FIELDS) ------------------------------------------
 
-# stored value -> (wording, {minor-unit digits: currency example})
-# The stored value doubles as the numbers-line example (it IS the rendering of
-# the shared sample 1234567.89 under that convention).
-NUMBER_FORMATS: dict[str, tuple[str, dict[int, str]]] = {
-    "1,234,567.89": ("decimal point with comma grouping",
-                     {2: "1,234.56", 0: "1,234", 3: "1,234.567"}),
-    "1.234.567,89": ("decimal comma with point grouping",
-                     {2: "1.234,56", 0: "1.234", 3: "1.234,567"}),
-    "1 234 567,89": ("decimal comma with space grouping",
-                     {2: "1 234,56", 0: "1 234", 3: "1 234,567"}),
-    "1'234'567.89": ("decimal point with apostrophe grouping",
-                     {2: "1'234.56", 0: "1'234", 3: "1'234.567"}),
-    "12,34,567.89": ("decimal point with Indian comma grouping",
-                     {2: "1,234.56", 0: "1,234", 3: "1,234.567"}),
-    "1234567.89": ("decimal point without thousands separators",
-                   {2: "1234.56", 0: "1234", 3: "1234.567"}),
-    "1234567,89": ("decimal comma without thousands separators",
-                   {2: "1234,56", 0: "1234", 3: "1234,567"}),
+# stored value -> {minor-unit digits: the currency example 1234.56 rendered
+# under that convention}. The number_format value itself needs no example —
+# it IS the rendering of 1234567.89 under its convention, and its own comment
+# (NUMBER_FORMAT_COMMENTS) spells the separators out.
+NUMBER_FORMATS: dict[str, dict[int, str]] = {
+    "1,234,567.89": {2: "1,234.56", 0: "1,234", 3: "1,234.567"},
+    "1.234.567,89": {2: "1.234,56", 0: "1.234", 3: "1.234,567"},
+    "1 234 567,89": {2: "1 234,56", 0: "1 234", 3: "1 234,567"},
+    "1'234'567.89": {2: "1'234.56", 0: "1'234", 3: "1'234.567"},
+    "12,34,567.89": {2: "1,234.56", 0: "1,234", 3: "1,234.567"},
+    "1234567.89": {2: "1234.56", 0: "1234", 3: "1234.567"},
+    "1234567,89": {2: "1234,56", 0: "1234", 3: "1234,567"},
 }
 
-# stored value -> the code-owned comment the IDENTITY block attaches next to
-# the raw enum value ("number_format.comment"). The bare stored value is
-# opaque to a small model reading context JSON; this spells the convention
-# out even while the gated formatting guide is off. Derived from the
-# validated enum only — never operator text — so it is safe inside the
-# context-authority block.
+# stored value -> the code-owned comment the identity block attaches to the
+# number_format line whether or not the guide is on. The bare stored value
+# is opaque to a small model reading the block; this spells the convention
+# out. Derived from the validated enum only — never operator text — so it is
+# safe inside the context-authority block.
 NUMBER_FORMAT_COMMENTS: dict[str, str] = {
     "1,234,567.89": "Use COMMA as thousands separator and DOT as decimal "
                     "separator.",
@@ -102,7 +98,7 @@ TIME_FORMATS: dict[str, str] = {
     "12h": "12-hour clock, for example 11:59 pm",
 }
 
-# stored value -> the calendar directive. Monday-start pairs with ISO 8601
+# stored value -> the calendar comment. Monday-start pairs with ISO 8601
 # week numbering; naming that removes the models' habitual Sunday-first
 # calendar layout (and week-number arithmetic) for European profiles.
 WEEK_STARTS: dict[str, str] = {
@@ -112,18 +108,19 @@ WEEK_STARTS: dict[str, str] = {
 }
 
 # stored value -> unit-system wording with the preferred unit names.
-# Temperature is deliberately NOT here — it renders as its own line (the
-# `temperature` field, derived from units when unset), because the
-# combinations are real: UK metric-leaning + Celsius, US customary + °F.
+# Temperature is deliberately NOT here — it renders on its own field's line
+# (the `temperature` field), because the combinations are real: UK
+# metric-leaning + Celsius, US customary + °F. Only when that field is unset
+# does the units-derived default join the units comment.
 UNITS: dict[str, str] = {
-    "metric": "metric. Prefer km and kg",
-    "imperial": "US customary. Prefer mi and lb",
-    "uk": "metric with UK exceptions. Prefer kg, but miles for road "
+    "metric": "prefer km and kg",
+    "imperial": "US customary; prefer mi and lb",
+    "uk": "metric with UK exceptions; prefer kg, but miles for road "
           "distances",
 }
 
-# stored value -> the temperature directive; `_derived_temperature` supplies
-# the units-implied default when the field is unset.
+# stored value -> the temperature comment; `_UNITS_DEFAULT_TEMPERATURE`
+# supplies the units-implied default when the field is unset.
 TEMPERATURES: dict[str, str] = {
     "celsius": "Celsius (°C)",
     "fahrenheit": "Fahrenheit (°F)",
@@ -134,7 +131,7 @@ _UNITS_DEFAULT_TEMPERATURE: dict[str, str] = {
 }
 
 def _variant_clause(tag: str | None) -> str:
-    """The variant directive for one declared tag, or "" when it has none.
+    """The variant clause for one declared tag, or "" when it has none.
 
     A tag carrying a region or script subtag ("en-GB", "pt-BR", "zh-Hans")
     names a specific variant of its language; a bare primary tag ("en",
@@ -143,7 +140,7 @@ def _variant_clause(tag: str | None) -> str:
     per-language table would need an entry before any language could be
     handled, which makes English structurally privileged and every other
     language an addition. It also says spelling AND vocabulary, because a
-    directive naming only spelling gets applied to orthography alone — a
+    clause naming only spelling gets applied to orthography alone — a
     live run wrote one variant's spelling beside the other's word choice.
 
     The variant is NAMED by its tag and never exemplified: contrastive
@@ -155,8 +152,10 @@ def _variant_clause(tag: str | None) -> str:
             f"spelling and vocabulary alike; never mix in another variant "
             f"of the same language.")
 
-_GUIDE_HEADER = ("Use these defaults unless the current request or exact "
-                 "source notation says otherwise:")
+# The one comment that opens the block when the guide renders anything: it
+# says what the comments are, and that they are defaults.
+GUIDE_HEADER = ("The comments are formatting defaults; the current request "
+                "or exact source notation overrides them.")
 
 
 # ---- prompt-boundary validation (stricter than the form's soft checks) ----
@@ -243,89 +242,139 @@ def valid_profile_languages(profile: dict[str, Any]) -> tuple[str | None, str | 
 
 # ---- the renderer --------------------------------------------------------
 
+@dataclass(frozen=True)
+class FormattingGuide:
+    """The guide as the identity block renders it: one comment per profile
+    field it can say something about (registry key -> sentence, no leading
+    `#`), plus the language comment, which has no field of its own in the
+    block (language rows are not rendered there) and so closes the block as
+    a trailing comment. Empty when no directive is usable — the identity
+    block then renders no header and no trailing line."""
+
+    comments: dict[str, str] = field(default_factory=dict)
+    language: str = ""
+
+    def __bool__(self) -> bool:
+        return bool(self.comments or self.language)
+
+    @property
+    def chars(self) -> int:
+        """The characters the guide adds to the prompt — what the shared
+        guidance budget deducts before the calibration block takes the
+        remainder. The header counts once, like every other line."""
+        if not self:
+            return 0
+        return (len(GUIDE_HEADER) + sum(map(len, self.comments.values()))
+                + len(self.language))
+
+
+def _sentence(text: str) -> str:
+    """A comment starts with a capital and ends with a period, whatever
+    shape the lookup entry has (the entries read as clauses so they can be
+    joined). Whitespace collapses to single spaces: a comment is one line by
+    construction, and a newline would end it early."""
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return ""
+    text = text[0].upper() + text[1:]
+    return text if text.endswith((".", "!", "?")) else text + "."
+
+
 def format_formatting_guide(profile: dict[str, Any],
                             now: datetime | None = None, *,
-                            mirror_conversation: bool = True) -> str:
-    """Render one profile's locale fields as the formatting-guide body
-    (deterministic; no DB access). Returns "" when no directive is usable.
-    `now` is the injectable clock for the timezone offset; tests pin it on
-    both sides of a DST boundary. `mirror_conversation` says whether the
-    Language line may state "reply in the language of the current message;
-    never switch on your own" — see the language block below for why only
-    that one clause is conditional, and why the default renders it. The
-    caller computes this: it is not a setting, so nothing here reads one."""
+                            mirror_conversation: bool = True) -> FormattingGuide:
+    """Render one profile's locale fields as the guide's comments
+    (deterministic; no DB access). `now` is the injectable clock for the
+    timezone offset; tests pin it on both sides of a DST boundary.
+    `mirror_conversation` says whether the language comment may state
+    "reply in the language of the current message; never switch on your
+    own" — see the language block below for why only that one clause is
+    conditional, and why the default renders it. The caller computes this:
+    it is not a setting, so nothing here reads one."""
     data = profile.get("data") or {}
     if now is None:
         now = datetime.now(UTC)
-    lines: list[str] = []
+    comments: dict[str, str] = {}
 
     date_entry = DATE_FORMATS.get(str(data.get("date_format") or "").strip())
     if date_entry is not None:
         example, warning = date_entry
-        lines.append(f"- Dates: {data['date_format'].strip()}, for example "
-                     f"{example}; {warning}.")
+        comments["date_format"] = _sentence(
+            f"for example {example}; {warning}")
 
     week = WEEK_STARTS.get(str(data.get("first_day_of_week") or "").strip())
     if week is not None:
-        lines.append(f"- Calendar: {week}.")
+        comments["first_day_of_week"] = _sentence(week)
 
     clock = TIME_FORMATS.get(str(data.get("time_format") or "").strip())
+    if clock is not None:
+        comments["time_format"] = _sentence(clock)
+
     zone = _valid_timezone(data.get("timezone"))
     if data.get("timezone") and zone is None:
         logger.warning("formatting guide: unusable timezone %r omitted",
                        data.get("timezone"))
-    if clock is not None or zone is not None:
-        clauses = []
-        if clock is not None:
-            clauses.append(f"{clock}.")
-        if zone is not None:
-            offset = _utc_offset(zone, now)
-            where = f"{zone} (currently {offset})" if offset else zone
-            prefix = "Present" if clock is not None else "present"
-            clauses.append(f"{prefix} local times in {where}; name another "
-                           "zone when relevant.")
-        lines.append("- Times: " + " ".join(clauses))
+    if zone is not None:
+        offset = _utc_offset(zone, now)
+        where = f"{zone} (currently {offset})" if offset else zone
+        comments["timezone"] = _sentence(
+            f"present local times in {where}; name another zone when "
+            "relevant")
 
     units_value = str(data.get("units") or "").strip()
     units = UNITS.get(units_value)
+    temperature_value = str(data.get("temperature") or "").strip()
+    derived_temperature = (
+        None if temperature_value
+        else TEMPERATURES.get(_UNITS_DEFAULT_TEMPERATURE.get(units_value, "")))
     if units is not None:
-        lines.append(f"- Units: {units}; preserve a source value when "
-                     "precision matters and add the conversion.")
+        # An unset temperature field has no line of its own to carry the
+        # units-derived default, so it rides the units comment.
+        derived = (f" Temperature in {derived_temperature}."
+                   if derived_temperature else "")
+        comments["units"] = _sentence(
+            f"{units}; preserve a source value when precision matters and "
+            f"add the conversion.{derived}")
 
-    temperature_value = (str(data.get("temperature") or "").strip()
-                         or _UNITS_DEFAULT_TEMPERATURE.get(units_value, ""))
     temperature = TEMPERATURES.get(temperature_value)
     if temperature is not None:
-        lines.append(f"- Temperature: {temperature}.")
+        comments["temperature"] = _sentence(temperature)
 
-    number_entry = NUMBER_FORMATS.get(str(data.get("number_format") or "").strip())
-    if number_entry is not None:
-        wording, _ = number_entry
-        # No sentence-ending period: the example IS separator punctuation,
-        # and a trailing dot right after the digits could read as part of
-        # the convention being demonstrated.
-        lines.append(f"- Numbers: {wording}, for example: "
-                     f"{data['number_format'].strip()}")
-
-    currency, currency_2 = _first_valid(
-        [data.get("currency"), data.get("currency_2")], _valid_currency)
-    if currency is not None:
-        if number_entry is not None:
-            _, currency_examples = number_entry
-            digits = (0 if currency in ZERO_DECIMAL_CURRENCIES_V1
-                      else 3 if currency in THREE_DECIMAL_CURRENCIES_V1 else 2)
-            example = currency_examples[digits]
-            head = (f"use the currency code {currency} with the preferred number "
-                    f"format, for example {example} {currency}.")
+    currency_examples = NUMBER_FORMATS.get(
+        str(data.get("number_format") or "").strip())
+    # The first valid code is the primary whichever field holds it (a
+    # missing/invalid primary never loses the whole currency comment); a
+    # later distinct valid code is the secondary. Each comment attaches to
+    # the field whose value it explains.
+    valid_codes: list[tuple[str, str]] = []
+    for key in ("currency", "currency_2"):
+        code = _valid_currency(data.get(key))
+        if code is None:
+            if str(data.get(key) or "").strip():
+                logger.warning(
+                    "formatting guide: unusable profile value %r omitted",
+                    data.get(key))
+        elif code not in (c for _, c in valid_codes):
+            valid_codes.append((key, code))
+    if valid_codes:
+        primary_key, primary = valid_codes[0]
+        convert = ("Convert currencies only with a supplied or freshly "
+                   "retrieved rate.")
+        if currency_examples is not None:
+            digits = (0 if primary in ZERO_DECIMAL_CURRENCIES_V1
+                      else 3 if primary in THREE_DECIMAL_CURRENCIES_V1 else 2)
+            comments[primary_key] = _sentence(
+                f"for example {currency_examples[digits]} {primary}. "
+                f"{convert}")
         else:
-            # Without a usable number_format the line states the code and the
+            # Without a usable number_format the comment states the
             # conversion rule without inventing separators.
-            head = f"use the currency code {currency}."
-        secondary = (f" {currency_2} is a secondary option when the task "
-                     "already involves it." if currency_2 else "")
-        lines.append(f"- Currency: {head}{secondary} Convert currencies only "
-                     "with a supplied or freshly retrieved rate.")
+            comments[primary_key] = _sentence(convert)
+        if len(valid_codes) > 1:
+            comments[valid_codes[1][0]] = _sentence(
+                "a secondary option when the task already involves it")
 
+    language_line = ""
     language, secondary_language = valid_profile_languages(profile)
     if language is not None:
         # The preferred language is NOT the output language: replies mirror
@@ -350,28 +399,13 @@ def format_formatting_guide(profile: dict[str, Any],
                          _variant_clause(secondary_language)) if c), "")
         mirror = ("reply in the language of the current message; never "
                   "switch on your own. " if mirror_conversation else "")
-        lines.append(f"- Language: {mirror}Use "
-                     f"{known} only when the message asks for it; an "
-                     f"explicit request always wins.{variant}")
+        language_line = _sentence(
+            f"Language: {mirror}Use {known} only when the message asks for "
+            f"it; an explicit request always wins.{variant}")
 
-    if not lines:
-        return ""
-    body = "\n".join([_GUIDE_HEADER, *lines])
-    if len(body) > MAX_FORMATTING_GUIDE_CHARS:
+    guide = FormattingGuide(comments=comments, language=language_line)
+    if guide.chars > MAX_FORMATTING_GUIDE_CHARS:
         raise ValueError(
             f"formatting guide exceeds {MAX_FORMATTING_GUIDE_CHARS} chars "
-            f"({len(body)}) — a lookup entry grew past the budget")
-    return body
-
-
-def build_formatting_guide() -> str:
-    """Convenience wrapper for tests and ad-hoc callers: renders the active
-    profile, "" when none is selected. NEVER wire this into the main handle
-    path — that path performs exactly one profile-context lookup per turn and
-    passes context.profile to format_formatting_guide directly."""
-    from user_profile.identity import current_profile
-
-    profile = current_profile()
-    if profile is None:
-        return ""
-    return format_formatting_guide(profile)
+            f"({guide.chars}) — a lookup entry grew past the budget")
+    return guide

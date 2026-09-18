@@ -190,8 +190,8 @@ Layout and behavior follow `notes/ui-left-panel-tree.md` (tree),
 - **No seeded default.** The store ships empty; what the assistant should be
   is the operator's to write.
 - **No length cap on the persona text.** Unlike the other operator-authored
-  prompt blocks — `formatting_guide` and `knowledge_calibration` share a
-  2,700-char guidance budget, the skill block caps at 2,000 chars, and the
+  prompt blocks — the formatting comments in `user_settings_yaml` and
+  `user_expertise_yaml` share a 2,700-char guidance budget, the skill block caps at 2,000 chars, and the
   second-opinion and reply-audit excerpts are head-truncated — the persona
   carries no bound at all. The operator authors this text on `/persona` and
   sees its size right there as they write it. Its sibling mechanism, a room
@@ -229,9 +229,9 @@ text, so the turn always records exactly which revision it used.
 
 In the assistant's per-turn prompt (`agents/assistant.py`), a non-empty
 resolution renders as an `<assistant_persona>` element holding the
-persona's text, ranked in `SOURCE_PRIORITY_SECTION` next to
-`formatting_guide` — below the current request and this turn's observations,
-above profile and conversation history. The system prompt carries one
+persona's text, ranked in `SOURCE_PRIORITY_SECTION` right below
+`user_settings_yaml` — below the current request and this turn's
+observations, above profile and conversation history. The system prompt carries one
 code-owned sentence policing the boundary: a persona changes voice and
 manner, never which actions are available, and never overrides the working
 rules or the source priority — operator-authored text, but still data inside

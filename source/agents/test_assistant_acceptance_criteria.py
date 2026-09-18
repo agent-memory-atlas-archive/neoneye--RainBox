@@ -319,13 +319,14 @@ def test_step0_row_is_flagged_code_driven_and_the_revision_is_not(room):
     assert audit and all(s.code_driven for s in audit)
 
 
-def test_criteria_call_sees_formatting_guide_despite_gated_switch(room):
-    """The formatting guide is a declared INPUT of the criteria call, rendered
-    from the criteria snapshot profile regardless of the separate
-    assistant.formatting_guide switch (which only gates the decide-prompt
-    injection) — otherwise a run with that switch off would establish its
-    criteria without the derived defaults (metric -> Celsius, separators)."""
-    db.set_setting("assistant.formatting_guide", False)
+def test_criteria_call_reads_the_settings_comments_decide_reads(room):
+    """The formatting guide reaches the criteria call as the comments inside
+    user_settings_yaml — the one block rendered for the turn, so the
+    criteria and decide prompts carry it byte for byte, derived defaults
+    (metric -> Celsius) included. One switch gates the comments in both."""
+    from user_profile.formatting import GUIDE_HEADER
+
+    db.set_setting("assistant.formatting_guide", True)
     germany = next(e for e in db.profile_templates_entries()
                    if e["name"] == "Germany")["uuid"]
     db.set_current_profile(germany)
@@ -334,9 +335,16 @@ def test_criteria_call_sees_formatting_guide_despite_gated_switch(room):
     _stub_criteria_seam(agent, [_criteria("step0")], calls)
     prompts = _capture_decides(agent, [_reply()])
     agent.handle(uuid4(), {"room_uuid": str(room.uuid)})
-    assert "Use these defaults unless the current request" in calls[0]["user_prompt"]
-    assert "- Temperature: Celsius" in calls[0]["user_prompt"]
-    # The decide prompt stays gated: no formatting_guide section there.
+
+    def settings(prompt):
+        return prompt[prompt.index("<user_settings_yaml>"):
+                      prompt.index("</user_settings_yaml>")]
+
+    criteria_settings = settings(calls[0]["user_prompt"])
+    assert f"# {GUIDE_HEADER}" in criteria_settings
+    assert "Celsius (°C)." in criteria_settings
+    assert criteria_settings == settings(prompts[0]["user"])
+    assert "<formatting_guide" not in calls[0]["user_prompt"]
     assert "<formatting_guide" not in prompts[0]["user"]
 
 
@@ -395,7 +403,7 @@ def test_system_prompt_offers_no_empty_exit_and_no_copyable_example():
     prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
     assert "Empty when none apply" not in prompt
     assert "target unit: meters" not in prompt      # nothing to parrot
-    assert "formatting guide line by line" in prompt
+    assert "formatting comments in user_settings_yaml line by line" in prompt
 
 
 def test_system_prompt_forbids_naming_where_the_facts_come_from():

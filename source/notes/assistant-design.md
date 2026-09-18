@@ -174,22 +174,23 @@ turn.
   `MAX_SCRATCHPAD_CHARS = 5000`), the step
   counter (`decision_request`), the **user settings**
   (`<user_settings_yaml>` — `profile.current`'s fields as YAML, a bare tag
-  with no attributes (the system prompt declares it reference data), no
-  preamble and no tree label; opaque enum values such as `number_format`
-  carry a code-owned `<key>.comment` entry spelling the convention out), the
-  **formatting guide** (`authority="instructions"` — deterministic
-  locale directives compiled by `user_profile/formatting.py`; the one
-  profile-derived block with instruction authority, justified because every
-  imperative sentence is code-owned and every interpolated value passed the
-  strict prompt-boundary validation), the **knowledge calibration** block
+  with no attributes (the system prompt declares it reference data and
+  names its comments as the formatting defaults), no preamble and no tree
+  label; the **formatting guide** rides it as `#` comments on the lines of
+  the fields it derives from — deterministic locale defaults with examples
+  compiled by `user_profile/formatting.py`, a header comment opening the
+  block and the language comment closing it; every comment sentence is
+  code-owned and every interpolated value passed the strict prompt-boundary
+  validation, and the opaque `number_format` value keeps its code-owned
+  comment even with the guide off), the **knowledge calibration** block
   (`<user_expertise_yaml>`, a bare tag the system prompt declares context —
   self-declared topic rows as a YAML list from
   `user_profile/user_calibration.py`, sharing a 2 700-char guidance budget with
-  the formatting guide, formatting admitted first) — these two blocks sit
-  behind independent default-off switches (`assistant.formatting_guide`,
-  `assistant.knowledge_calibration`), flipped only after each block passes
-  its live release gate; see `profile-guidance.md` — the **user-profile
-  block** (query-independent operator self-model — see
+  the formatting guide, the guide's comments admitted first) — the comments
+  and the calibration block sit behind independent default-off switches
+  (`assistant.formatting_guide`, `assistant.knowledge_calibration`), flipped
+  only after each passes its live release gate; see `profile-guidance.md` —
+  the **user-profile block** (query-independent operator self-model — see
   `memory-architecture.md` §User Profile Block), the **skill block** (active
   procedural skills retrieved for the latest human message; candidates are
   inert), and the current **local time** (so relative reminders resolve in
@@ -490,8 +491,9 @@ One structured call returns an `AcceptanceCriteria`:
 - `formatting` — preferences that steer the FINAL message (separators, date
   format, temperature unit, spelling, and the reply language the turn already
   resolved — restated here, never decided here). The system prompt directs the
-  call through the formatting guide line by line: the criteria are what the
-  reply is checked against, so a preference omitted here is one nobody verifies.
+  call through the formatting comments in `user_settings_yaml` line by line:
+  the criteria are what the reply is checked against, so a preference
+  omitted here is one nobody verifies.
 - `assumptions` — every ambiguity resolved by a settings-based assumption,
   stated so the operator can spot a wrong one. Assumptions are made only
   where the settings provide a default; otherwise the ambiguity is recorded
@@ -499,7 +501,7 @@ One structured call returns an `AcceptanceCriteria`:
 
 Each is a required, non-empty **string**, not a list. A list of terse
 fragments invites one fragment and an empty sibling: a call that has already
-read the formatting guide reasons that the guide applies itself later and
+read the formatting comments reasons that they apply themselves later and
 returns `[]` for `formatting`, which then reaches the second-opinion reviewer
 as "no formatting constraints." `min_length=1` closes that exit — a field with
 nothing to carry must say so, which the operator can check, where a blank
@@ -530,12 +532,10 @@ turn's conversation history of either role, both at the shared window
 (`MAX_RECENT_MESSAGES = 30`, owned by `AssistantPromptBuilder` so tier 0 is
 byte-identical across the turn's calls) — how the assistant has been
 formatting and phrasing its replies is exactly the continuity these criteria
-establish — plus `user_settings_yaml`, `reply_language_markdown`, the
-formatting guide rendered from the criteria snapshot profile regardless of the
-`assistant.formatting_guide` switch (which gates only the decide-prompt
-injection), the `user_expertise_yaml` rows when that switch is on, and
-`assistant_persona` when the room binds one — the same text and order as in
-the decide prompt. Calibration sits directly after `user_settings_yaml` in
+establish — plus `user_settings_yaml` (the turn's one rendering, formatting
+comments included when that switch is on), `reply_language_markdown`, the
+`user_expertise_yaml` rows when that switch is on, and `assistant_persona`
+when the room binds one — the same text and order as in the decide prompt. Calibration sits directly after `user_settings_yaml` in
 every call of the turn (classifier and recall filter included): the two are
 "who is asking", and one fixed slot in every prompt keeps them inside the
 head the whole turn shares instead of ending a prefix. Persona is last.

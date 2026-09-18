@@ -235,11 +235,12 @@ SETTINGS: dict[str, Setting] = {
     ),
     "assistant.formatting_guide": Setting(
         "assistant.formatting_guide", None, "bool", False,
-        description="Inject the active profile's deterministic formatting "
-                    "guide into assistant turns. Default off: enable after "
-                    "the formatting block passes its live release gate "
+        description="Render the active profile's deterministic formatting "
+                    "guide as comments inside the user_settings_yaml block "
+                    "of assistant turns. Default off: enable after the "
+                    "guide passes its live release gate "
                     "(evals/profile_gate.py). Independent of the "
-                    "calibration switch — the blocks gate separately.",
+                    "calibration switch — the two gate separately.",
     ),
     "assistant.knowledge_calibration": Setting(
         "assistant.knowledge_calibration", None, "bool", False,
