@@ -20,6 +20,9 @@ os.environ["DATABASE_URL"] = os.environ.get(
 
 import pytest
 
+# Progress bar with ETA, the live-model guard, and LLM KPIs — see the module.
+pytest_plugins = ["tools.pytest_rainbox"]
+
 
 @pytest.fixture(autouse=True)
 def _clear_query_embedding_cache():

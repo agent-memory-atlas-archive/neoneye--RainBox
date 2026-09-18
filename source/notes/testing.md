@@ -6,16 +6,61 @@ From `source/`:
 
 ```bash
 venv/bin/python -m pytest -q \
-  --ignore=voice_stt_whisper --ignore=voice_tts_kokoro --ignore=telegram_service
+  --ignore=voice_stt_whisper --ignore=voice_tts_kokoro --ignore=voice_tts_dotstts \
+  --ignore=telegram_service --ignore=discord_service
 ```
 
 The `--ignore` flags are required: a bare `pytest` **fails at collection**
-because `voice_stt_whisper/test_server.py` and `voice_tts_kokoro/test_server.py`
-share a basename (both directories are standalone services without
-`__init__.py`, meant to be tested inside their own venvs — see below). The
-full main suite runs in ~5 minutes.
+because the standalone services' `test_server.py` files share a basename
+(those directories have no `__init__.py` and are meant to be tested inside
+their own venvs — see below). The full main suite runs in the low tens of
+minutes; the progress line below says how long this run will take.
 
 Targeted runs need no flags: `venv/bin/python -m pytest db/ memory/ -q`.
+
+## Progress, the live-model guard, and LLM KPIs
+
+`tools/pytest_rainbox.py` is registered from the root `conftest.py`, so
+every run gets it without flags.
+
+**Progress.** One line, redrawn in place on the terminal:
+
+```text
+[██████████░░░░░░░░░░] 1234/3923 31% · 01:12 · ETA 02:40 · agents/test_x.py::test_y 3s
+```
+
+The ETA is the average so far extrapolated over the remaining tests. A test
+that has run for more than two seconds is named on the line with its running
+time, and the line keeps updating while it runs — so "stuck" and "slow" look
+different from "finished". The summary at the end lists the slowest tests
+(one second and up). Without a terminal (output piped to a file, CI) the
+plugin prints a plain line every 5 % and one per slow test instead. Pytest's
+per-test dots are replaced by the bar; failures still print their letter and
+`-v` still prints every test.
+
+**Live-model guard.** Tests stub the model seams; a test that reaches a real
+model is a bug, and an expensive one — the assistant's code-driven calls
+(language classifier, acceptance criteria, reply audit, run summariser)
+resolve whatever model group is bound in `rainbox_claude`, and a model bound
+there for a sandbox experiment turns a millisecond test into a minute at a
+131 072-token context. The guard refuses every socket connection to the
+local model ports (Ollama 11434, LM Studio 1234) and every connection that
+leaves loopback, raising `ConnectionRefusedError` with the test's name;
+Postgres on loopback is unaffected. The summary lists every refused
+connection. `RAINBOX_TEST_LIVE_MODELS=1` lifts the guard for a run that
+means to use a model.
+
+**KPIs.** Every model call is counted through the same recorder production
+uses (`llm.activity`), with an in-memory sink: the summary prints calls,
+prompt and completion tokens, and prefill and decode throughput in tokens
+per second, plus the tests that made calls. Under the guard that reads
+`llm: no model calls`; with the guard lifted it is the cost of the run.
+
+**When a run is slow anyway.** Read the summary's slowest list first. Then
+check `rainbox_claude` for a model group with members bound to an assistant
+slot (`/agentmodel` on a sandbox core, or `db.list_agent_model_bindings()`)
+— the guard stops the calls, but the code paths that try them still pay
+their own setup.
 
 ## The sandbox database
 
@@ -77,14 +122,16 @@ local services are running changes what the retrieval tests observe.
 
 ## Service suites
 
-The three standalone services test inside their own directories (their
+The standalone services test inside their own directories (their
 suites mock the heavy dependencies, but their runtime deps live in their own
 venvs):
 
 ```bash
 cd voice_stt_whisper && venv/bin/python -m pytest -q
 cd voice_tts_kokoro && venv/bin/python -m pytest -q
+cd voice_tts_dotstts && venv/bin/python -m pytest -q
 cd telegram_service && venv/bin/python -m pytest -q
+cd discord_service && venv/bin/python -m pytest -q
 ```
 
 ## What tests can and cannot catch
