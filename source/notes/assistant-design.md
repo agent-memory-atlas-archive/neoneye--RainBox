@@ -486,34 +486,40 @@ On every turn a code-driven **step 0** establishes the reply's constraints
 before the decide loop starts — enforced by the loop, so the model cannot skip or forget it.
 One structured call returns an `AcceptanceCriteria`:
 
-- `processing` — preferences that steer the WORK (the target unit for an
-  ambiguous conversion, the timezone for a reminder).
-- `formatting` — preferences that steer the FINAL message (separators, date
-  format, temperature unit, spelling, and the reply language the turn already
-  resolved — restated here, never decided here). The system prompt directs the
-  call through the formatting comments in `user_settings_yaml` line by line:
-  the criteria are what the reply is checked against, so a preference
-  omitted here is one nobody verifies.
+- `processing` — what is about to happen to produce the reply: what will
+  be computed, looked up, compared or asked, in order. The plan, never the
+  formatting.
+- `override_formatting` — only what DEVIATES from the formatting defaults
+  in `user_settings_yaml`, and why: the request asks for another unit,
+  format or spelling, exact source notation must be preserved, or the
+  conversation established a convention. Empty when the defaults apply —
+  the defaults reach the assistant, the second-opinion reviewer and the
+  auditor directly as `user_settings_yaml`, and the audit checks the reply
+  against them there, so restating them here only cost every call that
+  reads the criteria. The Markdown projection omits the section when the
+  field is empty.
 - `assumptions` — every ambiguity resolved by a settings-based assumption,
   stated so the operator can spot a wrong one. Assumptions are made only
   where the settings provide a default; otherwise the ambiguity is recorded
   as unresolved and the normal `ask_clarifying_question` path handles it.
 
-Each is a required, non-empty **string**, not a list. A list of terse
-fragments invites one fragment and an empty sibling: a call that has already
-read the formatting comments reasons that they apply themselves later and
-returns `[]` for `formatting`, which then reaches the second-opinion reviewer
-as "no formatting constraints." `min_length=1` closes that exit — a field with
-nothing to carry must say so, which the operator can check, where a blank
-field cannot be told apart from an oversight. For the same reason the system
+`processing` and `assumptions` are required, non-empty **strings**, not
+lists. A list of terse fragments invites one fragment and an empty sibling:
+a call once returned `[]` for the formatting field on the theory that the
+guide applied itself later, which reached the second-opinion reviewer as
+"no formatting constraints." `min_length=1` closes that exit for the two
+fields that must always say something — a field with nothing to carry must
+say so, which the operator can check, where a blank field cannot be told
+apart from an oversight. `override_formatting` is the deliberate exception:
+its empty state has exactly one meaning. For the same reason the system
 prompt carries no worked example: a copyable one gets emitted verbatim in
 place of criteria derived from the actual request.
 
-Response language is not this call's to decide, and it is shown the decision
-so that it cannot make one. The preceding `reply_language_markdown` from the
-dedicated classifier is injected here as it is into the decide,
-second-opinion and audit prompts, and `turn_instructions` tells the call to
-restate its first language in `formatting` and never re-derive it.
+Response language is not this call's to decide and not its to restate. The
+preceding `reply_language_markdown` from the dedicated classifier is
+injected here as it is into the decide, second-opinion and audit prompts,
+and `turn_instructions` tells the call never to re-derive it or name a
+language of its own.
 
 Withholding it does not keep the call out of the question — it only leaves it
 answering from the wrong evidence. The call sees a transcript and a settings

@@ -342,32 +342,35 @@ class ReplyAudit(BaseModel):
 
 # Why prose and not a list of criteria: a list of terse fragments invites one
 # fragment and an empty sibling. Observed on a conversion request — the call
-# filled `processing` and `assumptions`, then reasoned that the formatting
-# guide "is usually handled by the final response generation" and returned an
-# empty `formatting`, which reached the second-opinion reviewer as "no
-# formatting constraints" while the operator's no-thousands-separator rule
-# went unchecked on a 16-digit result. `min_length=1` on every field removes
-# that exit: nothing to carry must be SAID, and a stated "nothing here" is a
-# decision the operator can audit where a blank field is indistinguishable
-# from an oversight. The docstring below is the schema description the model
+# filled `processing` and `assumptions` and returned an empty list for the
+# formatting field, which reached the second-opinion reviewer as "no
+# formatting constraints". `min_length=1` on `processing` and `assumptions`
+# removes that exit: nothing to carry must be SAID, and a stated "nothing
+# here" is a decision the operator can audit where a blank field is
+# indistinguishable from an oversight. `override_formatting` is the one field
+# that IS empty by design: the settings' defaults reach every call as
+# user_settings_yaml and the audit checks the reply against them directly, so
+# the criteria carry formatting only when this reply must deviate from those
+# defaults — and an empty field then has exactly one meaning, "the defaults
+# apply". The docstring below is the schema description the model
 # reads — keep it model-facing.
 class AcceptanceCriteria(BaseModel):
     """The reply's constraints, established before any step runs and revised
-    mid-run when the situation changes. Every field is required and must be
-    non-empty prose."""
+    mid-run when the situation changes. `processing` and `assumptions` are
+    required non-empty prose; `override_formatting` is empty unless the
+    reply must deviate from the settings' formatting defaults."""
 
     processing: str = Field(min_length=1, description=(
-        "The user preferences that steer the WORK: which units, timezone, "
-        "currency or locale the work must adopt, and which setting each "
-        "comes from. One or two sentences. Never empty — when nothing "
-        "steers the work, say that."))
-    formatting: str = Field(min_length=1, description=(
-        "The user preferences that steer the FINAL MESSAGE: number "
-        "separators and decimal mark, date and time format, units and "
-        "temperature, spelling. Restate every formatting-guide line that "
-        "bears on this reply; the guide reaching the assistant separately "
-        "is not a reason to omit one. One or two sentences. Never empty — "
-        "when nothing shapes the message, say that."))
+        "What is about to happen to produce the reply: what will be "
+        "computed, looked up, compared or asked, in the order it happens. "
+        "The plan, never the formatting. One or two sentences. Never "
+        "empty — when the reply needs no work beyond answering, say that."))
+    override_formatting: str = Field(default="", description=(
+        "Only when this reply must DEVIATE from the formatting defaults in "
+        "user_settings_yaml: the request asks for another unit, format or "
+        "spelling, exact source notation must be preserved, or the "
+        "conversation established a convention. Say what deviates and why. "
+        "Leave empty when the defaults apply — do not restate them."))
     assumptions: str = Field(min_length=1, description=(
         "Every ambiguity in the request you resolved from a settings "
         "default, and every ambiguity the settings cannot resolve, stated "
@@ -472,29 +475,28 @@ it, no markdown fences, no commentary.
 ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS: str = """\
 You establish the acceptance criteria for a personal assistant's reply — the
 conditions the reply must satisfy to be accepted — BEFORE the assistant starts
-working on the request. You do not answer the request and you do not plan
-actions; you only state the reply's constraints, as structured output:
+working on the request. You do not answer the request and you do not choose
+its sources; you state what the reply must satisfy, as structured output:
 
-- processing: the user preferences that steer the work — which units,
-  timezone or currency the work must adopt, and which setting each one comes
-  from.
-- formatting: the user preferences that steer the final message — number
-  separators and decimal mark, date and time format, units and temperature,
-  spelling.
+- processing: what is about to happen to produce the reply — what will be
+  computed, looked up, compared or asked, in the order it happens. The plan,
+  never the formatting.
+- override_formatting: ONLY what deviates from the formatting defaults in
+  user_settings_yaml, and why — the request asks for another unit, format or
+  spelling, exact source notation must be preserved, or the conversation
+  established a convention. When the defaults apply, leave it empty.
 - assumptions: every ambiguity you resolved from a settings default, and
   every ambiguity the settings cannot resolve.
 
-Each field is prose and each is required: write one or two sentences, never an
-empty string. When a field genuinely has nothing to carry, say so in one short
-sentence — a stated "nothing here" is a decision the user can check, while
-a blank field cannot be told apart from an oversight.
+`processing` and `assumptions` are prose and required: one or two sentences,
+never an empty string. When one genuinely has nothing to carry, say so in one
+short sentence — a stated "nothing here" is a decision the user can check,
+while a blank field cannot be told apart from an oversight.
 
-Read the formatting comments in user_settings_yaml line by line and restate
-every one that bears on this reply. That the assistant also receives them is
-not a reason to leave `formatting` thin: these criteria are what the reply
-gets checked against, so a preference you leave out is one nobody verifies. Numbers are the
-usual casualty — whenever the reply will carry a computed value, an amount, a
-date or a temperature, the convention governing it belongs in `formatting`.
+`override_formatting` is the exception: empty is its normal state and means
+the defaults apply. The defaults in user_settings_yaml reach the assistant
+and its reviewers directly, so restating them here adds nothing and costs
+every call that reads these criteria. Fill it only for a deviation.
 
 assistant_persona, when present, is who will answer: its voice, how it treats
 the user, and what it holds about them. Read it as you read the settings —
@@ -503,17 +505,14 @@ register or depth depends on who is asking, the level the settings and the
 persona establish for the user is the level the reply must meet, never a
 simpler one; put that in `assumptions`.
 
-The reply's LANGUAGE is not yours to decide. It was settled before this call
-by a narrow classifier whose result you are shown as
-reply_language_markdown, listing the languages highest confidence first;
-restate that first language in `formatting` and never re-derive it. The
-conversation and the settings are the wrong evidence for it and will
-mislead you: a transcript running in one language and a settings block
-naming a country both survive a request written in something else, and the
-request is what the classification already read. When
-reply_language_markdown is absent, no language was resolved — then say the
-reply mirrors the language of the current request, which is the formatting
-guide's standing rule, and still name no language of your own.
+The reply's LANGUAGE is not yours to decide and not yours to restate. It
+was settled before this call by a narrow classifier whose result you are
+shown as reply_language_markdown, and the assistant reads that same result;
+never re-derive it and never name a language of your own. The conversation
+and the settings are the wrong evidence for it and will mislead you: a
+transcript running in one language and a settings block naming a country
+both survive a request written in something else, and the request is what
+the classification already read.
 
 Resolve an ambiguity from the user settings ONLY when they provide a default
 for it, and disclose that choice in `assumptions`. When the settings provide
@@ -861,8 +860,9 @@ ACCEPTANCE_CRITERIA_SOURCE_PRIORITY_SECTION: str = """\
 </source_priority>
 acceptance_criteria_markdown is the established plan for this turn's reply:
 follow it during the steps and when composing the message, unless the
-user's request overrides it. It governs how the reply is shaped — units,
-formatting, language, the ambiguities already settled —
+user's request overrides it. It says what the work is, what deviates from
+the formatting defaults in user_settings_yaml (where it says nothing about
+formatting, those defaults govern), and the ambiguities already settled —
 never where its facts come from. It is written before any read has run, so it
 cannot know what is stored; a criterion that names a source, or that scopes the
 answer to what the conversation already mentions,
@@ -6194,16 +6194,14 @@ class AssistantAgent(ModelGroupAgent):
         Free-text fields are collapsed to one line each so a model-written
         criterion cannot forge headings or list items into the surrounding
         section — the same containment the language projection applies."""
-        return "\n".join([
-            "## Processing",
-            " ".join(criteria.processing.split()),
-            "",
-            "## Formatting",
-            " ".join(criteria.formatting.split()),
-            "",
-            "## Assumptions",
-            " ".join(criteria.assumptions.split()),
-        ])
+        parts = ["## Processing", " ".join(criteria.processing.split()), ""]
+        # Empty means the defaults apply; a section saying so would be the
+        # restatement the field exists to avoid.
+        if criteria.override_formatting.strip():
+            parts += ["## Override formatting",
+                      " ".join(criteria.override_formatting.split()), ""]
+        parts += ["## Assumptions", " ".join(criteria.assumptions.split())]
+        return "\n".join(parts)
 
     def _run_acceptance_criteria_call(
         self,
