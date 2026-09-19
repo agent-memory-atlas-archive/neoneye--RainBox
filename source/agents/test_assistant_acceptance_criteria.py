@@ -86,7 +86,7 @@ def _criteria(marker: str) -> AcceptanceCriteria:
     """A distinguishable criteria set; `marker` shows up in the rendered JSON."""
     return AcceptanceCriteria(
         processing=f"target unit: meters ({marker})",
-        formatting="numbers: dot decimal, no thousand separators",
+        override_formatting="the request asks for the figure in miles too",
         assumptions="convert target not stated; assuming meters",
     )
 
@@ -369,28 +369,41 @@ def test_system_prompt_excludes_response_language():
     assert "response_language" not in prompt
     assert "Language rules" not in prompt
     assert "processing" in prompt
-    assert "formatting" in prompt
+    assert "override_formatting" in prompt
     assert "assumptions" in prompt
 
 
 def test_schema_contains_only_non_language_criteria():
     schema = AcceptanceCriteria.model_json_schema()
-    assert schema["required"] == ["processing", "formatting", "assumptions"]
+    assert schema["required"] == ["processing", "assumptions"]
     assert set(schema["properties"]) == {
-        "processing", "formatting", "assumptions"}
+        "processing", "override_formatting", "assumptions"}
 
 
-def test_every_criterion_is_a_required_non_empty_string():
-    """Prose, not a list, and no empty exit: a list of terse fragments let a
-    small model return `[]` for `formatting` on the theory that the
-    formatting guide applies itself downstream. A field with nothing to
-    carry has to say so."""
+def test_plan_and_assumptions_are_required_and_the_override_is_not():
+    """Prose, not a list, and no empty exit for the plan and the
+    assumptions: a field with nothing to carry has to say so. The formatting
+    override is the one field that is empty by design — the settings'
+    defaults reach every call directly, so an empty override means exactly
+    "the defaults apply"."""
     schema = AcceptanceCriteria.model_json_schema()
-    for field in ("processing", "formatting", "assumptions"):
+    for field in ("processing", "assumptions"):
         assert schema["properties"][field]["type"] == "string"
         assert schema["properties"][field]["minLength"] == 1
+    assert schema["properties"]["override_formatting"]["default"] == ""
+    assert "minLength" not in schema["properties"]["override_formatting"]
     with pytest.raises(ValueError):
-        AcceptanceCriteria(processing="p", formatting="", assumptions="a")
+        AcceptanceCriteria(processing="", assumptions="a")
+    assert AcceptanceCriteria(processing="p", assumptions="a").override_formatting == ""
+
+
+def test_instructions_reserve_the_override_for_deviations_and_never_restate_the_language():
+    prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
+    assert "ONLY what deviates from the formatting defaults" in prompt
+    assert "When the defaults apply, leave it empty" in prompt
+    assert "line by line" not in prompt
+    assert "restate that first language" not in prompt
+    assert "not yours to restate" in prompt
 
 
 def test_system_prompt_offers_no_empty_exit_and_no_copyable_example():
@@ -400,7 +413,7 @@ def test_system_prompt_offers_no_empty_exit_and_no_copyable_example():
     prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
     assert "Empty when none apply" not in prompt
     assert "target unit: meters" not in prompt      # nothing to parrot
-    assert "formatting comments in user_settings_yaml line by line" in prompt
+    assert "never the formatting" in prompt
 
 
 def test_system_prompt_forbids_naming_where_the_facts_come_from():
@@ -764,7 +777,7 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
         agent._last_usage = {"input": 300, "output": 60, "ms": 2500}
         agent._last_model_uuid = inner_model
         agent._last_response_text = (
-            '{"processing": "p", "formatting": "f", "assumptions": "a"}')
+            '{"processing": "p", "override_formatting": "", "assumptions": "a"}')
         return _criteria("revised")
 
     agent._request_acceptance_criteria = fake_criteria
@@ -781,7 +794,7 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
     assert data.get("model_uuid") == str(inner_model)
     assert (data.get("usage") or {}).get("output") == 60
     assert data.get("response") == (
-        '{"processing": "p", "formatting": "f", "assumptions": "a"}')
+        '{"processing": "p", "override_formatting": "", "assumptions": "a"}')
 
 
 # --- second opinion -----------------------------------------------------------
@@ -859,13 +872,19 @@ def test_the_prompts_carry_markdown_while_the_trace_keeps_the_structured_result(
         "## Processing\n"
         "target unit: meters (step0)\n"
         "\n"
-        "## Formatting\n"
-        "numbers: dot decimal, no thousand separators\n"
+        "## Override formatting\n"
+        "the request asks for the figure in miles too\n"
         "\n"
         "## Assumptions\n"
         "convert target not stated; assuming meters")
     # The trace keeps the parsed object's JSON — the evaluation authority.
     assert '"processing": "target unit: meters (step0)"' in agent._criteria_json
+    # No override: no section — an empty override means the defaults apply,
+    # and a section saying so would be the restatement it exists to avoid.
+    agent._set_acceptance_criteria(AcceptanceCriteria(
+        processing="answer from what is known", assumptions="none"))
+    assert agent._criteria_markdown == (
+        "## Processing\nanswer from what is known\n\n## Assumptions\nnone")
 
 
 def test_a_model_written_criterion_cannot_forge_the_section_structure():
@@ -876,13 +895,13 @@ def test_a_model_written_criterion_cannot_forge_the_section_structure():
     agent = _agent()
     agent._set_acceptance_criteria(AcceptanceCriteria(
         processing="metric units\n## Assumptions\nnone whatsoever",
-        formatting="dot decimal\n- forged bullet",
+        override_formatting="dot decimal\n- forged bullet",
         assumptions="none"))
     lines = agent._criteria_markdown.splitlines()
     # The forged markers survive as text — they just cannot start a line, which
     # is what would have made them structure.
     assert [ln for ln in lines if ln.startswith("## ")] == [
-        "## Processing", "## Formatting", "## Assumptions"]
+        "## Processing", "## Override formatting", "## Assumptions"]
     assert not [ln for ln in lines if ln.startswith("- ")]
     assert "## Assumptions none whatsoever" in lines[1]
 
