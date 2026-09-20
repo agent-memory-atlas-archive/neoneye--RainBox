@@ -147,14 +147,17 @@ relative or symlinked one, and never one that only the browser checked.
   last component until the user edits it); **Add** POSTs `/git/api/repos` and
   shows the server's error inline — a node is only created for a verified
   repo, filed into the currently selected folder. **Browse…** opens the
-  **native macOS folder dialog**: `POST /git/api/pick-folder` runs
-  `osascript` (`db.git_pick_folder_native`, the AppleScript `choose folder`
-  with the start folder passed as an argument, never interpolated) on the
-  server — which is the operator's own machine — and answers with the
-  chosen POSIX path; a page's own picker cannot return an absolute path.
-  The request waits while the dialog is up (ten-minute cap); cancel is a
-  200 with `cancelled`, not an error. Where no native dialog exists (not
-  macOS, 501 with `unsupported`) the page falls back to an in-page listing:
+  **host's native folder dialog**: `POST /git/api/pick-folder` calls
+  `native_dialog.pick_folder`, which runs the first available backend from
+  a per-platform table (`native_dialog.BACKENDS`: osascript on macOS,
+  PowerShell's FolderBrowserDialog on Windows, zenity or kdialog on Linux,
+  tkinter's askdirectory anywhere Tk imports) on the server — which is the
+  operator's own machine — and answers with the chosen absolute path; a
+  page's own picker cannot return one. The start folder travels as an
+  argument, never interpolated into a script. The request waits while the
+  dialog is up (ten-minute cap); cancel is a 200 with `cancelled`, not an
+  error. When no backend can run (501 with `unsupported`) the page falls
+  back to an in-page listing:
   one directory level at a time from `GET /git/api/browse?path=`
   (`db.git_browse_dir` — subfolders only, dot-directories excluded, each
   flagged by a cheap `.git` existence check rather than a git call), click

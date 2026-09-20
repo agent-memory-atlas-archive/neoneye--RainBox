@@ -10,11 +10,13 @@ page sends/receives its in-browser arrays almost verbatim. Repo creation
 validates the typed path is a real git repository before it stores it. Plus a
 per-repo `detail` read (path / current branch / root listing).
 """
+import os
 from uuid import UUID
 
 from flask import Response, jsonify, request
 
 import db
+import native_dialog
 
 from .core import app
 
@@ -84,15 +86,19 @@ def git_create_folder_route() -> tuple[Response, int]:
 
 @app.route("/git/api/pick-folder", methods=["POST"])
 def git_pick_folder_route() -> tuple[Response, int]:
-    """Open the native folder dialog on the server's own display (this is a
-    local app) and answer with the chosen path. 200 with `cancelled` when
-    dismissed; 501 with `unsupported` where no native dialog exists, which
-    the page takes as its cue to show the in-page listing instead."""
+    """Open the host's native folder dialog on the server's own display
+    (this is a local app) and answer with the chosen path, plus whether it
+    holds a .git. 200 with `cancelled` when dismissed; 501 with
+    `unsupported` when no dialog backend can run here (see
+    native_dialog.BACKENDS), which the page takes as its cue to show the
+    in-page listing instead."""
     data = request.get_json(silent=True) or {}
     start = data.get("path") if isinstance(data, dict) else None
-    result = db.git_pick_folder_native(start)
+    result = native_dialog.pick_folder(start)
     if result.get("unsupported"):
         return jsonify(result), 501
+    if result.get("ok"):
+        result["isRepo"] = os.path.isdir(os.path.join(result["path"], ".git"))
     return jsonify(result), 200
 
 
