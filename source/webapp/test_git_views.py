@@ -68,6 +68,11 @@ def test_add_repo_modal_has_the_folder_picker_for_a_local_browser_only():
     assert 'id="git-browse-btn"' in b and 'onclick="gitPickFolder()"' in b
     assert 'id="git-browse-wait"' in b
     assert 'id="git-repo-path"' in b and 'git-repo-name' not in b
+    # Cancel before Add, and Escape cancels this modal unconditionally.
+    actions = b[b.index('id="git-repo-modal"'):]
+    assert actions.index("gitCloseRepoModal()") < actions.index('id="git-repo-create"')
+    js = _body()
+    assert "if (!document.getElementById('git-repo-modal').hidden){ gitCloseRepoModal(); return; }" in js
     with app.test_client() as c:
         remote = c.get("/git", environ_base={"REMOTE_ADDR": "192.168.1.20"}).get_data(as_text=True)
     assert 'id="git-repo-path"' in remote

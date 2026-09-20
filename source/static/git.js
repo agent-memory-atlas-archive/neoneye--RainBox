@@ -1139,7 +1139,13 @@ document.getElementById('git-repo-path').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); gitAddRepoConfirm(); }
 });
 document.getElementById('ui-modal-backdrop').addEventListener('click', gitDismissIfClean);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') gitDismissIfClean(); });
+// Escape always cancels the Add-repository modal — a typed path is not
+// work worth guarding — and follows the dirty guard everywhere else.
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (!document.getElementById('git-repo-modal').hidden){ gitCloseRepoModal(); return; }
+  gitDismissIfClean();
+});
 gitLoadTree().then(() => {
   // Deep link: ?id=<uuid> selects that folder or repo on load.
   const wantId = new URLSearchParams(window.location.search).get('id');

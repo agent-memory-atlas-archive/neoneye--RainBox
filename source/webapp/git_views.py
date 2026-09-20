@@ -97,7 +97,7 @@ GIT_TEMPLATE = """
   /* Button row + button colors come from the shared ui-modal.css
      (.modal-actions / .btn-primary / .btn-cancel). Only .err is page-local. */
   .ui-modal .err{color:#dc2626;font-size:0.85rem;min-height:1em;margin-top:6px}
-  .git-browse-toggle{margin:-0.4em 0 0.8em;display:flex;align-items:center;gap:8px}
+  .git-browse-toggle{margin:0.5em 0 0.8em;display:flex;align-items:center;gap:8px}
   .git-browse-wait{color:#6b7280;font-size:0.85rem}
   .git-browse{border:1px solid #d1d5db;border-radius:6px;margin-bottom:0.8em;font-size:0.9rem}
   .git-browse-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #e5e7eb;background:#f9fafb}
@@ -175,8 +175,8 @@ GIT_TEMPLATE = """
   </div>
   <div class="err" id="git-repo-err"></div>
   <div class="modal-actions">
-    <button class="btn-primary" id="git-repo-create" onclick="gitAddRepoConfirm()">Add</button>
     <button class="btn-cancel" onclick="gitCloseRepoModal()">Cancel</button>
+    <button class="btn-primary" id="git-repo-create" onclick="gitAddRepoConfirm()">Add</button>
   </div>
 </div>
 
