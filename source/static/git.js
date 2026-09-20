@@ -246,7 +246,9 @@ function gitConfirmRenameModal(){
   gitSave();
   gitToast('Renamed to “' + v + '”');
 }
-// Description (folder or repo): read-only value + Edit button (overlay edits).
+// Description (folder or repo): the value itself is the click-to-edit
+// control (the same affordance as the rename heading — hover border,
+// tooltip); clicking opens the overlay. No separate Edit button.
 function gitCurrentDescNode(){
   if (gitSelectedRepo) return gitRepoByUuid(gitSelectedRepo);
   if (gitSelectedFolder !== null) return gitFolderById(gitSelectedFolder);
@@ -263,10 +265,11 @@ function gitRenderFolderDesc(){
   if (!node){ el.hidden = true; return; }
   el.hidden = false;
   const lbl = document.createElement('span'); lbl.className = 'muted'; lbl.textContent = 'Description:';
-  const val = document.createElement('span'); gitFillDescValue(val, node.description);
-  const btn = document.createElement('button'); btn.textContent = 'Edit description';
-  btn.addEventListener('click', gitEditDescription);
-  el.appendChild(lbl); el.appendChild(val); el.appendChild(btn);
+  const val = document.createElement('button');
+  val.type = 'button'; val.className = 'git-desc-value'; val.title = 'Click to edit';
+  gitFillDescValue(val, node.description);
+  val.addEventListener('click', gitEditDescription);
+  el.appendChild(lbl); el.appendChild(val);
 }
 let gitDescOrig = '';
 function gitEditDescription(){

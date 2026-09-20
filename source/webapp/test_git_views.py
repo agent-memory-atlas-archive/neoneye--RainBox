@@ -31,6 +31,7 @@ def test_nav_has_git_link():
 def test_js_has_core_markers():
     b = _body()
     for marker in ["gitLoadTree", "gitRenderTree", "gitRepoNode",
+                   "git-desc-value", "Click to edit",
                    "gitAddRepoConfirm", "/git/api/repos",
                    "gitPickFolder", "/git/api/pick-folder",
                    "gitBrowseLoad", "/git/api/browse", "gitBrowseUse",
@@ -80,3 +81,9 @@ def test_add_repo_modal_has_the_folder_picker_for_a_local_browser_only():
     for el in ("git-browse", "git-browse-path", "git-browse-list",
                "git-browse-up", "git-browse-use"):
         assert f'id="{el}"' in b, f"missing picker element {el}"
+
+
+def test_description_is_a_click_to_edit_control_not_a_button_beside_it():
+    js = _body()
+    assert "val.addEventListener('click', gitEditDescription)" in js
+    assert "btn.textContent = 'Edit description'" not in js   # the button is gone; the modal heading stays

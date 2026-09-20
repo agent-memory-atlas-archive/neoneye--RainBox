@@ -73,7 +73,11 @@ GIT_TEMPLATE = """
   #git-node-rename button{font:inherit;font-size:1.1rem;font-weight:600;color:#1a1a2e;background:none;
     text-align:left;border:1px solid transparent;border-radius:6px;padding:4px 8px;margin-left:-8px;cursor:pointer}
   #git-node-rename button:hover{border-color:#cbd5e1;background:#f8fafc}
-  #git-folder-desc{margin:8px 0;display:flex;gap:6px;align-items:center}
+  #git-folder-desc{margin:8px 0;display:flex;gap:6px;align-items:baseline}
+  .git-desc-value{font:inherit;color:inherit;background:none;border:1px solid transparent;border-radius:4px;
+    padding:2px 6px;margin:-2px -6px;cursor:pointer;text-align:left;white-space:pre-wrap;max-width:100%}
+  .git-desc-value:hover{border-color:#cbd5e1;background:#f8fafc}
+  .git-desc-value.muted{color:#6b7280}
   .git-table{border-collapse:collapse;width:100%;font-size:0.9rem}
   .git-table th,.git-table td{text-align:left;padding:6px 10px;border-bottom:1px solid #eee;vertical-align:top}
   .git-name-cell{white-space:nowrap}

@@ -170,7 +170,9 @@ relative or symlinked one, and never one that only the browser checked.
 - **Right pane, folder view**: the selected subtree (or the whole tree at
   "All repositories") as a depth-indented table — Name, Type (Folder/Repo),
   Path, Description, Open — plus the click-to-rename heading and the
-  description (edited in a modal, on folders and repos alike).
+  description (the value is a click-to-edit control with a hover border and
+  a "Click to edit" tooltip, like the rename heading; clicking opens the
+  edit modal — on folders and repos alike, no separate Edit button).
 - **Right pane, repo view**: Path and Branch header, then the root listing.
   The fetch is uuid-guarded — a stale response for a previously selected repo
   is dropped.
