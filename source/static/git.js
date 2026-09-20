@@ -200,7 +200,7 @@ function gitRenderRename(){
   btn.type = 'button';
   btn.id = 'git-rename-display';
   btn.textContent = node.name;
-  btn.title = 'Click to rename';
+  btn.title = 'Click to edit the name';
   btn.addEventListener('click', () => gitOpenRenameModal(kind, node));
   el.appendChild(btn);
 }
@@ -256,7 +256,7 @@ function gitCurrentDescNode(){
 }
 function gitFillDescValue(el, text){
   if (text){ el.textContent = text; el.classList.remove('muted'); }
-  else { el.textContent = '(none)'; el.classList.add('muted'); }
+  else { el.textContent = 'no description'; el.classList.add('muted'); }
 }
 function gitRenderFolderDesc(){
   const el = document.getElementById('git-folder-desc');
@@ -264,12 +264,15 @@ function gitRenderFolderDesc(){
   const node = gitCurrentDescNode();
   if (!node){ el.hidden = true; return; }
   el.hidden = false;
-  const lbl = document.createElement('span'); lbl.className = 'muted'; lbl.textContent = 'Description:';
+  // No "Description:" label: the control is the description, and its
+  // empty state says so itself. A 30-character minimum keeps a short or
+  // empty value a comfortable target.
   const val = document.createElement('button');
-  val.type = 'button'; val.className = 'git-desc-value'; val.title = 'Click to edit';
+  val.type = 'button'; val.className = 'git-desc-value';
+  val.title = 'Click to edit the description';
   gitFillDescValue(val, node.description);
   val.addEventListener('click', gitEditDescription);
-  el.appendChild(lbl); el.appendChild(val);
+  el.appendChild(val);
 }
 let gitDescOrig = '';
 function gitEditDescription(){

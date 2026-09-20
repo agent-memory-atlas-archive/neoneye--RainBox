@@ -31,7 +31,8 @@ def test_nav_has_git_link():
 def test_js_has_core_markers():
     b = _body()
     for marker in ["gitLoadTree", "gitRenderTree", "gitRepoNode",
-                   "git-desc-value", "Click to edit",
+                   "git-desc-value", "Click to edit the description",
+                   "Click to edit the name", "no description", "min-width:30ch",
                    "gitAddRepoConfirm", "/git/api/repos",
                    "gitPickFolder", "/git/api/pick-folder",
                    "gitBrowseLoad", "/git/api/browse", "gitBrowseUse",
