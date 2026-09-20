@@ -5,8 +5,8 @@ blocks, both rendered from one per-turn context snapshot:
 
 | Block | Authority | Source | Gated? |
 |---|---|---|---|
-| `<user_settings_yaml>` | context (by system-prompt rule; the tag carries no attributes); ranked in `source_priority` where its comments' defaults belong | profile fields as YAML (`user_profile/identity.py`), with the formatting guide as `#` comments on the fields it derives from (`user_profile/formatting.py`) | the fields: no — always on when a profile is selected. The guide's comments: **`assistant.formatting_guide`**, default off (the `number_format` comment spelling its opaque value out is the one comment that stays on) |
-| `<user_expertise_yaml>` | context (by system-prompt rule; the tag carries no attributes) | self-declared topic rows as a YAML list (`user_profile/user_calibration.py`) | **`assistant.knowledge_calibration`**, default off |
+| `<user_settings_yaml>` | context (by system-prompt rule; the tag carries no attributes); ranked in `source_priority` where its comments' defaults belong | profile fields as YAML (`user_profile/identity.py`), with the formatting guide as `#` comments on the fields it derives from (`user_profile/formatting.py`) | no — always on when a profile is selected |
+| `<user_expertise_yaml>` | context (by system-prompt rule; the tag carries no attributes) | self-declared topic rows as a YAML list (`user_profile/user_calibration.py`) | no — always on when a profile has topics |
 
 The formatting guide compiles the locale fields — date format, first day of
 week, time format, timezone (with the current UTC offset), measurement
@@ -86,13 +86,10 @@ unbound or unreachable auditor sends the message rather than losing the
 turn's answer. Every verdict lands in its own `reply_audit` trace row with
 the model, duration and prompts that produced it.
 
-The two gated pieces ship dark: each switch is flipped only after its piece
-passes the live release gate below. Everything else on this page (the
-`/profile` editor, calibration storage/API, the identity fields) is active
-regardless of the switches. The identity block is rendered once per turn
-and every call of the turn — the acceptance-criteria call included —
-carries that one rendering, so the formatting switch decides for all of
-them together whether the comments are there.
+Neither block has a production switch: a selected profile puts both in
+every call of the turn — the acceptance-criteria call included — from one
+rendering per turn. The live release gate below measures whether they earn
+their tokens; it does not gate shipping.
 
 ## Where things live
 
@@ -103,7 +100,7 @@ them together whether the comments are there.
 | Per-turn context snapshot | `user_profile/context.py` |
 | Calibration storage/validator/API | `db/profile_calibration.py`, `webapp/profile_api.py` |
 | Row-lock mutation helper (cross-subtree safety) | `db/profile.py` `profile_mutate_data` |
-| Switch + pointer settings | `db/settings.py` (`assistant.formatting_guide`, `assistant.knowledge_calibration`, `profile.current`, internal `profile.current_changed_at`) |
+| Pointer settings | `db/settings.py` (`profile.current`, internal `profile.current_changed_at`) |
 | Assistant injection + context marker | `agents/assistant.py` |
 | Live eval runner (prompt variants, seeded case inventory) | `evals/profile_guidance.py` |
 | Executable release gate | `evals/profile_gate.py` |
@@ -152,9 +149,7 @@ Start the app, open `/profile`:
 This is the direct proof the assistant actually carries the blocks:
 
 1. On `/settings`: set `profile.current` to a profile (e.g. your duplicated
-   copy), and set `assistant.formatting_guide` and
-   `assistant.knowledge_calibration` to `true` (temporarily, if you are just
-   verifying — see section 6 for the gated rollout).
+   copy).
 2. In a chat room with the assistant, ask anything ("how far is 100 km?").
 3. Open `/assistant`, select the newest run, and inspect any step's **user
    prompt**. It must contain, in order: `<user_settings_yaml>` carrying a
@@ -245,12 +240,12 @@ fail). The verdict persists as a `profile-gate` EvalRun and ends with:
 allowed enablement: {'formatting_alone': …, 'calibration_alone': …, 'both': …}
 ```
 
-### 6. Enable (and roll back)
+### 6. What the gate decides
 
-Flip only what the gate allowed, on `/settings`:
-`assistant.formatting_guide` and/or `assistant.knowledge_calibration` →
-`true`. Rollback is the same switch back to unset — the comments and the
-calibration block vanish from the next turn; nothing else depends on them.
+There is no production switch: both blocks render on every turn of a
+selected profile. The gate's verdict is advice on whether the blocks earn
+their tokens, and the way to act on a failed one is to fix the block (or
+the profile) and re-run, not to flip it off.
 
 ## Known limitations
 

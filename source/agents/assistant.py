@@ -3829,10 +3829,9 @@ class AssistantAgent(ModelGroupAgent):
             # The per-step debug log is assembled BEFORE the first model call,
             # so every row this turn carries it — including the classifier's,
             # which lands before the prompt blocks exist. A row without the
-            # active profile and switch states is the one row you cannot
-            # troubleshoot. The switches are read once here so the same values
-            # feed both the log and the block builders below.
-            formatting_on, calibration_on = self._declared_block_switches()
+            # active profile and switch state is the one row you cannot
+            # troubleshoot. The switch is read once here so the same value
+            # feeds both the log and the turn below.
             gate_on = self._response_language_gate_enabled()
             # The room's persona, read fresh: an edit on /persona reaches the
             # next reply. Best-effort — a resolution failure must not break
@@ -3845,8 +3844,7 @@ class AssistantAgent(ModelGroupAgent):
                 logger.warning("assistant: persona resolution failed", exc_info=True)
                 self._persona = None
             self._persona_block = self._persona.text if self._persona else ""
-            self._turn_log = self._build_turn_log(
-                context, formatting_on, calibration_on, self._persona, gate_on)
+            self._turn_log = self._build_turn_log(context, self._persona, gate_on)
             # A request too long to travel whole reaches every prompt with its
             # middle dropped, so the description of what was dropped has to
             # exist before the first of them is built — including the
@@ -3883,9 +3881,7 @@ class AssistantAgent(ModelGroupAgent):
             # separate and unaffected.
             self._identity_block, self._calibration_block = (
                 self._build_declared_profile_blocks(
-                    context.profile,
-                    formatting_enabled=formatting_on,
-                    calibration_enabled=calibration_on)
+                    context.profile)
             )
             self._profile_block = self._build_profile_block(journal_id, room_uuid)
             # The acceptance-criteria step 0: code-driven (the model cannot
@@ -4487,24 +4483,6 @@ class AssistantAgent(ModelGroupAgent):
             logger.warning("assistant: identity block failed", exc_info=True)
             return ""
 
-    def _declared_block_switches(self) -> tuple[bool, bool]:
-        """(formatting_enabled, calibration_enabled) from the production
-        switches; best-effort — an unreadable switch reads as off."""
-        try:
-            formatting = bool(db.get_setting("assistant.formatting_guide"))
-        except Exception:
-            logger.warning("assistant: formatting switch read failed",
-                           exc_info=True)
-            formatting = False
-        try:
-            calibration = bool(
-                db.get_setting("assistant.knowledge_calibration"))
-        except Exception:
-            logger.warning("assistant: calibration switch read failed",
-                           exc_info=True)
-            calibration = False
-        return formatting, calibration
-
     def _response_language_gate_enabled(self) -> bool:
         """Whether the response-language classifier may be skipped this turn.
 
@@ -4522,7 +4500,6 @@ class AssistantAgent(ModelGroupAgent):
     @staticmethod
     def _build_turn_log(
         context: "user_profile.ProfileContext",
-        formatting_enabled: bool, calibration_enabled: bool,
         persona: "db.PersonaResolution | None",
         response_language_gate_enabled: bool,
     ) -> list[dict[str, Any]]:
@@ -4552,10 +4529,6 @@ class AssistantAgent(ModelGroupAgent):
             })
         else:
             entries.append({"label": "persona", "text": "(none)"})
-        entries.append({"label": "formatting_guide",
-                        "text": "on" if formatting_enabled else "off"})
-        entries.append({"label": "knowledge_calibration",
-                        "text": "on" if calibration_enabled else "off"})
         entries.append({"label": "response_language_gate",
                         "text": "on" if response_language_gate_enabled else "off"})
         return entries
@@ -4574,8 +4547,8 @@ class AssistantAgent(ModelGroupAgent):
 
     def _build_declared_profile_blocks(
         self, profile: dict[str, Any] | None, *,
-        formatting_enabled: bool | None = None,
-        calibration_enabled: bool | None = None,
+        formatting_enabled: bool = True,
+        calibration_enabled: bool = True,
     ) -> tuple[str, str]:
         """(identity, calibration) bodies rendered from the turn's snapshot
         profile. The identity block carries the formatting guide as YAML
@@ -4587,23 +4560,13 @@ class AssistantAgent(ModelGroupAgent):
         the guide's comments are admitted first, calibration uses the
         remainder.
 
-        The guide's comments and the calibration block sit behind
-        independent production switches (`assistant.formatting_guide`,
-        `assistant.knowledge_calibration`), default OFF until each passes
-        its live release gate (evals/profile_gate.py) — they gate and ship
-        separately. `None` reads the settings (the handle path); the eval
-        harness passes explicit booleans so its variants never depend on
-        production state. The identity fields themselves are not gated, and
-        neither is the `number_format` comment (the one comment that spells
-        an opaque enum value out regardless of the switch)."""
+        Both render on every production turn. The two flags exist for the
+        eval harness (evals/profile_guidance.py), whose variants measure
+        each block's effect by leaving one out; production never passes
+        them. The identity fields and the `number_format` comment render
+        even with the guide left out."""
         if profile is None:
             return "", ""
-        if formatting_enabled is None or calibration_enabled is None:
-            read_f, read_c = self._declared_block_switches()
-            if formatting_enabled is None:
-                formatting_enabled = read_f
-            if calibration_enabled is None:
-                calibration_enabled = read_c
         identity = ""
         calibration = ""
         guide: "user_profile.FormattingGuide | None" = None
@@ -6324,14 +6287,10 @@ class AssistantAgent(ModelGroupAgent):
         A mid-run profile.current switch still posts its context marker on
         the next turn exactly as before."""
         context = self._capture_profile_context()
-        formatting_on, calibration_on = self._declared_block_switches()
         gate_on = self._response_language_gate_enabled()
-        self._turn_log = self._build_turn_log(
-            context, formatting_on, calibration_on, self._persona, gate_on)
+        self._turn_log = self._build_turn_log(context, self._persona, gate_on)
         self._identity_block, self._calibration_block = (
-            self._build_declared_profile_blocks(
-                context.profile, formatting_enabled=formatting_on,
-                calibration_enabled=calibration_on))
+            self._build_declared_profile_blocks(context.profile))
         self._criteria_profile = context.profile
         self._run_acceptance_criteria_call(
             step_index=step_index, messages=messages, scratchpad=scratchpad,

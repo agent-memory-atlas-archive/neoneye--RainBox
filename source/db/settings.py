@@ -233,23 +233,6 @@ SETTINGS: dict[str, Setting] = {
                     "Unset on a stamp written before the causes existed, "
                     "which reads as the generic wording; not operator-facing.",
     ),
-    "assistant.formatting_guide": Setting(
-        "assistant.formatting_guide", None, "bool", False,
-        description="Render the active profile's deterministic formatting "
-                    "guide as comments inside the user_settings_yaml block "
-                    "of assistant turns. Default off: enable after the "
-                    "guide passes its live release gate "
-                    "(evals/profile_gate.py). Independent of the "
-                    "calibration switch — the two gate separately.",
-    ),
-    "assistant.knowledge_calibration": Setting(
-        "assistant.knowledge_calibration", None, "bool", False,
-        description="Inject the active profile's knowledge-calibration rows "
-                    "into assistant turns. Default off: enable after the "
-                    "calibration block passes its live release gate "
-                    "(evals/profile_gate.py). Independent of the formatting "
-                    "switch — the blocks gate separately.",
-    ),
     "assistant.response_language_gate": Setting(
         "assistant.response_language_gate", None, "bool", False,
         description="Skip the response-language classifier on a turn whose "

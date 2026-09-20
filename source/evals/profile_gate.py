@@ -36,9 +36,8 @@ The verdict is durable: a `profile-gate` EvalRun row records the inputs and
 the full report (including `allowed_enablement`: none / formatting /
 calibration / both) in its summary. The CLI exits 0 only when every
 requested decision passes, 1 on a failed gate, 2 on invalid/incompatible
-data. Each passing block is enabled in production by flipping its
-default-off switch (`assistant.formatting_guide` /
-`assistant.knowledge_calibration`).
+data. The blocks have no production switch — both render on every turn —
+so the verdict is advice on whether they earn their tokens.
 """
 
 import argparse

@@ -116,9 +116,9 @@ decision withheld. The verdict persists as a durable `profile-gate` EvalRun
 including independent capabilities (`allowed_enablement`:
 `{formatting_alone, calibration_alone, both}` — a combined-only interaction
 failure still allows shipping one block alone) and the CLI exits
-0 pass / 1 fail / 2 invalid. Each passing block is enabled by flipping its
-default-off switch (`assistant.formatting_guide` /
-`assistant.knowledge_calibration`).
+0 pass / 1 fail / 2 invalid. The blocks have no production switch — both
+render on every turn — so the verdict is advice on whether they earn their
+tokens, acted on by fixing the block, not by flipping it.
 
 A separate opt-in **live** runner, `evals/profile_guidance.py`, executes
 chat_reply cases that carry `message` + `profile_uuid` (or an inline

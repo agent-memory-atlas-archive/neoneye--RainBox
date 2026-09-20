@@ -14,8 +14,7 @@ from agents.assistant import AssistantActionName, AssistantAgent, AssistantStepD
 from agents.config import ASSISTANT_UUID
 
 KEYS = ("profile.current", "qa.facts_invalidated_at",
-        "profile.current_changed_at",
-        "assistant.formatting_guide", "assistant.knowledge_calibration")
+        "profile.current_changed_at")
 
 
 @pytest.fixture
@@ -42,10 +41,6 @@ def app_ctx():
 
 @pytest.fixture
 def room(app_ctx):
-    # The blocks sit behind default-off production switches; these tests
-    # exercise the enabled behavior (default-off is tested separately).
-    db.set_setting("assistant.formatting_guide", True)
-    db.set_setting("assistant.knowledge_calibration", True)
     human = db.get_human_user()
     room = db.create_chatroom(f"fg-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
     db.post_chat_message(room.uuid, human.uuid, "how far is 100 km?")
@@ -105,23 +100,17 @@ def test_formatting_guide_rides_the_identity_block_as_comments(room):
     assert "switched to Germany" not in prompt
 
 
-def test_blocks_default_off_until_gated(room):
-    """The formatting and calibration switches default OFF (each ships only
-    after its release gate passes); the identity fields are not gated, and
-    neither is the number_format comment that spells its opaque value out.
-    The switches are independent."""
+def test_both_blocks_render_on_every_turn_with_no_switch(room):
+    """There is no production switch for either block: a selected profile
+    puts its formatting comments and its expertise rows in every prompt.
+    The eval harness's leave-one-out flags are the only way to drop one."""
     db.set_current_profile(_germany_uuid())
-    db.set_setting("assistant.formatting_guide", None)      # back to default
-    db.set_setting("assistant.knowledge_calibration", None)
-    prompt = _run_capture(room)["user_prompt"]
-    assert "<user_settings_yaml" in prompt                  # never gated
-    assert "date_format: DD.MM.YYYY\n" in prompt           # bare field
-    assert "number_format: 1.234.567,89 # Use DOT as" in prompt
-    assert "<user_expertise_yaml" not in prompt
-    db.set_setting("assistant.formatting_guide", True)      # one alone
+    for gone in ("assistant.formatting_guide", "assistant.knowledge_calibration"):
+        with pytest.raises(db.settings.UnknownSetting):
+            db.get_setting(gone)
     prompt = _run_capture(room)["user_prompt"]
     assert "date_format: DD.MM.YYYY # Example" in prompt
-    assert "<user_expertise_yaml" not in prompt
+    assert "<user_expertise_yaml" in prompt              # Germany seeds rows
 
 
 def test_unset_profile_emits_neither_block(room):
@@ -279,15 +268,12 @@ def test_steps_record_the_debug_log(room):
         assert by_label["profile"]["href"] == f"/profile?id={_germany_uuid()}"
         # No persona is linked in this room, so the entry is the placeholder.
         assert by_label["persona"]["text"] == "(none)"
-        assert by_label["formatting_guide"]["text"] == "on"
-        assert by_label["knowledge_calibration"]["text"] == "on"
         # The gate switch is off in this room, so the classifier ran.
         assert by_label["response_language_gate"]["text"] == "off"
         entry_labels = list(by_label)
     # No acceptance_criteria entry: the log reports the switches a turn read,
     # and the criteria no longer have one — they run on every turn.
-    assert entry_labels == ["profile", "persona", "formatting_guide",
-                            "knowledge_calibration", "response_language_gate"]
+    assert entry_labels == ["profile", "persona", "response_language_gate"]
     # Debug context never leaks into the prompt.
     assert "formatting_guide\": " not in captured["user_prompt"]
     assert '"profile"' not in captured["user_prompt"]

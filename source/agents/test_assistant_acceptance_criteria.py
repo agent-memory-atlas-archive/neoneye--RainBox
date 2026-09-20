@@ -31,7 +31,7 @@ from agents.assistant_fakes import scripted_decisions
 from agents.config import ASSISTANT_UUID
 
 KEYS = ("profile.current", "qa.facts_invalidated_at",
-        "profile.current_changed_at", "assistant.formatting_guide")
+        "profile.current_changed_at")
 
 
 @pytest.fixture
@@ -323,8 +323,7 @@ def test_criteria_call_reads_the_settings_comments_decide_reads(room):
     """The formatting guide reaches the criteria call as the comments inside
     user_settings_yaml — the one block rendered for the turn, so the
     criteria and decide prompts carry it byte for byte, derived defaults
-    (metric -> Celsius) included. One switch gates the comments in both."""
-    db.set_setting("assistant.formatting_guide", True)
+    (metric -> Celsius) included."""
     germany = next(e for e in db.profile_templates_entries()
                    if e["name"] == "Germany")["uuid"]
     db.set_current_profile(germany)

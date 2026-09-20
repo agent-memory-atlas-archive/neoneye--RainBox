@@ -186,11 +186,9 @@ turn.
   (`<user_expertise_yaml>`, a bare tag the system prompt declares context —
   self-declared topic rows as a YAML list from
   `user_profile/user_calibration.py`, sharing a 2 700-char guidance budget with
-  the formatting guide, the guide's comments admitted first) — the comments
-  and the calibration block sit behind independent default-off switches
-  (`assistant.formatting_guide`, `assistant.knowledge_calibration`), flipped
-  only after each passes its live release gate; see `profile-guidance.md` —
-  the **user-profile block** (query-independent operator self-model — see
+  the formatting guide, the guide's comments admitted first) — both render
+  on every turn of a selected profile, with no switch; see
+  `profile-guidance.md` — the **user-profile block** (query-independent operator self-model — see
   `memory-architecture.md` §User Profile Block), the **skill block** (active
   procedural skills retrieved for the latest human message; candidates are
   inert), and the current **local time** (so relative reminders resolve in

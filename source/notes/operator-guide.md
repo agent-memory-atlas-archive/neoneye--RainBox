@@ -47,12 +47,10 @@ fallback.
   formatting defaults (dates, first day of week, times, measurement system,
   temperature, number/currency separators, language), and its knowledge
   calibration; explicit requests in a message always override the defaults.
-  The formatting defaults render as comments inside the identity block; they
-  and the calibration block sit behind the default-off
-  `assistant.formatting_guide` and `assistant.knowledge_calibration`
-  settings — enable each only after its live release gate passes. The full
-  verification and enablement runbook (tests → browser → prompt inspection
-  → live evals → gate) is `notes/profile-guidance.md`. Switching
+  The formatting defaults render as comments inside the identity block, and
+  both it and the calibration block are in every turn of a selected profile
+  — there is no switch. The verification runbook (tests → browser → prompt
+  inspection → live evals → gate) is `notes/profile-guidance.md`. Switching
   `profile.current` changes both blocks and posts a one-time notice into
   each room — room history is
   preserved, and the switch is **not** an audience boundary: to hand the
