@@ -59,10 +59,19 @@ def test_tree_save_declares_no_deletes():
     assert "method: 'DELETE'" in b
 
 
-def test_add_repo_modal_has_the_folder_picker():
+def test_add_repo_modal_has_the_folder_picker_for_a_local_browser_only():
+    """The native dialog opens on the server's display, so the button is
+    rendered only for a browser on loopback (the test client is); the path
+    field stays for everyone. No Name field: the node is named after the
+    folder and renamed in place."""
     b = _body()
     assert 'id="git-browse-btn"' in b and 'onclick="gitPickFolder()"' in b
     assert 'id="git-browse-wait"' in b
+    assert 'id="git-repo-path"' in b and 'git-repo-name' not in b
+    with app.test_client() as c:
+        remote = c.get("/git", environ_base={"REMOTE_ADDR": "192.168.1.20"}).get_data(as_text=True)
+    assert 'id="git-repo-path"' in remote
+    assert 'git-browse-btn' not in remote
     for el in ("git-browse", "git-browse-path", "git-browse-list",
                "git-browse-up", "git-browse-use"):
         assert f'id="{el}"' in b, f"missing picker element {el}"

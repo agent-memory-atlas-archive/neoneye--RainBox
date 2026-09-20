@@ -461,11 +461,9 @@ async function gitAddFolderConfirm(){
 }
 // The Name field auto-fills from the Path's last component until the user edits
 // Name themselves; this flag stops the auto-fill once they've typed their own.
-let gitRepoNameEdited = false;
-function gitRepoBasename(p){ return (p || '').split('/').filter(Boolean).pop() || ''; }
+// No Name field: the server names the node after the path's last
+// component, and the click-to-rename heading covers everything else.
 function gitAddRepo(){
-  gitRepoNameEdited = false;
-  document.getElementById('git-repo-name').value = '';
   document.getElementById('git-repo-path').value = '';
   document.getElementById('git-repo-err').textContent = '';
   document.getElementById('git-browse').hidden = true;
@@ -486,6 +484,7 @@ async function gitPickFolder(){
   const err = document.getElementById('git-repo-err');
   const wait = document.getElementById('git-browse-wait');
   const btn = document.getElementById('git-browse-btn');
+  if (!btn) return;                      // remote browser: no button rendered
   err.textContent = '';
   gitPickInFlight = true; btn.disabled = true; wait.hidden = false;
   try {
@@ -581,9 +580,8 @@ function gitBrowseUseCurrent(){
 function gitBrowseUse(path){
   const input = document.getElementById('git-repo-path');
   input.value = path;
-  input.dispatchEvent(new Event('input'));   // auto-fill the name as typing would
   document.getElementById('git-browse').hidden = true;
-  document.getElementById('git-repo-name').focus();
+  input.focus();
 }
 function gitCloseRepoModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
@@ -593,7 +591,6 @@ function gitCloseRepoModal(){
 // a bad path comes back as an inline error instead of a created node. The repo
 // lands in the currently-selected folder (null = root).
 async function gitAddRepoConfirm(){
-  const name = document.getElementById('git-repo-name').value.trim();
   const path = document.getElementById('git-repo-path').value.trim();
   const err = document.getElementById('git-repo-err');
   err.textContent = '';
@@ -602,7 +599,7 @@ async function gitAddRepoConfirm(){
     await gitFlushPendingSave();
     const r = await fetch('/git/api/repos', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name: name, path: path, folderId: gitSelectedFolder}),
+      body: JSON.stringify({path: path, folderId: gitSelectedFolder}),
     });
     const data = await r.json();
     if (!r.ok){ err.textContent = data.error || 'Not a git repository.'; return; }
@@ -1093,8 +1090,7 @@ function gitOpenModalDirty(){
     return document.getElementById('git-folder-input').value.trim() !== '';
   }
   if (!document.getElementById('git-repo-modal').hidden){
-    return document.getElementById('git-repo-name').value.trim() !== ''
-      || document.getElementById('git-repo-path').value.trim() !== '';
+    return document.getElementById('git-repo-path').value.trim() !== '';
   }
   if (!document.getElementById('git-desc-modal').hidden){
     return document.getElementById('git-desc-input').value !== gitDescOrig;
@@ -1141,16 +1137,6 @@ document.getElementById('git-folder-input').addEventListener('keydown', e => {
 });
 document.getElementById('git-repo-path').addEventListener('keydown', e => {
   if (e.key === 'Enter'){ e.preventDefault(); gitAddRepoConfirm(); }
-});
-// Auto-fill Name from the Path's last component while the user types the path,
-// unless they've already edited Name themselves.
-document.getElementById('git-repo-path').addEventListener('input', () => {
-  if (gitRepoNameEdited) return;
-  document.getElementById('git-repo-name').value =
-    gitRepoBasename(document.getElementById('git-repo-path').value.trim());
-});
-document.getElementById('git-repo-name').addEventListener('input', () => {
-  gitRepoNameEdited = true;
 });
 document.getElementById('ui-modal-backdrop').addEventListener('click', gitDismissIfClean);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') gitDismissIfClean(); });

@@ -211,3 +211,12 @@ def test_pick_folder_route_maps_unsupported_to_501_and_flags_a_repo(monkeypatch,
         r = c.post("/git/api/pick-folder", json={"path": "/x"})
     assert r.status_code == 200
     assert r.get_json()["path"] == str(tmp_path) and r.get_json()["isRepo"] is True
+
+
+def test_pick_folder_refuses_a_remote_browser():
+    """A dialog opened for a remote caller would appear on the server's own
+    screen, unattended."""
+    with app.test_client() as c:
+        r = c.post("/git/api/pick-folder", json={"path": ""},
+                   environ_base={"REMOTE_ADDR": "10.0.0.7"})
+    assert r.status_code == 403 and r.get_json()["remote"] is True

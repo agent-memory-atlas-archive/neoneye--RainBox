@@ -19,6 +19,7 @@ import db
 import native_dialog
 
 from .core import app
+from .git_views import request_is_local
 
 
 def _parse_uuid(raw: object) -> UUID | None:
@@ -92,6 +93,11 @@ def git_pick_folder_route() -> tuple[Response, int]:
     `unsupported` when no dialog backend can run here (see
     native_dialog.BACKENDS), which the page takes as its cue to show the
     in-page listing instead."""
+    if not request_is_local():
+        # The dialog would open on the server's screen, not the caller's.
+        return jsonify({"ok": False, "remote": True,
+                        "error": "the folder dialog opens on the server's "
+                                 "own display; type the path instead"}), 403
     data = request.get_json(silent=True) or {}
     start = data.get("path") if isinstance(data, dict) else None
     result = native_dialog.pick_folder(start)

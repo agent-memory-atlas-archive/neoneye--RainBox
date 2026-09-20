@@ -143,11 +143,15 @@ relative or symlinked one, and never one that only the browser checked.
   is a repo, the icon would be noise).
 - **Kebab is minimal**: Rename and Delete only. Creation lives in the tree's
   **+ Folder** / **+ Repo** buttons; there is no Duplicate or Copy-id.
-- **Add repository modal**: Path + optional Name (auto-filled from the path's
-  last component until the user edits it); **Add** POSTs `/git/api/repos` and
-  shows the server's error inline — a node is only created for a verified
-  repo, filed into the currently selected folder. **Browse…** opens the
-  **host's native folder dialog**: `POST /git/api/pick-folder` calls
+- **Add repository modal**: a Path field and **Add**, which POSTs
+  `/git/api/repos` and shows the server's error inline — a node is only
+  created for a verified repo, filed into the currently selected folder and
+  named after the path's last component (the click-to-rename heading covers
+  any other name; there is no Name field). **Browse…** is rendered only for a
+  browser on loopback (`request_is_local`), because it opens the **host's
+  native folder dialog** on the server's own display; the route refuses a
+  remote caller with 403. An operator reaching the page from another
+  computer types the path. The dialog: `POST /git/api/pick-folder` calls
   `native_dialog.pick_folder`, which runs the first available backend from
   a per-platform table (`native_dialog.BACKENDS`: osascript on macOS,
   PowerShell's FolderBrowserDialog on Windows, zenity or kdialog on Linux,

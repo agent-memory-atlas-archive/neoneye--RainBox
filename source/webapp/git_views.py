@@ -8,7 +8,7 @@ disk (no cloning). Mirrors the /cron page; desktop-first.
 """
 from pathlib import Path
 
-from flask import render_template_string
+from flask import request, render_template_string
 
 from .core import app
 
@@ -163,7 +163,7 @@ GIT_TEMPLATE = """
 <div class="ui-modal" id="git-repo-modal" hidden>
   <h3>Add repository</h3>
   <label>Path<input type="text" id="git-repo-path" placeholder="/path/to/existing/repo"></label>
-  <div class="git-browse-toggle"><button type="button" class="btn-cancel" id="git-browse-btn" onclick="gitPickFolder()">Browse…</button> <span class="git-browse-wait" id="git-browse-wait" hidden>Choose the folder in the dialog…</span></div>
+  {% if browse_local %}<div class="git-browse-toggle"><button type="button" class="btn-cancel" id="git-browse-btn" onclick="gitPickFolder()">Browse…</button> <span class="git-browse-wait" id="git-browse-wait" hidden>Choose the folder in the dialog…</span></div>{% endif %}
   <div class="git-browse" id="git-browse" hidden>
     <div class="git-browse-head">
       <button type="button" id="git-browse-up" onclick="gitBrowseUp()" title="Parent folder">&#8593;</button>
@@ -173,7 +173,6 @@ GIT_TEMPLATE = """
     <ul class="git-browse-list" id="git-browse-list"></ul>
     <div class="err" id="git-browse-err"></div>
   </div>
-  <label>Name (optional)<input type="text" id="git-repo-name" placeholder="defaults to the folder name"></label>
   <div class="err" id="git-repo-err"></div>
   <div class="modal-actions">
     <button class="btn-primary" id="git-repo-create" onclick="gitAddRepoConfirm()">Add</button>
@@ -208,6 +207,15 @@ GIT_TEMPLATE = """
 """
 
 
+def request_is_local() -> bool:
+    """Whether the browser is on the same machine as the server. The native
+    folder dialog opens on the server's own display, so it is only offered
+    — and only opened — for a browser on loopback; an operator reaching the
+    page from another computer types the path instead."""
+    return request.remote_addr in ("127.0.0.1", "::1")
+
+
 @app.route("/git")
 def git_page() -> str:
-    return render_template_string(GIT_TEMPLATE, git_js_v=_git_js_version())
+    return render_template_string(GIT_TEMPLATE, git_js_v=_git_js_version(),
+                                  browse_local=request_is_local())
