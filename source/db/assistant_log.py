@@ -328,8 +328,10 @@ def _unaccounted_rows(rows: list[dict], run) -> list[dict]:
 def _inner_calls(step, data: dict) -> list[dict]:
     """The model calls a step made from inside its action, which have no row of
     their own: the criteria revision's inner call. It records `requested_at` +
-    `usage` in the observation payload; older payloads have the usage but no
-    start time."""
+    `usage` in the observation payload, with the prompts it sent and the raw
+    response it got — carried here so the page shows them as it does for
+    every other model call; older payloads have the usage but no start time
+    and no prompts."""
     calls: list[dict] = []
     if "acceptance_criteria" in data or "usage" in data:
         usage = data.get("usage") or {}
@@ -340,7 +342,11 @@ def _inner_calls(step, data: dict) -> list[dict]:
                 duration_ms=usage.get("ms"), anchor=str(step.uuid),
                 model_uuid=data.get("model_uuid"),
                 input_tokens=usage.get("input"),
-                output_tokens=usage.get("output")))
+                output_tokens=usage.get("output"),
+                payload={"system_prompt": data.get("system_prompt"),
+                         "user_prompt": data.get("user_prompt"),
+                         "model_response": data.get("response"),
+                         "reasoning": data.get("reasoning")}))
     return calls
 
 

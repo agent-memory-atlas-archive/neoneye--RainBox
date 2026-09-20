@@ -709,3 +709,29 @@ def test_a_rejected_attempt_carries_what_it_answered():
     assert attempt["payload"]["reasoning"] == "thinking about it"
     assert "not a valid decision" in attempt["payload"]["error"]
     assert attempt["payload"]["feedback"][0]["content"] == "<rejected_response>"
+
+
+def test_the_criteria_revisions_inner_call_carries_its_prompts_and_response():
+    """The revision's model call has no row of its own: the action step
+    records what it sent and got back in the observation payload. The
+    page shows a model call, so it must show that call's prompts and
+    response like every other model call's — a call whose panes are empty
+    reads as a call that recorded nothing."""
+    step = _step("acceptance_criteria", at=10, ms=7000, observation={"data": {
+        "acceptance_criteria": {"processing": "p", "assumptions": "a"},
+        "requested_at": _at(10).isoformat(),
+        "usage": {"input": 9923, "output": 68, "ms": 7011},
+        "model_uuid": str(uuid4()),
+        "system_prompt": "the shared system prompt",
+        "user_prompt": "<current_user_request>revise</current_user_request>",
+        "response": '{"processing": "p", "assumptions": "a"}',
+        "reasoning": None}})
+
+    events = db.run_events(_run(finished=20), [step])
+
+    inner = next(e for e in events if e["variant"] == "inner")
+    assert inner["label"] == "acceptance_criteria revision"
+    assert inner["kpis"]["input_tokens"] == 9923
+    assert inner["payload"]["system_prompt"] == "the shared system prompt"
+    assert inner["payload"]["user_prompt"].startswith("<current_user_request>")
+    assert inner["payload"]["model_response"] == '{"processing": "p", "assumptions": "a"}'
