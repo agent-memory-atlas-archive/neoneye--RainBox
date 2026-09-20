@@ -328,3 +328,18 @@ def test_tree_save_declares_no_deletes():
     b = _body()
     assert "deletes" not in b
     assert "method: 'DELETE'" in b
+
+
+def test_every_modal_card_ships_hidden():
+    """Each overlay must carry `hidden` in the markup: a card without it is
+    visible from the first paint until the script runs and hides it — a
+    flash of an empty popover on every load of /cron."""
+    import re
+    from webapp.core import app
+    with app.test_client() as c:
+        body = c.get("/cron").get_data(as_text=True)
+    cards = re.findall(r'<div[^>]*class="[^"]*\bui-modal\b[^"]*"[^>]*>', body)
+    assert cards
+    for tag in cards:
+        assert re.search(r"\bhidden\b", tag), f"modal card not hidden at render: {tag}"
+    assert re.search(r'id="ui-modal-backdrop"[^>]*\bhidden\b', body)

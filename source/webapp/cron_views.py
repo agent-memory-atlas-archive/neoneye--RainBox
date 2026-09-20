@@ -250,7 +250,7 @@ CRON_TEMPLATE = """
     <div class="cjd-value" id="cjd-health"></div>
   </div>
 </div>
-<div class="builder ui-modal" id="cron-builder">
+<div class="builder ui-modal" id="cron-builder" hidden>
   <h3 id="cron-builder-title"></h3>
   <div class="brow" id="cron-name-row">
     <label>Name <input type="text" id="f-name" placeholder="short title (required)"></label>
