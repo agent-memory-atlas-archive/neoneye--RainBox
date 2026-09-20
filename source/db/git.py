@@ -346,6 +346,40 @@ def git_check_path(path: Any) -> dict[str, Any]:
     return {"ok": True, "path": abspath, "branch": _git_branch(abspath)}
 
 
+def git_browse_dir(path: Any) -> dict[str, Any]:
+    """One level of the filesystem for the Add-repo folder picker: the
+    resolved directory, its parent (None at the root), whether it is itself
+    a repository, and its subdirectories name-sorted, each flagged when it
+    holds a `.git` entry. Files and dot-directories are left out — the
+    picker chooses a repository's folder, nothing else. An empty or missing
+    path browses the home directory. The repo flag is a `.git` existence
+    check, not a git call: a listing of a hundred folders must not spawn a
+    hundred subprocesses; the create endpoint runs the real check on the
+    one path that gets stored."""
+    raw = path if isinstance(path, str) else ""
+    abspath = os.path.realpath(os.path.expanduser(raw.strip() or "~"))
+    if not os.path.isdir(abspath):
+        return {"ok": False, "error": f"no such directory: {abspath}"}
+    try:
+        with os.scandir(abspath) as it:
+            names = sorted(
+                e.name for e in it
+                if e.is_dir(follow_symlinks=True) and not e.name.startswith("."))
+    except OSError as exc:
+        return {"ok": False, "error": f"cannot list {abspath}: {exc}"}
+    parent = os.path.dirname(abspath)
+    return {
+        "ok": True,
+        "path": abspath,
+        "parent": parent if parent != abspath else None,
+        "isRepo": os.path.isdir(os.path.join(abspath, ".git")),
+        "entries": [
+            {"name": n,
+             "isRepo": os.path.isdir(os.path.join(abspath, n, ".git"))}
+            for n in names],
+    }
+
+
 def git_repo_detail(repo_uuid: UUID) -> dict[str, Any] | None:
     """Live snapshot for the repo detail pane: path, existence, whether it is
     still a git repo, current branch, and the root directory listing (all

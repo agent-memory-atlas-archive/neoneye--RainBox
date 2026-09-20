@@ -32,6 +32,7 @@ def test_js_has_core_markers():
     b = _body()
     for marker in ["gitLoadTree", "gitRenderTree", "gitRepoNode",
                    "gitAddRepoConfirm", "/git/api/repos",
+                   "gitBrowseLoad", "/git/api/browse", "gitBrowseUse",
                    "gitFlushPendingSave", "gitLoadRepoDetail", "gitSavePush"]:
         assert marker in b, f"missing JS marker: {marker}"
 
@@ -55,3 +56,11 @@ def test_tree_save_declares_no_deletes():
     b = _body()
     assert "deletes" not in b
     assert "method: 'DELETE'" in b
+
+
+def test_add_repo_modal_has_the_folder_picker():
+    b = _body()
+    assert 'id="git-browse-btn"' in b and 'onclick="gitBrowseToggle()"' in b
+    for el in ("git-browse", "git-browse-path", "git-browse-list",
+               "git-browse-up", "git-browse-use"):
+        assert f'id="{el}"' in b, f"missing picker element {el}"

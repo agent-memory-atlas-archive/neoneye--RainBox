@@ -146,7 +146,15 @@ relative or symlinked one, and never one that only the browser checked.
 - **Add repository modal**: Path + optional Name (auto-filled from the path's
   last component until the user edits it); **Add** POSTs `/git/api/repos` and
   shows the server's error inline — a node is only created for a verified
-  repo, filed into the currently selected folder.
+  repo, filed into the currently selected folder. **Browse…** opens a folder
+  picker inside the modal: one directory level at a time from
+  `GET /git/api/browse?path=` (`db.git_browse_dir` — subfolders only,
+  dot-directories excluded, each flagged by a cheap `.git` existence check
+  rather than a git call, so a listing never spawns subprocesses), starting
+  at the typed path when it is a directory, else at home. Clicking a folder
+  descends, the arrow goes up, and **Use** on a flagged folder (or on the
+  current folder when it is a repo) fills Path and closes the picker; the
+  create endpoint still runs the real `rev-parse` check on what gets stored.
 - **Right pane, folder view**: the selected subtree (or the whole tree at
   "All repositories") as a depth-indented table — Name, Type (Folder/Repo),
   Path, Description, Open — plus the click-to-rename heading and the

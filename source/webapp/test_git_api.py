@@ -160,3 +160,38 @@ def test_delete_unknown_uuid_404():
     c = app.test_client()
     assert c.delete(f"/git/api/repos/{uuid4()}").status_code == 404
     assert c.delete(f"/git/api/folders/{uuid4()}").status_code == 404
+
+
+def test_browse_lists_subfolders_with_a_repo_flag(tmp_path):
+    """The folder picker's one-level listing: subdirectories only, sorted,
+    dot-directories and files left out, each flagged when it holds a .git,
+    and the directory itself flagged the same way."""
+    _init_repo(tmp_path / "repo_b") if (tmp_path / "repo_b").mkdir() is None else None
+    (tmp_path / "plain_a").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "file.txt").write_text("x")
+    a = db.make_app()
+    db.init_db(a)
+    with a.app_context():
+        res = db.git_browse_dir(str(tmp_path))
+        nested = db.git_browse_dir(str(tmp_path / "repo_b"))
+        missing = db.git_browse_dir(str(tmp_path / "nope"))
+        home = db.git_browse_dir("")
+    assert res["ok"] is True and res["isRepo"] is False
+    assert res["path"] == str(tmp_path.resolve())
+    assert res["parent"] == str(tmp_path.resolve().parent)
+    assert res["entries"] == [{"name": "plain_a", "isRepo": False},
+                              {"name": "repo_b", "isRepo": True}]
+    assert nested["isRepo"] is True and nested["entries"] == []
+    assert missing["ok"] is False and "no such directory" in missing["error"]
+    assert home["ok"] is True and home["path"]
+
+
+def test_browse_route(tmp_path):
+    (tmp_path / "sub").mkdir()
+    with app.test_client() as c:
+        ok = c.get("/git/api/browse", query_string={"path": str(tmp_path)})
+        bad = c.get("/git/api/browse", query_string={"path": str(tmp_path / "x")})
+    assert ok.status_code == 200
+    assert ok.get_json()["entries"] == [{"name": "sub", "isRepo": False}]
+    assert bad.status_code == 400 and bad.get_json()["ok"] is False

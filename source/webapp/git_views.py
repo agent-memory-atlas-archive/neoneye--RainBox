@@ -97,6 +97,18 @@ GIT_TEMPLATE = """
   /* Button row + button colors come from the shared ui-modal.css
      (.modal-actions / .btn-primary / .btn-cancel). Only .err is page-local. */
   .ui-modal .err{color:#dc2626;font-size:0.85rem;min-height:1em;margin-top:6px}
+  .git-browse-toggle{margin:-0.4em 0 0.8em}
+  .git-browse{border:1px solid #d1d5db;border-radius:6px;margin-bottom:0.8em;font-size:0.9rem}
+  .git-browse-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #e5e7eb;background:#f9fafb}
+  .git-browse-head button{padding:2px 8px}
+  .git-browse-path{flex:1;font-family:ui-monospace,monospace;font-size:0.82rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+  .git-browse-list{list-style:none;margin:0;padding:0;max-height:220px;overflow-y:auto}
+  .git-browse-list li{display:flex;align-items:center;gap:6px;padding:5px 8px;cursor:pointer;border-bottom:1px solid #f3f4f6}
+  .git-browse-list li:hover{background:#eef2ff}
+  .git-browse-list li .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .git-browse-list li .badge{font-size:0.72rem;background:#dcfce7;color:#166534;border-radius:4px;padding:1px 6px}
+  .git-browse-list li .git-browse-use{padding:1px 8px;font-size:0.8rem}
+  .git-browse-empty{padding:8px;color:#6b7280}
   .git-toast{position:fixed;bottom:20px;right:20px;background:#111827;color:#fff;padding:10px 14px;border-radius:6px;opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none}
   .git-toast.show{opacity:1;transform:none}
 </style>
@@ -150,6 +162,16 @@ GIT_TEMPLATE = """
 <div class="ui-modal" id="git-repo-modal" hidden>
   <h3>Add repository</h3>
   <label>Path<input type="text" id="git-repo-path" placeholder="/path/to/existing/repo"></label>
+  <div class="git-browse-toggle"><button type="button" class="btn-cancel" id="git-browse-btn" onclick="gitBrowseToggle()">Browse…</button></div>
+  <div class="git-browse" id="git-browse" hidden>
+    <div class="git-browse-head">
+      <button type="button" id="git-browse-up" onclick="gitBrowseUp()" title="Parent folder">&#8593;</button>
+      <span class="git-browse-path" id="git-browse-path"></span>
+      <button type="button" class="btn-primary git-browse-use" id="git-browse-use" onclick="gitBrowseUseCurrent()" hidden>Use</button>
+    </div>
+    <ul class="git-browse-list" id="git-browse-list"></ul>
+    <div class="err" id="git-browse-err"></div>
+  </div>
   <label>Name (optional)<input type="text" id="git-repo-name" placeholder="defaults to the folder name"></label>
   <div class="err" id="git-repo-err"></div>
   <div class="modal-actions">

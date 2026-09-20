@@ -82,6 +82,17 @@ def git_create_folder_route() -> tuple[Response, int]:
                     "version": db.git_tree_version()}), 201
 
 
+@app.route("/git/api/browse")
+def git_browse_route() -> tuple[Response, int]:
+    """One directory level for the Add-repo folder picker (`?path=`; empty
+    browses home). Directories only, dot-directories excluded, each flagged
+    when it holds a .git — see db.git_browse_dir."""
+    listing = db.git_browse_dir(request.args.get("path", ""))
+    if not listing.get("ok"):
+        return jsonify(listing), 400
+    return jsonify(listing), 200
+
+
 @app.route("/git/api/repos", methods=["POST"])
 def git_create_repo_route() -> tuple[Response, int]:
     """Create one repo node. The path is re-validated here (not just in the

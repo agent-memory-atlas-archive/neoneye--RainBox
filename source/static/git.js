@@ -468,9 +468,93 @@ function gitAddRepo(){
   document.getElementById('git-repo-name').value = '';
   document.getElementById('git-repo-path').value = '';
   document.getElementById('git-repo-err').textContent = '';
+  document.getElementById('git-browse').hidden = true;
   document.getElementById('ui-modal-backdrop').hidden = false;
   document.getElementById('git-repo-modal').hidden = false;
   document.getElementById('git-repo-path').focus();
+}
+
+// ---- folder picker inside the Add-repo modal ----
+// One level at a time from the server (GET /git/api/browse): subfolders
+// only, each with a badge when it holds a .git. Clicking a folder descends;
+// "Use" fills the Path field with a repo folder and closes the picker. The
+// picker starts at the typed path when that is a directory, else at home.
+let gitBrowsePath = null;
+function gitBrowseToggle(){
+  const pane = document.getElementById('git-browse');
+  if (!pane.hidden){ pane.hidden = true; return; }
+  pane.hidden = false;
+  gitBrowseLoad(document.getElementById('git-repo-path').value.trim());
+}
+async function gitBrowseLoad(path){
+  const err = document.getElementById('git-browse-err');
+  err.textContent = '';
+  let data;
+  try {
+    const r = await fetch('/git/api/browse?path=' + encodeURIComponent(path || ''));
+    data = await r.json();
+    if (!r.ok){
+      // A typed path that is not a directory: fall back to home rather
+      // than show an empty picker.
+      if (path){ return gitBrowseLoad(''); }
+      err.textContent = data.error || 'Could not list the folder.';
+      return;
+    }
+  } catch (e) {
+    err.textContent = 'Could not reach the server.';
+    return;
+  }
+  gitBrowsePath = data.path;
+  document.getElementById('git-browse-path').textContent = data.path;
+  document.getElementById('git-browse-path').title = data.path;
+  document.getElementById('git-browse-up').disabled = !data.parent;
+  document.getElementById('git-browse-use').hidden = !data.isRepo;
+  const list = document.getElementById('git-browse-list');
+  list.textContent = '';
+  if (!data.entries.length){
+    const li = document.createElement('li');
+    li.className = 'git-browse-empty';
+    li.textContent = 'No subfolders';
+    li.style.cursor = 'default';
+    list.appendChild(li);
+  }
+  for (const entry of data.entries){
+    const li = document.createElement('li');
+    const full = data.path.replace(/\/$/, '') + '/' + entry.name;
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = entry.name;
+    li.appendChild(name);
+    if (entry.isRepo){
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = 'git';
+      li.appendChild(badge);
+      const use = document.createElement('button');
+      use.type = 'button';
+      use.className = 'btn-primary git-browse-use';
+      use.textContent = 'Use';
+      use.onclick = (ev) => { ev.stopPropagation(); gitBrowseUse(full); };
+      li.appendChild(use);
+    }
+    li.onclick = () => gitBrowseLoad(full);
+    list.appendChild(li);
+  }
+}
+function gitBrowseUp(){
+  if (!gitBrowsePath) return;
+  const parent = gitBrowsePath.replace(/\/[^/]*$/, '') || '/';
+  gitBrowseLoad(parent);
+}
+function gitBrowseUseCurrent(){
+  if (gitBrowsePath) gitBrowseUse(gitBrowsePath);
+}
+function gitBrowseUse(path){
+  const input = document.getElementById('git-repo-path');
+  input.value = path;
+  input.dispatchEvent(new Event('input'));   // auto-fill the name as typing would
+  document.getElementById('git-browse').hidden = true;
+  document.getElementById('git-repo-name').focus();
 }
 function gitCloseRepoModal(){
   document.getElementById('ui-modal-backdrop').hidden = true;
