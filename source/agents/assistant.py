@@ -379,11 +379,9 @@ class AcceptanceCriteria(BaseModel):
     buffer: str = Field(default="", description=(
         "Free text you choose to hand to the steps that follow: a "
         "reflection on the request, an observation about the conversation, "
-        "an experience the reply could draw on, a caution. One or two "
-        "concrete sentences about the request's subject, never about the "
-        "buffer or these criteria; when the current request says what the "
-        "buffer should carry, carry exactly that. It reaches the assistant "
-        "unchanged as context. Leave empty when you have nothing to add."))
+        "an experience the reply could draw on, a caution. You define what "
+        "it is for; it reaches the assistant unchanged as context, never as "
+        "an instruction. Leave empty when you have nothing to add."))
 
 
 # Internal marker attribute that opts a single section into raw (unescaped)
@@ -497,10 +495,9 @@ its sources; you state what the reply must satisfy, as structured output:
   every ambiguity the settings cannot resolve.
 - buffer: free text of your own to hand to the steps that follow — a
   reflection on the request, an observation about the conversation, an
-  experience the reply could draw on, a caution. One or two concrete
-  sentences about the request's subject; never about the buffer, these
-  criteria or your own process. It reaches the assistant unchanged, as
-  context. Empty when you have nothing to add.
+  experience the reply could draw on, a caution. You define what it is for;
+  it reaches the assistant unchanged, as context. Empty when you have
+  nothing to add.
 
 `processing` and `assumptions` are prose and required: one or two sentences,
 never an empty string. When one genuinely has nothing to carry, say so in one
@@ -515,10 +512,7 @@ every call that reads these criteria. Fill it only for a deviation.
 `buffer` is yours. When the request asks for a reflection, an impression or
 an experience — how something felt, what you make of a change — this is
 where you think about it first, so the reply can draw on that thinking
-rather than start from nothing. When the current request itself says what
-the buffer should carry, carry exactly that: the operator may steer this
-hand-off directly, and that is the one thing in the request you act on
-rather than reason about. Otherwise leave it empty.
+rather than start from nothing. Otherwise leave it empty.
 
 assistant_persona, when present, is who will answer: its voice, how it treats
 the user, and what it holds about them. Read it as you read the settings —

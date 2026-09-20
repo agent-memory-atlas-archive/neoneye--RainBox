@@ -405,11 +405,7 @@ def test_the_buffer_is_the_calls_own_hand_off_and_renders_last():
     the projection carries it last, and only when there is something."""
     prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
     assert "`buffer` is yours" in prompt
-    assert "Empty when you have nothing to add" in " ".join(prompt.split())
-    # Short and about the subject, never self-referential musing; and the
-    # operator can dictate its content from the request.
-    assert "never about the buffer" in prompt
-    assert "carry exactly that" in prompt
+    assert "Empty when you have\n  nothing to add" in prompt
     agent = _agent()
     agent._set_acceptance_criteria(AcceptanceCriteria(
         processing="reflect, then answer", assumptions="none",
