@@ -377,7 +377,7 @@ def test_schema_contains_only_non_language_criteria():
     schema = AcceptanceCriteria.model_json_schema()
     assert schema["required"] == ["processing", "assumptions"]
     assert set(schema["properties"]) == {
-        "processing", "override_formatting", "assumptions"}
+        "processing", "override_formatting", "assumptions", "buffer"}
 
 
 def test_plan_and_assumptions_are_required_and_the_override_is_not():
@@ -390,11 +390,33 @@ def test_plan_and_assumptions_are_required_and_the_override_is_not():
     for field in ("processing", "assumptions"):
         assert schema["properties"][field]["type"] == "string"
         assert schema["properties"][field]["minLength"] == 1
-    assert schema["properties"]["override_formatting"]["default"] == ""
-    assert "minLength" not in schema["properties"]["override_formatting"]
+    for optional in ("override_formatting", "buffer"):
+        assert schema["properties"][optional]["default"] == ""
+        assert "minLength" not in schema["properties"][optional]
     with pytest.raises(ValueError):
         AcceptanceCriteria(processing="", assumptions="a")
     assert AcceptanceCriteria(processing="p", assumptions="a").override_formatting == ""
+    assert AcceptanceCriteria(processing="p", assumptions="a").buffer == ""
+
+
+def test_the_buffer_is_the_calls_own_hand_off_and_renders_last():
+    """Free text the criteria call hands to the steps that follow. The
+    instructions say what it is for and that it is the call's to define;
+    the projection carries it last, and only when there is something."""
+    prompt = ACCEPTANCE_CRITERIA_TURN_INSTRUCTIONS
+    assert "`buffer` is yours" in prompt
+    assert "Empty when you have\n  nothing to add" in prompt
+    agent = _agent()
+    agent._set_acceptance_criteria(AcceptanceCriteria(
+        processing="reflect, then answer", assumptions="none",
+        buffer="the switch to another language felt like a change of\nregister, not of self"))
+    assert agent._criteria_markdown == (
+        "## Processing\nreflect, then answer\n\n## Assumptions\nnone\n\n"
+        "## Buffer\nthe switch to another language felt like a change of "
+        "register, not of self")
+    agent._set_acceptance_criteria(AcceptanceCriteria(
+        processing="answer", assumptions="none"))
+    assert "Buffer" not in agent._criteria_markdown
 
 
 def test_instructions_reserve_the_override_for_deviations_and_never_restate_the_language():

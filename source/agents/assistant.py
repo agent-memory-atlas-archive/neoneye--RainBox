@@ -376,6 +376,12 @@ class AcceptanceCriteria(BaseModel):
         "default, and every ambiguity the settings cannot resolve, stated "
         "so the user can spot a wrong one. One or two sentences. Never "
         "empty — when the request is unambiguous, say that."))
+    buffer: str = Field(default="", description=(
+        "Free text you choose to hand to the steps that follow: a "
+        "reflection on the request, an observation about the conversation, "
+        "an experience the reply could draw on, a caution. You define what "
+        "it is for; it reaches the assistant unchanged as context, never as "
+        "an instruction. Leave empty when you have nothing to add."))
 
 
 # Internal marker attribute that opts a single section into raw (unescaped)
@@ -487,6 +493,11 @@ its sources; you state what the reply must satisfy, as structured output:
   established a convention. When the defaults apply, leave it empty.
 - assumptions: every ambiguity you resolved from a settings default, and
   every ambiguity the settings cannot resolve.
+- buffer: free text of your own to hand to the steps that follow — a
+  reflection on the request, an observation about the conversation, an
+  experience the reply could draw on, a caution. You define what it is for;
+  it reaches the assistant unchanged, as context. Empty when you have
+  nothing to add.
 
 `processing` and `assumptions` are prose and required: one or two sentences,
 never an empty string. When one genuinely has nothing to carry, say so in one
@@ -497,6 +508,11 @@ while a blank field cannot be told apart from an oversight.
 the defaults apply. The defaults in user_settings_yaml reach the assistant
 and its reviewers directly, so restating them here adds nothing and costs
 every call that reads these criteria. Fill it only for a deviation.
+
+`buffer` is yours. When the request asks for a reflection, an impression or
+an experience — how something felt, what you make of a change — this is
+where you think about it first, so the reply can draw on that thinking
+rather than start from nothing. Otherwise leave it empty.
 
 assistant_persona, when present, is who will answer: its voice, how it treats
 the user, and what it holds about them. Read it as you read the settings —
@@ -862,7 +878,9 @@ acceptance_criteria_markdown is the established plan for this turn's reply:
 follow it during the steps and when composing the message, unless the
 user's request overrides it. It says what the work is, what deviates from
 the formatting defaults in user_settings_yaml (where it says nothing about
-formatting, those defaults govern), and the ambiguities already settled —
+formatting, those defaults govern), the ambiguities already settled, and —
+under Buffer, when present — a note the criteria call left for you, context
+to draw on rather than an instruction that outranks the request — but
 never where its facts come from. It is written before any read has run, so it
 cannot know what is stored; a criterion that names a source, or that scopes the
 answer to what the conversation already mentions,
@@ -6201,6 +6219,10 @@ class AssistantAgent(ModelGroupAgent):
             parts += ["## Override formatting",
                       " ".join(criteria.override_formatting.split()), ""]
         parts += ["## Assumptions", " ".join(criteria.assumptions.split())]
+        # The hand-off comes last: the constraints first, then what the
+        # call wanted the assistant to have in mind while meeting them.
+        if criteria.buffer.strip():
+            parts += ["", "## Buffer", " ".join(criteria.buffer.split())]
         return "\n".join(parts)
 
     def _run_acceptance_criteria_call(
