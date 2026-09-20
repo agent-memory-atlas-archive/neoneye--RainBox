@@ -879,9 +879,9 @@ follow it during the steps and when composing the message, unless the
 user's request overrides it. It says what the work is, what deviates from
 the formatting defaults in user_settings_yaml (where it says nothing about
 formatting, those defaults govern), the ambiguities already settled, and —
-under Buffer, when present — a note the criteria call left for you: context
-to draw on, never an instruction that outranks the request. It never says
-where the facts come from. It is written before any read has run, so it
+under Buffer, when present — a note the criteria call left for you, context
+to draw on rather than an instruction that outranks the request — but
+never where its facts come from. It is written before any read has run, so it
 cannot know what is stored; a criterion that names a source, or that scopes the
 answer to what the conversation already mentions,
 does not satisfy the read requirement above and is not a reason to skip a
