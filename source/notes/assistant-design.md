@@ -502,12 +502,6 @@ One structured call returns an `AcceptanceCriteria`:
   stated so the operator can spot a wrong one. Assumptions are made only
   where the settings provide a default; otherwise the ambiguity is recorded
   as unresolved and the normal `ask_clarifying_question` path handles it.
-- `buffer` — free text the call hands to the steps that follow, optional
-  and empty by default: a reflection on the request, an observation, an
-  experience the reply can draw on, a caution. The call defines what it is
-  for; the projection renders it last, as `## Buffer`, only when non-empty,
-  and the system prompt names it as context the criteria call left for the
-  assistant, never an instruction that outranks the request.
 
 `processing` and `assumptions` are required, non-empty **strings**, not
 lists. A list of terse fragments invites one fragment and an empty sibling:
