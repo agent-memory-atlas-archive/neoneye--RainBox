@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -344,6 +345,68 @@ def git_check_path(path: Any) -> dict[str, Any]:
     if inside.returncode != 0 or inside.stdout.strip() != "true":
         return {"ok": False, "error": "not a git repository"}
     return {"ok": True, "path": abspath, "branch": _git_branch(abspath)}
+
+
+# The native macOS folder dialog, run by the server process — which is the
+# operator's own machine, since this is a local app. A web page's own picker
+# cannot return an absolute path (the browser withholds it by design), so
+# the dialog has to be opened server-side and the chosen path handed back.
+# The script reads the start folder from argv rather than from an
+# interpolated string, so a path with quotes or backslashes never reaches
+# the AppleScript source. `activate` brings the dialog in front of the
+# browser the operator clicked in.
+_PICK_FOLDER_SCRIPT = """\
+on run argv
+    activate
+    set startPath to item 1 of argv
+    try
+        set startFolder to POSIX file startPath as alias
+    on error
+        set startFolder to path to home folder
+    end try
+    set chosen to choose folder with prompt "Select the folder that contains the repository" default location startFolder
+    return POSIX path of chosen
+end run
+"""
+# Long: the dialog stays up until the operator chooses or cancels. The
+# request thread waits with it; the server keeps answering other requests.
+_PICK_FOLDER_TIMEOUT = 600
+
+
+def git_pick_folder_native(start: Any = None, *,
+                           runner: Any = subprocess.run) -> dict[str, Any]:
+    """Open the native folder dialog and return the operator's choice.
+
+    {ok, path, isRepo} on a choice; {ok: False, cancelled: True} when the
+    dialog was dismissed; {ok: False, unsupported: True, error} where there
+    is no native dialog to open (not macOS, or osascript missing), which is
+    the caller's cue to fall back to the in-page listing. `runner` is the
+    subprocess seam for tests."""
+    if sys.platform != "darwin":
+        return {"ok": False, "unsupported": True,
+                "error": "the native folder dialog is macOS only"}
+    raw = start if isinstance(start, str) else ""
+    start_dir = os.path.realpath(os.path.expanduser(raw.strip() or "~"))
+    if not os.path.isdir(start_dir):
+        start_dir = os.path.expanduser("~")
+    try:
+        proc = runner(["osascript", "-", start_dir], input=_PICK_FOLDER_SCRIPT,
+                      capture_output=True, text=True,
+                      timeout=_PICK_FOLDER_TIMEOUT)
+    except FileNotFoundError:
+        return {"ok": False, "unsupported": True, "error": "osascript not found"}
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "cancelled": True,
+                "error": "the folder dialog timed out"}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"ok": False, "error": f"folder dialog failed: {exc}"}
+    if proc.returncode != 0:
+        if "-128" in proc.stderr or "canceled" in proc.stderr.lower():
+            return {"ok": False, "cancelled": True}
+        return {"ok": False, "error": proc.stderr.strip() or "folder dialog failed"}
+    chosen = os.path.realpath(proc.stdout.strip().rstrip("/") or "/")
+    return {"ok": True, "path": chosen,
+            "isRepo": os.path.isdir(os.path.join(chosen, ".git"))}
 
 
 def git_browse_dir(path: Any) -> dict[str, Any]:

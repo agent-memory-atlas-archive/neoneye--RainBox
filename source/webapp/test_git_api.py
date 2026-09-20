@@ -5,6 +5,7 @@ the real app (webapp.core.app); DB seeding uses a db.make_app() context — both
 hit the same database, so a committed row is visible to the request.
 """
 import subprocess
+from types import SimpleNamespace
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -195,3 +196,52 @@ def test_browse_route(tmp_path):
     assert ok.status_code == 200
     assert ok.get_json()["entries"] == [{"name": "sub", "isRepo": False}]
     assert bad.status_code == 400 and bad.get_json()["ok"] is False
+
+
+def _fake_osascript(returncode, stdout="", stderr=""):
+    calls = []
+
+    def runner(argv, **kw):
+        calls.append((argv, kw))
+        return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+    return runner, calls
+
+
+def test_native_pick_folder_returns_the_choice_and_cancel_and_unsupported(
+        tmp_path, monkeypatch):
+    """The native dialog is driven through osascript with the start folder
+    passed as an argument, never interpolated into the script; a choice comes
+    back resolved with its repo flag, a cancel (-128) is not an error, and a
+    non-macOS platform is the fallback cue."""
+    (tmp_path / ".git").mkdir()
+    monkeypatch.setattr(db.git.sys, "platform", "darwin")
+    runner, calls = _fake_osascript(0, stdout=str(tmp_path) + "/\n")
+    res = db.git_pick_folder_native(str(tmp_path), runner=runner)
+    assert res == {"ok": True, "path": str(tmp_path.resolve()), "isRepo": True}
+    argv, kw = calls[0]
+    assert argv == ["osascript", "-", str(tmp_path.resolve())]
+    assert "choose folder" in kw["input"] and str(tmp_path) not in kw["input"]
+
+    runner, _ = _fake_osascript(1, stderr="execution error: User canceled. (-128)")
+    assert db.git_pick_folder_native(None, runner=runner) == {"ok": False, "cancelled": True}
+
+    runner, calls = _fake_osascript(0, stdout="/tmp\n")
+    db.git_pick_folder_native(str(tmp_path / "missing"), runner=runner)
+    assert calls[0][0][2] == db.git.os.path.expanduser("~")   # bad start → home
+
+    monkeypatch.setattr(db.git.sys, "platform", "linux")
+    res = db.git_pick_folder_native(None, runner=runner)
+    assert res["ok"] is False and res["unsupported"] is True
+
+
+def test_pick_folder_route_maps_unsupported_to_501(monkeypatch):
+    monkeypatch.setattr(db, "git_pick_folder_native",
+                        lambda start: {"ok": False, "unsupported": True, "error": "x"})
+    with app.test_client() as c:
+        r = c.post("/git/api/pick-folder", json={"path": ""})
+    assert r.status_code == 501 and r.get_json()["unsupported"] is True
+    monkeypatch.setattr(db, "git_pick_folder_native",
+                        lambda start: {"ok": True, "path": "/r", "isRepo": True})
+    with app.test_client() as c:
+        r = c.post("/git/api/pick-folder", json={"path": "/x"})
+    assert r.status_code == 200 and r.get_json()["path"] == "/r"

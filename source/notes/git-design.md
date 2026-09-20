@@ -146,14 +146,19 @@ relative or symlinked one, and never one that only the browser checked.
 - **Add repository modal**: Path + optional Name (auto-filled from the path's
   last component until the user edits it); **Add** POSTs `/git/api/repos` and
   shows the server's error inline — a node is only created for a verified
-  repo, filed into the currently selected folder. **Browse…** opens a folder
-  picker inside the modal: one directory level at a time from
-  `GET /git/api/browse?path=` (`db.git_browse_dir` — subfolders only,
-  dot-directories excluded, each flagged by a cheap `.git` existence check
-  rather than a git call, so a listing never spawns subprocesses), starting
-  at the typed path when it is a directory, else at home. Clicking a folder
-  descends, the arrow goes up, and **Use** on a flagged folder (or on the
-  current folder when it is a repo) fills Path and closes the picker; the
+  repo, filed into the currently selected folder. **Browse…** opens the
+  **native macOS folder dialog**: `POST /git/api/pick-folder` runs
+  `osascript` (`db.git_pick_folder_native`, the AppleScript `choose folder`
+  with the start folder passed as an argument, never interpolated) on the
+  server — which is the operator's own machine — and answers with the
+  chosen POSIX path; a page's own picker cannot return an absolute path.
+  The request waits while the dialog is up (ten-minute cap); cancel is a
+  200 with `cancelled`, not an error. Where no native dialog exists (not
+  macOS, 501 with `unsupported`) the page falls back to an in-page listing:
+  one directory level at a time from `GET /git/api/browse?path=`
+  (`db.git_browse_dir` — subfolders only, dot-directories excluded, each
+  flagged by a cheap `.git` existence check rather than a git call), click
+  to descend, arrow to go up, **Use** on a flagged folder. Either way the
   create endpoint still runs the real `rev-parse` check on what gets stored.
 - **Right pane, folder view**: the selected subtree (or the whole tree at
   "All repositories") as a depth-indented table — Name, Type (Folder/Repo),

@@ -82,6 +82,20 @@ def git_create_folder_route() -> tuple[Response, int]:
                     "version": db.git_tree_version()}), 201
 
 
+@app.route("/git/api/pick-folder", methods=["POST"])
+def git_pick_folder_route() -> tuple[Response, int]:
+    """Open the native folder dialog on the server's own display (this is a
+    local app) and answer with the chosen path. 200 with `cancelled` when
+    dismissed; 501 with `unsupported` where no native dialog exists, which
+    the page takes as its cue to show the in-page listing instead."""
+    data = request.get_json(silent=True) or {}
+    start = data.get("path") if isinstance(data, dict) else None
+    result = db.git_pick_folder_native(start)
+    if result.get("unsupported"):
+        return jsonify(result), 501
+    return jsonify(result), 200
+
+
 @app.route("/git/api/browse")
 def git_browse_route() -> tuple[Response, int]:
     """One directory level for the Add-repo folder picker (`?path=`; empty

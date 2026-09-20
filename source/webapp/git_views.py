@@ -97,7 +97,8 @@ GIT_TEMPLATE = """
   /* Button row + button colors come from the shared ui-modal.css
      (.modal-actions / .btn-primary / .btn-cancel). Only .err is page-local. */
   .ui-modal .err{color:#dc2626;font-size:0.85rem;min-height:1em;margin-top:6px}
-  .git-browse-toggle{margin:-0.4em 0 0.8em}
+  .git-browse-toggle{margin:-0.4em 0 0.8em;display:flex;align-items:center;gap:8px}
+  .git-browse-wait{color:#6b7280;font-size:0.85rem}
   .git-browse{border:1px solid #d1d5db;border-radius:6px;margin-bottom:0.8em;font-size:0.9rem}
   .git-browse-head{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid #e5e7eb;background:#f9fafb}
   .git-browse-head button{padding:2px 8px}
@@ -162,7 +163,7 @@ GIT_TEMPLATE = """
 <div class="ui-modal" id="git-repo-modal" hidden>
   <h3>Add repository</h3>
   <label>Path<input type="text" id="git-repo-path" placeholder="/path/to/existing/repo"></label>
-  <div class="git-browse-toggle"><button type="button" class="btn-cancel" id="git-browse-btn" onclick="gitBrowseToggle()">Browse…</button></div>
+  <div class="git-browse-toggle"><button type="button" class="btn-cancel" id="git-browse-btn" onclick="gitPickFolder()">Browse…</button> <span class="git-browse-wait" id="git-browse-wait" hidden>Choose the folder in the dialog…</span></div>
   <div class="git-browse" id="git-browse" hidden>
     <div class="git-browse-head">
       <button type="button" id="git-browse-up" onclick="gitBrowseUp()" title="Parent folder">&#8593;</button>

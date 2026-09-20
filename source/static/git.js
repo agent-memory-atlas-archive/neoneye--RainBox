@@ -475,10 +475,39 @@ function gitAddRepo(){
 }
 
 // ---- folder picker inside the Add-repo modal ----
-// One level at a time from the server (GET /git/api/browse): subfolders
-// only, each with a badge when it holds a .git. Clicking a folder descends;
-// "Use" fills the Path field with a repo folder and closes the picker. The
-// picker starts at the typed path when that is a directory, else at home.
+// Browse… asks the server to open the NATIVE folder dialog (POST
+// /git/api/pick-folder): the server is this machine, and a page's own
+// picker cannot return an absolute path. The dialog blocks that one
+// request until the operator chooses or cancels. Where the server has no
+// native dialog (501), the in-page listing below takes over.
+let gitPickInFlight = false;
+async function gitPickFolder(){
+  if (gitPickInFlight) return;
+  const err = document.getElementById('git-repo-err');
+  const wait = document.getElementById('git-browse-wait');
+  const btn = document.getElementById('git-browse-btn');
+  err.textContent = '';
+  gitPickInFlight = true; btn.disabled = true; wait.hidden = false;
+  try {
+    const r = await fetch('/git/api/pick-folder', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: document.getElementById('git-repo-path').value.trim()}),
+    });
+    const data = await r.json();
+    if (r.status === 501){ gitBrowseToggle(); return; }
+    if (data.ok){ gitBrowseUse(data.path); return; }
+    if (!data.cancelled) err.textContent = data.error || 'Could not open the folder dialog.';
+  } catch (e) {
+    err.textContent = 'Could not reach the server.';
+  } finally {
+    gitPickInFlight = false; btn.disabled = false; wait.hidden = true;
+  }
+}
+// The in-page fallback: one level at a time from the server (GET
+// /git/api/browse), subfolders only, each with a badge when it holds a
+// .git. Clicking a folder descends; "Use" fills the Path field with a repo
+// folder and closes the picker. It starts at the typed path when that is a
+// directory, else at home.
 let gitBrowsePath = null;
 function gitBrowseToggle(){
   const pane = document.getElementById('git-browse');
