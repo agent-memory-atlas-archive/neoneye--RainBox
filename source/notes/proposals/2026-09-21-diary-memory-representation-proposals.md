@@ -1,18 +1,34 @@
 # Representing a Long-Running Diary for AI Memory
 
 **Status:** Proposal. The diary-specific components below are not built.
-**Date:** 2026-09-21 (revision 3)
+**Date:** 2026-09-21 (revision 4)
 **Relates to:** [memory architecture](../memory-architecture.md),
 [Q&A system](../qa-system.md),
 [recall and retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
 [memory design patterns](2026-06-30-memory-design-patterns.md),
-[eval loop](../eval-loop.md).
+[eval loop](../eval-loop.md),
+[assistant design](../assistant-design.md) §Run summarizer.
 
 **Recommendation:** Start with versioned source passages, exact and lexical
 search, and passage embeddings. Return cited source text. Add event extraction,
 reviewable belief proposals, and thread navigation only when they improve
 measured recall. Reuse RainBox's governed belief store; do not turn a diary
 import into automatic belief confirmation.
+
+**Revision 4 — the real format, addressees, and the assistant's own diary.**
+Revisions 1–3 assumed a folder of dated Markdown files. The diary is plain
+text with a fixed grammar: a date line, then time-stamped entries. That makes
+the split exact, dates every entry to the minute, and removes the heading
+heuristics. Revision 3 also under-weighted the diary's hardest property: many
+entries are instructions the operator gave to an agent (slash commands,
+imperatives, goals for a session) sitting beside personal notes, ideas and
+other people's requests; an earlier attempt by another model conflated the
+operator's goals with instructions to the agent. Every event now carries an
+`addressee`, with one rule: an entry addressed to an agent is a record that a
+command was given, never a command and never a belief. The revision also
+lets inferred sensitivity narrow but never widen source policy, adds the
+assistant's own diary in the same format, and adds the eval families that
+check all of this.
 
 **Revision 3 — substantive corrections.** Revision 2 established the useful
 split between source passages and inferred beliefs, but overstated what the
@@ -25,11 +41,50 @@ in git.
 
 ## The problem and the answer contract
 
-The input is a folder of dated Markdown files, appended to and occasionally
-corrected by the operator over years. Entries can mix languages, observations,
-project notes, debugging sessions, instructions previously given to agents,
-other people's feedback, ideas, tasks, and exact technical strings. Ingestion
-never edits these files. All examples below are synthetic.
+The input is plain text the operator has appended to for years and
+occasionally corrects. Its grammar is fixed and small: a line holding one
+date, `YYYYMMDD`, then entries each opened by a time line — a start time
+`HHhMM` or a range `HHhMM - HHhMM` — followed by free text until the next
+time line or date line. Nothing else is structured. A synthetic day in
+that shape:
+
+```text
+20270312
+Woke at 07h10. Slept badly; the dog next door barked until two.
+
+09h30 - 10h00
+Physiotherapy exercises.
+
+10h15
+reread the threat model
+https://example.org/notes/threat-model
+
+11h02
+find the two papers on sparse memory tables and write a note about them.
+no need to download the models, there is no disk for it.
+
+11h40
+IDEA: let the assistant keep its own diary in this format, so we can
+query each other's.
+
+12h05
+A user of the export tool asked for JSONL output (issue #41). Follow up
+next week.
+
+12h30
+/goal process the queue
+
+13h15
+Mein Rücken fühlt sich wieder normal an.
+```
+
+Entries mix languages, sometimes inside one entry; carry exact technical
+strings; and differ in **whom they are for**: a note to self, an instruction
+to an agent (an imperative, a `/word` command), a personal idea (`IDEA:`),
+or a report of what another person said or asked. Health and body notes
+sit between project notes. Ingestion never edits these files. All examples
+in this document are synthetic; the operator's diary appears nowhere in
+the repository.
 
 These questions require different evidence:
 
@@ -39,6 +94,7 @@ These questions require different evidence:
 | “Why did I change this design three months later?” | The earlier decision, later change, and any stated reason | That chronology or a shared entity proves causation |
 | “What design am I using now?” | An active, applicable confirmed claim, with supporting history if useful | That the latest diary mention is current truth |
 | “What requests have no recorded outcome?” | Requests and explicitly linked outcomes within stated search coverage | That no retrieved outcome means a task is still open |
+| “What did I ask you to do on the 12th?” | Entries addressed to an agent, with their recorded times | That the instruction applies to the current turn |
 
 If only historical evidence exists, answer historically: “The September entry
 says …; I have no confirmed current state.” If no reason is recorded, return the
@@ -52,6 +108,12 @@ than forcing every question into a fact lookup.
    logs verified facts or executable instructions. Authorized passages can be
    read without confirming each quotation; extracted beliefs still require
    review.
+1. **An instruction in the diary is a record, not a command.** An entry
+   addressed to an agent is retrieved as "on this day the operator asked for
+   X", with its time. It never re-enters a prompt as something to do now, and
+   it never becomes a belief about the world. The recalled-data fence and the
+   system prompt already treat recalled text as data; the `addressee` field
+   makes the distinction queryable and lets the answer say so.
 2. **Citations identify immutable snapshots.** A path and byte range alone are
    not enough when a file can change. A citation must resolve the exact ingested
    revision and range, or explicitly report that it is unavailable.
@@ -105,12 +167,13 @@ diary_revision
 
 diary_passage
   id, revision_id, byte_start, byte_end, text_hash, splitter_version,
-  recorded_start, recorded_end, date_basis, heading_path, language_hint
+  recorded_start, recorded_end, time_basis, language_hint
 
 diary_embedding
   passage_id, model_digest, input_hash, dimension, embedding
 ```
 
+A passage is one diary entry: the time line and the text under it.
 `root_key` resolves an operator-configured diary root; it is not a path supplied
 by the model. Scope and sensitivity are configured at the source and inherited
 by all derived objects. Start with explicit room/agent access and private
@@ -136,14 +199,19 @@ normal current-source search.
 
 ### Splitting and incremental ingestion
 
-Use a versioned Markdown-aware deterministic splitter. Prefer headings,
-paragraphs, list items and fenced blocks; preserve heading and date context as
-metadata. A chunk cap is a bound, not a reason to split every paragraph into
-isolated sentences. For an oversized paragraph or code block, split at line or
-sentence boundaries where possible; label all continuations and retain neighbor
-links. A pathological single long line needs bounded UTF-8-safe slices, marked
-as partial, plus access to the full block. Do not fabricate code-fence bytes
-inside the stored source range.
+The splitter is two anchored patterns, versioned: a line that is exactly
+eight digits sets the current date; a line matching
+`^\d{2}h\d{2}( - \d{2}h\d{2})?$` opens an entry that runs to the next such
+line or the next date line. Text between a date line and the first time line
+(the "Woke at…" paragraph above) is an entry with `time_basis = date_only`.
+`recorded_start` is the date plus the entry time in the profile's timezone,
+`recorded_end` the range end when there is one; a time earlier than the
+previous entry's on the same date is kept as written and flagged, not
+reordered. A malformed time line is text, not a boundary. Nothing else in
+the body is parsed. A chunk cap is a bound, not a reason to split an entry
+into sentences: an oversized entry is sliced at line boundaries with all
+continuations labeled and neighbor links retained; a pathological single
+long line needs bounded UTF-8-safe slices, marked as partial.
 
 Build a revision from one stable read, verify its hash, and publish its passages
 and deterministic indexes by atomically changing `current_revision_id`. A file
@@ -197,7 +265,11 @@ diary_identifier
 ```
 
 Index recognizable URLs, hashes, paths, symbols, issue references and model
-names deterministically. Keep the original spelling. Normalize conservatively
+names deterministically, plus two markers the format makes exact: a body
+line starting with `/word` is a **command** to an agent, and a body starting
+with `IDEA:` is an **idea**. Both are recorded here as identifiers of kind
+`command` and `marker`, so Layer 2 can inherit them as decided rather than
+inferred. Keep the original spelling. Normalize conservatively
 by kind: paths, URL paths and symbols must not be blindly lowercased. Hash
 prefixes can match several values; return the ambiguity instead of claiming a
 unique hit. Identifier recognition is a retrieval hint, not a validator.
@@ -226,12 +298,15 @@ One structured local-model pass per bounded passage can emit **zero or more**
 events. Empty output is a successful result. The initial vocabulary is:
 
 ```text
-observation  decision  task  idea  question
+observation  decision  task  idea  question  instruction
 request      feedback  bug   experiment  result
 ```
 
 This vocabulary is a starting hypothesis, not a claim that a small model
-classifies it reliably. An uncertain event can remain unclassified.
+classifies it reliably. An uncertain event can remain unclassified. Two
+assignments are made before the model sees the entry, from Layer 1's
+markers: a `/word` line is an `instruction` addressed to an agent, and an
+`IDEA:` body is an `idea` addressed to self.
 
 ```text
 diary_extraction_run
@@ -243,6 +318,8 @@ diary_event
   id, extraction_run_id, ordinal, kind,
   evidence_start, evidence_end, summary,
   speaker_kind, speaker_name, attribution_basis,
+  addressee, addressee_basis,
+  sensitivity_hint,
   occurred_start, occurred_end, time_basis
 
 diary_event_entity
@@ -260,6 +337,27 @@ from an event summary without re-reading its source span.
 optional. Attribution needs its own support, including whether the statement
 was quoted. Do not assume first person inside pasted text refers to the
 operator. Speaker metadata is inferred and never grants authority.
+
+`addressee` is `self`, `agent`, `other`, or `unknown`, with an
+`addressee_basis` (`marker` when decided by a `/word` line, `inferred`
+otherwise). It answers a different question from `speaker`: whose words
+these are versus whom they were for. "A user asked for JSONL output" has
+speaker `person`, addressee `self`; "find the two papers" has speaker
+`self`, addressee `agent`; "follow up next week" is a `task` for `self`.
+An `instruction` always has an addressee of `agent` or `other`. The
+consequences are mechanical: an event with addressee `agent` is never
+eligible for Layer 3, and retrieval presents its passage as a past request
+with its recorded time (see Retrieval). Inferred addressees are soft: a
+missed one costs a quote presented without the "you asked" framing, never
+an instruction acted on, because the fence and system prompt already make
+recalled text data.
+
+`sensitivity_hint` is the model's reading of one entry (a health or body
+note, a personal observation, a project note). Source policy sets the
+sensitivity every passage inherits; the hint may only **narrow** it — an
+entry the model flags as more sensitive than its source is excluded from
+rooms the stricter level would exclude — and never widen it. A diary whose
+source is private stays private whatever the hint says.
 
 Distinguish three clocks:
 
@@ -292,8 +390,11 @@ row,” which retries empty results forever. Store the actual model digest and
 sampling configuration with the run, not only a mutable model tag.
 
 The earlier 75-minute estimate assumed prefix caching without pricing a cold
-run. For **illustration only**, 3,000 passages, 300 passage tokens, a 600-token
-prefix per call, and 50 output tokens per passage give:
+run. Entries in this format are short — many are one line — so the passage
+count is higher and the tokens per passage lower than the figures below;
+measure on the fixture. For **illustration only**, 3,000 passages, 300
+passage tokens, a 600-token prefix per call, and 50 output tokens per
+passage give:
 
 ```text
 uncached input = 3,000 × (600 + 300) = 2.7 million tokens
@@ -311,7 +412,10 @@ validation failures, total wall time and interference with interactive turns.
 ## Layer 3 — proposals into the existing belief store
 
 A decision, result or apparent subject–predicate statement is eligible for
-review, not automatically useful as a durable belief. Start with operator-selected
+review, not automatically useful as a durable belief. An event whose
+addressee is an agent is never eligible: an instruction is not a statement
+about the world, and promoting one would turn "process the queue" into a
+belief the assistant later reads as standing policy. Start with operator-selected
 events and a capped proposal queue; do not flood `/memory` with every observation.
 
 The promotion adapter re-reads the source and calls `record_belief` with actor
@@ -369,6 +473,32 @@ Model-generated titles or summaries may help an inspector navigate, but remain
 labeled derived text and stay out of answer context. One short sentence can
 hallucinate a state just as easily as a long summary.
 
+## The assistant's own diary
+
+The operator's idea from the sample, adopted as an extension after the
+first retrieval milestone: the assistant keeps a diary in the same grammar,
+one file per day under its own configured root, as a `diary_source` of its
+own with `speaker_kind = agent` fixed for every passage. The run summarizer
+already writes a digest per run; the diary entry is that digest under the
+run's start time and range, in the room's language, with the run identifier
+as an exact token:
+
+```text
+20270312
+12h31 - 12h34
+Processed the queue: three items, two done, one needs the operator
+(missing token). run 9f3c…
+```
+
+It goes through the same layers and the same access rules, and both
+diaries share one retrieval path — which is what makes "what did you do
+while I was away on the 12th" and "when did I ask you to process the queue"
+the same kind of question with two authors. The assistant's entries are
+quotes of its own record; its claims about what it did are `model_inferred`
+candidates like any other. `memory-architecture.md` §Directions already
+wanted journal rows promoted into episodic memory; this is that, in a
+format the operator can read and grep without the app.
+
 ## Retrieval and context assembly
 
 Integrate first with the assistant's explicit `memory_query` action. Always-on
@@ -379,6 +509,7 @@ not put its contents into every conversation.
 query + authorized source context + explicit retrieval mode
   → source access, sensitivity, exclusion and current-revision eligibility
   → bounded literal/identifier, FTS and vector candidate routes
+  → time, addressee and speaker constraints (see below)
   → merge by passage occurrence; preserve match spans and retrieval reasons
   → shared relevance stage, extended to typed diary candidates
   → bounded neighbor/topic expansion; recheck eligibility for every addition
@@ -392,9 +523,14 @@ claim/seed/diary candidate IDs must be namespaced. The initial fallback when
 embedding or relevance services fail is bounded eligible literal/lexical
 results, with degraded mode recorded. Failure must never bypass access checks.
 
-Date and speaker constraints need an explicit interpretation. Unambiguous
-calendar ranges are computed against the configured timezone and a captured
-query time. An expression such as “before the rewrite” first needs evidence of
+Date, addressee and speaker constraints need an explicit interpretation.
+Unambiguous calendar ranges — including times of day, which this format
+records — are computed against the configured timezone and a captured
+query time. "What did I ask you to do" filters addressee `agent`; "what
+have users asked for" filters speaker `person`; both are soft unless the
+query is explicit. A passage whose event has addressee `agent` is rendered
+with its recorded time and the label of a past request, inside the same
+fence as every other quote. An expression such as “before the rewrite” first needs evidence of
 which rewrite and when; it cannot be resolved by date arithmetic alone. If an
 anchor is ambiguous, present alternatives or leave it as a ranking hint.
 Inferred speaker/event dates are soft filters by default so extraction mistakes
@@ -442,7 +578,10 @@ Build a small, synthetic multilingual diary fixture under `data/` before the
 first retriever ships. Include code, prose, duplicate paragraphs, long entries
 and file revisions. Keep operator text out of repository fixtures and CI output.
 Each case names the query, mode, access context, fixed clock/timezone, source
-revision manifest, required evidence ranges and forbidden passages.
+revision manifest, required evidence ranges and forbidden passages. The
+fixture is in the real grammar (date lines, time lines, ranges), two
+languages, Terminator-universe content, with both an operator diary and an
+assistant diary.
 
 | Family | Cases that distinguish success from a plausible-looking answer |
 |---|---|
@@ -451,6 +590,9 @@ revision manifest, required evidence ranges and forbidden passages.
 | Time | Recorded vs occurred dates, uncertain ranges, future plans, backdated entries, ambiguous “before the rewrite” |
 | History/current state | Earlier decision + reversal + stated reason; no reason; confirmed state vs newer unconfirmed mention |
 | Attribution/outcomes | Quoted person vs operator, pasted agent commands, unsupported causal links, incomplete outcome coverage |
+| Addressee | A `/word` line and an imperative to the agent come back as past requests, never as tasks the answer performs; a `task` for self is not an instruction; an operator goal is not an agent goal |
+| Format | Ranges, an entry before the first time line, two dates in one file, a malformed time line, a time earlier than the previous entry, a one-line entry, an entry that mixes two languages |
+| Assistant diary | "What did you do on the 12th" answered from the assistant's file with the run identifier; the two diaries never merge speakers |
 | Lifecycle | Append, duplicate text, edits, rename/removal, stale workers/vectors, empty extraction, retries, re-extraction without added support |
 | Context/access | Answer near middle/end of long block, budget exhaustion, hidden neighbor/thread member, excluded citation, adversarial fence text |
 
@@ -478,7 +620,9 @@ cross-language recall and answer quality; do not call live inference
 deterministic because its scorer is deterministic.
 
 Release gates require zero forbidden-source exposure, invalid citations,
-duplicate support from retries, and unconfirmed belief activation. An added
+duplicate support from retries, unconfirmed belief activation, and
+**addressee leaks** — a recalled instruction that the answer performs or
+restates as a current task. An added
 layer must improve its target family on held-out cases, preserve baseline-passing
 regression cases, and stay within latency/token limits fixed before the run.
 Publish per-family counts, failures and repeated live-run variation. Keep a
@@ -494,12 +638,17 @@ layer disabled when the evidence is too small or mixed to justify its cost.
    and FTS first; add passage embeddings against baseline A. No generative
    extraction is needed. Prove append/edit/removal and service-failure behavior.
 3. **Events, if recall needs them:** benchmark a local model, implement the
-   versioned job ledger and evidence validation, then evaluate attribution and
-   temporal metadata. Keep ordinary passage search independent of this pass.
-4. **Belief proposals, if useful:** add selected-event promotion, durable
+   versioned job ledger and evidence validation, then evaluate attribution,
+   addressee and temporal metadata. Keep ordinary passage search independent
+   of this pass. The two marker-decided assignments (`/word`, `IDEA:`) and
+   the time filters need no model and belong to milestone 2.
+4. **The assistant's diary:** write it from run digests and register it as a
+   second source. Cheap once milestone 2 exists, and it gives the operator a
+   readable record of the assistant's work immediately.
+5. **Belief proposals, if useful:** add selected-event promotion, durable
    idempotency and source-change review. Preserve existing governance; make no
    automatic temporal supersession change.
-5. **Threads, if longitudinal questions still fail:** add bounded topic/episode
+6. **Threads, if longitudinal questions still fail:** add bounded topic/episode
    navigation and supported relations. Evaluate full-history comparisons and
    context cost before adding model-derived navigation aids.
 
