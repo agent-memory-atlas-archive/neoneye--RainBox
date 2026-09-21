@@ -1,7 +1,7 @@
 # Representing a Long-Running Diary for AI Memory
 
 **Status:** Proposal. The diary-specific components below are not built.
-**Date:** 2026-09-21 (revision 5)
+**Date:** 2026-09-21 (revision 6)
 **Relates to:** [memory architecture](../memory-architecture.md),
 [Q&A system](../qa-system.md),
 [recall and retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
@@ -14,6 +14,15 @@ search, and passage embeddings. Return cited source text. Add event extraction,
 reviewable belief proposals, and thread navigation only when they improve
 measured recall. Reuse RainBox's governed belief store; do not turn a diary
 import into automatic belief confirmation.
+
+**Revision 6 — a file-per-day dialect with pasted terminal output.** A
+third historical shape: one file per day named `YYYY_MM_DD.txt`, entries
+opened by a bare four-digit `HHMM` line, blank lines inside an entry, and
+long pasted shell sessions (prompts, commands, output) inside the prose.
+Two rules follow for every dialect: a date in the file name is a date
+basis, and a bare number line is a time only at a block boundary. Pasted
+spans are recognized deterministically so Layer 2 never attributes a shell
+prompt's words to the operator.
 
 **Revision 5 — more than one dialect.** The diary spans decades and its
 format changed along the way. Revision 4 described only the current one
@@ -108,6 +117,39 @@ newest day first in the file. Synthetic:
 *	re-enabled Buffer#test_exception_xxx.
 ```
 
+A third dialect keeps one file per day, `YYYY_MM_DD.txt`, with entries
+opened by a bare four-digit time, blank lines inside an entry, and pasted
+terminal sessions in the middle of the prose. Synthetic:
+
+```text
+0830
+call with reese
+
+exclude the admin tool
+exclude images
+
+we agree on what to build first
+
+
+0910
+reese says look at
+http://trac.example.org/skynet/ticket/6
+
+so I start with "product_info.php"
+
+first the ignore list needs fixing.
+
+www:/srv/skynet/www# svn st
+?      admin
+M      index.php
+?      images/products/t800.gif
+D      index.php.bak
+www:/srv/skynet/www#
+
+
+argh. commit fails, the repository is locked.
+```
+
 Entries mix languages, sometimes inside one entry; carry exact technical
 strings; and differ in **whom they are for**: a note to self, an instruction
 to an agent (an imperative, a `/word` command), a personal idea (`IDEA:`),
@@ -200,6 +242,9 @@ diary_passage
   dialect, dialect_version,
   recorded_start, recorded_end, time_basis, author_token, language_hint
 
+diary_pasted_span
+  passage_id, byte_start, byte_end, kind        -- terminal | fenced
+
 diary_embedding
   passage_id, model_digest, input_hash, dimension, embedding
 ```
@@ -248,6 +293,17 @@ passage, and a recognizer change re-splits only files of that dialect.
   timezone, `recorded_end` the range end when there is one; a time earlier
   than the previous entry's on the same date is kept as written and
   flagged, not reordered. A malformed time line is text, not a boundary.
+- **`daily`** (one file per day): the date comes from the file name,
+  `YYYY_MM_DD.txt`, with `time_basis = filename` for the date part; a line
+  that is exactly four digits and follows a blank line or the file start
+  opens an entry (`HHMM`) that runs to the next such line. Blank lines do
+  **not** end an entry — this dialect uses several inside one — and a
+  four-digit number inside a paragraph is text, because it does not
+  follow a blank line. A pasted terminal span is recognized by lines that
+  start with a shell-prompt shape (`<word>:<path># ` or `$ `) and runs
+  through the next prompt line; it stays inside its entry, byte-exact, and
+  is recorded as a **pasted span** so Layer 1 indexes its paths and
+  Layer 2 treats its words as quoted, never as the operator's.
 - **`changelog`** (older years): a header line `<day>-<month>-<year>
   <token>` sets the current date and records the token as
   `author_token` (it is not parsed as a name anywhere else; speaker stays
@@ -258,9 +314,11 @@ passage, and a recognizer change re-splits only files of that dialect.
   file order as their tie-break, and days are ordered by the parsed date,
   because this dialect lists the newest day first.
 
-Dates are parsed by one shared routine that accepts the numeric forms
-(`YYYYMMDD`, `DD-MM-YYYY`) and the day-month-year form with the month
-spelled out, matched case-insensitively against a per-language table of
+Dates are parsed by one shared routine, applied to header lines and to
+file names alike (a file name that parses as a date is the date basis for
+a file whose dialect has no date lines, and a cross-check for one that
+has), accepting the numeric forms (`YYYYMMDD`, `YYYY_MM_DD`, `DD-MM-YYYY`)
+and the day-month-year form with the month spelled out, matched case-insensitively against a per-language table of
 month names (full and three-letter, in the profile's declared languages
 plus English); an unparseable date leaves the passage undated rather than
 guessing. Nothing else in a body is parsed. A chunk cap is a bound, not a
@@ -392,7 +450,10 @@ from an event summary without re-reading its source span.
 `speaker_kind` is `self`, `person`, `agent`, or `unknown`; `speaker_name` is
 optional. Attribution needs its own support, including whether the statement
 was quoted. Do not assume first person inside pasted text refers to the
-operator. Speaker metadata is inferred and never grants authority.
+operator; a `diary_pasted_span` decides that before the model runs, and
+an event whose evidence lies wholly inside one is `quoted` by
+construction. Speaker metadata is otherwise inferred and never grants
+authority.
 
 `addressee` is `self`, `agent`, `other`, or `unknown`, with an
 `addressee_basis` (`marker` when decided by a `/word` line, `inferred`
@@ -635,8 +696,9 @@ first retriever ships. Include code, prose, duplicate paragraphs, long entries
 and file revisions. Keep operator text out of repository fixtures and CI output.
 Each case names the query, mode, access context, fixed clock/timezone, source
 revision manifest, required evidence ranges and forbidden passages. The
-fixture covers both dialects (date and time lines with ranges; ChangeLog
-headers with bullets), two languages including a spelled-out month name,
+fixture covers all three dialects (date and time lines with ranges;
+ChangeLog headers with bullets; file-per-day with `HHMM` lines and pasted
+terminal output), two languages including a spelled-out month name,
 Terminator-universe content and author tokens, with both an operator diary
 and an assistant diary.
 
@@ -648,7 +710,7 @@ and an assistant diary.
 | History/current state | Earlier decision + reversal + stated reason; no reason; confirmed state vs newer unconfirmed mention |
 | Attribution/outcomes | Quoted person vs operator, pasted agent commands, unsupported causal links, incomplete outcome coverage |
 | Addressee | A `/word` line and an imperative to the agent come back as past requests, never as tasks the answer performs; a `task` for self is not an instruction; an operator goal is not an agent goal |
-| Format | Both dialects in one fixture; a file whose dialect is ambiguous falls back to `plain`; ranges; an entry before the first time line; two dates in one file; a malformed time line; a time earlier than the previous entry; newest-first `changelog` days ordered by date; a bullet with three continuation lines; a month name in another language; a one-line entry; an entry that mixes two languages |
+| Format | All three dialects in one fixture; a file whose dialect is ambiguous falls back to `plain`; a date from the file name; blank lines inside a `daily` entry; a four-digit number inside a paragraph not taken as a time; a pasted shell session kept whole inside its entry and marked as a span; ranges; an entry before the first time line; two dates in one file; a malformed time line; a time earlier than the previous entry; newest-first `changelog` days ordered by date; a bullet with three continuation lines; a month name in another language; a one-line entry; an entry that mixes two languages |
 | Assistant diary | "What did you do on the 12th" answered from the assistant's file with the run identifier; the two diaries never merge speakers |
 | Lifecycle | Append, duplicate text, edits, rename/removal, stale workers/vectors, empty extraction, retries, re-extraction without added support |
 | Context/access | Answer near middle/end of long block, budget exhaustion, hidden neighbor/thread member, excluded citation, adversarial fence text |
