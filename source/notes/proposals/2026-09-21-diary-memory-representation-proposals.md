@@ -1,7 +1,7 @@
 # Diary Memory: First-Release Implementation Specification
 
 **Status:** Ready to implement the v1 scope below. No diary components are built.
-**Date:** 2026-09-21 (revision 10)
+**Date:** 2026-09-21 (revision 11)
 **Related:** [memory architecture](../memory-architecture.md),
 [Q&A](../qa-system.md), [retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
 [eval loop](../eval-loop.md), [testing](../testing.md),
@@ -11,6 +11,21 @@
 retain immutable snapshots, parse their historical formats, search original
 passages, and return bounded citations through an explicit `memory_query` diary
 branch. Test it on synthetic data, then pilot one real month in the sandbox.
+
+Revision 11 answers an outside review that read revision 10 as a maintainer
+would. Its verdict: the boundary between deterministic retrieval and
+generative work is right, and the parser's failure modes are too brittle for
+text humans actually write. Accepted and fixed here: an unmatched fence no
+longer swallows a file (it closes at the next date header or after a byte
+cap); a stale override is a warning, not a quarantine; the parser works in
+one unit (code points) and converts to bytes only at the edge; the BOM has a
+defined coordinate; a merged excerpt that would exceed its cap is not
+truncated but split into separately budgeted windows. Accepted in direction
+but scaled to this corpus: the trigram index becomes automatic above a size
+threshold rather than a manual gate. Declined: dropping the composite key
+that ties a file's publication pointer to its own generations — that one
+constraint is what makes "there is no separate active flag" true; the
+second, redundant composite (generation → revision) is dropped instead.
 
 Revision 10 is a verification pass over revision 9. Every code fact it cites
 — the recall stage, the fence helper, the observation caps, the audit
@@ -46,8 +61,12 @@ Earlier design and revision history remain in git.
 
 Decisions are code defaults unless marked as configuration:
 
-- **Encoding:** strict UTF-8 only. Preserve BOM/CRLF bytes; ignore a leading BOM
-  only for recognizing the first header. Invalid UTF-8 or NUL quarantines that
+- **Encoding:** strict UTF-8 only. Preserve BOM/CRLF bytes. A leading BOM is
+  bytes `[0,3)` of the revision, tagged `separator` in coverage, never inside
+  an entry, and never emitted in an excerpt; the parser decodes from byte 3
+  and every byte offset it emits is shifted by 3 for that file. Offset 0 is
+  the BOM. This is stated once so a header at the start of a BOM file and a
+  search hit at the start of a file cannot disagree by three bytes. Invalid UTF-8 or NUL quarantines that
   file. No automatic conversion or replacement characters.
 - **Dialect:** longest matching directory prefix in the source manifest, using
   path-component boundaries; unmatched files are `plain`. No glob precedence.
@@ -148,8 +167,15 @@ Validation and defaults:
   `content_sha256`, `force_boundary_offsets: []`, `suppress_boundary_offsets: []`
   and `pasted_ranges: []`. Offsets refer to UTF-8 bytes at line starts; pasted
   ranges are `[start,end)`. Validate bounds, overlap and conflicting overrides.
-  A hash mismatch quarantines the file until the override is updated or removed.
-  This is the sole file-level escape hatch for genuinely ambiguous syntax.
+  A hash mismatch does **not** quarantine the file: the override is skipped,
+  the file is parsed without it, and `override_stale` is emitted with the
+  expected and actual hashes — the text stays searchable with a possibly
+  imperfect boundary, which is strictly better than a file the assistant
+  cannot see because a typo was fixed on line five. `parse --dry-run` lists
+  stale overrides so they can be re-anchored. This is the sole file-level
+  escape hatch for genuinely ambiguous syntax, and it is expected to be
+  rare: the fence and terminal rules above are meant to make most files
+  need none.
 - `command_tokens` supply hints only when the first body token exactly matches
   and is outside pasted text. `/tmp` is not a command unless configured. `IDEA:`
   is an idea marker, not proof of an addressee. Neither hint activates behavior.
@@ -171,8 +197,8 @@ except the current-generation pointer. A source record is retained on purge.
 |---|---|---|
 | `diary_source` | `name text`, `root_path text`, `room_uuid uuid`, `agent_uuid uuid?`, `timezone text`, `sensitivity text`, `config jsonb`, `enabled bool=false`, `vector_mode text=off`, `embedding_spec jsonb?`, `policy_version bigint=1`, `catalog_version bigint=1`, `created_at`, `updated_at` | Unique name and canonical root; sensitivity in private/secret; vector_mode off/exact/hnsw; positive versions |
 | `diary_file` | `source_uuid FK`, `relative_path text`, `current_generation_uuid uuid?`, `availability text`, `last_seen_at`, `diagnostics jsonb=[]` | Unique `(source_uuid,relative_path)`; availability pending/ready/quarantined/missing |
-| `diary_revision` | `file_uuid FK`, `sha256 text`, `raw_bytes bytea`, `first_ingested_at` | Unique `(file_uuid,sha256)`; unique `(uuid,file_uuid)` for composite FK |
-| `diary_generation` | `file_uuid FK`, `revision_uuid uuid`, `parser_fingerprint text`, `parser_config jsonb`, `dialect text`, `diagnostics jsonb=[]`, `coverage jsonb`, `created_at` | Unique `(revision_uuid,parser_fingerprint)` and `(uuid,file_uuid)`; composite `(revision_uuid,file_uuid)` references revision; dialect enum |
+| `diary_revision` | `file_uuid FK`, `sha256 text`, `raw_bytes bytea`, `first_ingested_at` | Unique `(file_uuid,sha256)` |
+| `diary_generation` | `file_uuid FK`, `revision_uuid FK`, `parser_fingerprint text`, `parser_config jsonb`, `dialect text`, `diagnostics jsonb=[]`, `coverage jsonb`, `created_at` | Unique `(revision_uuid,parser_fingerprint)` and `(uuid,file_uuid)`; plain FK to revision — that the revision belongs to the same file is checked in the publisher's transaction, not by a second composite key; dialect enum |
 | `diary_entry` | `generation_uuid FK`, `ordinal int`, `byte_start bigint`, `byte_end bigint`, `text text`, `date_local date?`, `clock_start time?`, `clock_end time?`, `date_basis text`, `time_status text`, `author_token text?`, `context_ranges jsonb=[]` | Unique `(generation_uuid,ordinal)`; positive nonempty range; ordinal ≥ 0 |
 | `diary_passage` | `entry_uuid FK`, `part_index int`, `byte_start bigint`, `byte_end bigint`, `text text`, `text_hash text`, `search_vector tsvector` | Unique `(entry_uuid,part_index)`; positive range; part_index ≥ 0 |
 | `diary_annotation` | `entry_uuid FK`, `kind text`, `subtype text`, `value text`, `byte_start bigint`, `byte_end bigint`, `basis text` | Unique `(entry_uuid,kind,subtype,byte_start,byte_end,value)`; kinds identifier/command_hint/idea_hint/pasted; basis rule/explicit_override |
@@ -242,9 +268,17 @@ edit originals or erase past chat traces/backups.
 The three synthetic format examples are at the end of this document. Implement
 `parse_file(raw_bytes, relative_path, parser_config) -> ParsedFile` as a pure
 function. It emits entries, passages, annotations, coverage and diagnostics.
-No model participates. All offsets are **half-open UTF-8 byte ranges** into the
-revision; never Python character offsets. Do not normalize stored newlines or
-indentation. Maintain a character-to-byte index for slicing/search matches.
+No model participates. The parser works in **one unit**: it decodes the file
+once and reasons in Python string (code point) offsets throughout —
+boundaries, chunk caps, override positions, match spans. Byte offsets exist
+only at the edge: when an entry, passage, annotation or coverage span is
+emitted, its code-point range is converted to a **half-open UTF-8 byte
+range** into the revision (plus the BOM shift), computed incrementally in
+one forward pass so no per-character index is held. A code-point boundary
+is a valid UTF-8 boundary by construction, so no split can land inside a
+multi-byte character. Stored offsets are bytes; nothing downstream converts
+back except the citation reader, which slices raw bytes and decodes. Do not
+normalize stored newlines or indentation.
 
 ### Precedence
 
@@ -254,8 +288,15 @@ indentation. Maintain a character-to-byte index for slicing/search matches.
    Suppressed boundaries stay body text. Reject forced boundaries inside explicit
    pasted ranges.
 3. Fenced regions: an opening run of at least three backticks/tildes, closed by
-   the same character with at least that length. Ignore date/time/bullet syntax
-   inside. An unmatched opener protects through EOF and emits a diagnostic.
+   the same character with at least that length. Ignore time/bullet syntax
+   inside. An unmatched opener does **not** protect to EOF — one stray fence
+   would otherwise erase every boundary in the rest of a decade-long file.
+   It closes at the first of: a matching closer; the next valid **date**
+   header of the file's dialect (a date line, a ChangeLog header — time lines
+   and bullets do not close it, since fenced output legitimately contains
+   four-digit lines); or 16 384 bytes after the opener. The forced close
+   emits `fence_unterminated` with both offsets, and the region is still
+   annotated as pasted. Every one of the three closes has a fixture.
 4. Likely terminal regions, then dialect boundary recognition outside them.
 5. Date/author context assignment, coverage validation, passage chunking.
 
@@ -470,12 +511,12 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   ranges. Explicit literal mode ranks earlier source-order occurrences first,
   returns exact match windows and skips FTS/vector calls. Multiple hits are not
   silently declared unique. Return a cursor to enumerate additional matches.
-  The scan is a sequential `strpos` over eligible entry text, which is well
-  inside the 2-second statement timeout at 15 MB; an optional `pg_trgm` GIN
-  index on `diary_entry.text` is the same kind of gated optimization as
-  HNSW below — created by the CLI, enabled per source only when it measurably
-  improves p95 without changing any literal result, since the route must
-  stay exact either way.
+  The scan is a sequential `strpos` over eligible entry text, well inside the
+  2-second statement timeout at this corpus's 15 MB. A `pg_trgm` GIN index
+  on `diary_entry.text` does not change a `LIKE` result, so unlike HNSW it
+  needs no recall gate: `sync` creates it automatically once a source's
+  entry text exceeds 25 MB, and `index --trgm` creates it on demand below
+  that. The route stays exact either way; the statement timeout stays.
 - **Identifier route in search:** at most eight recognized query tokens; equality
   first, hash-prefix matches second (minimum seven hex characters). Keep subtype
   and original spelling. Paths/symbols are case-sensitive; ambiguous hash prefixes
@@ -490,8 +531,11 @@ fusion `sum(1 / (60 + rank))`, where ranks start at one. Tie-break by source UUI
 relative path, entry ordinal and part index. No mixing raw score scales. Select
 at most five passages, at most two per entry. Expand by at most one adjacent
 passage on either side *within that entry*, subject to the same count/access/
-rendering caps; merge contiguous windows and remove overlap. Stored source slices
-are never concatenated across gaps into one quote.
+rendering caps. Two windows that touch or overlap are merged only when the
+merged range fits the 1,500-code-point window cap; otherwise they stay
+separate windows, each charged to the budget, each containing its own
+whole match — a merge never truncates and never drops the later match.
+Stored source slices are never concatenated across gaps into one quote.
 
 Timeline bypasses relevance search and the embedding service. Fetch at most 30
 entries per DB page in the specified order; render complete bounded parts until
