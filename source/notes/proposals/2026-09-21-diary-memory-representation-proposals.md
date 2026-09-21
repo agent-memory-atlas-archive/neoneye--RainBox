@@ -1,7 +1,7 @@
 # Diary Memory: First-Release Implementation Specification
 
 **Status:** Ready to implement the v1 scope below. No diary components are built.
-**Date:** 2026-09-21 (revision 9)
+**Date:** 2026-09-21 (revision 10)
 **Related:** [memory architecture](../memory-architecture.md),
 [Q&A](../qa-system.md), [retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
 [eval loop](../eval-loop.md), [testing](../testing.md),
@@ -11,6 +11,18 @@
 retain immutable snapshots, parse their historical formats, search original
 passages, and return bounded citations through an explicit `memory_query` diary
 branch. Test it on synthetic data, then pilot one real month in the sandbox.
+
+Revision 10 is a verification pass over revision 9. Every code fact it cites
+— the recall stage, the fence helper, the observation caps, the audit
+shortening, the bootstrap constraint names, the test files — was checked
+against the repository and holds. The pinned terminal regex was run against
+the synthetic samples and behaves as described, including on URLs carrying a
+`#` fragment. Three changes follow from what the checks turned up: month
+names come from the installed `babel` tables for whatever languages the
+manifest lists, so a fourth language is configuration rather than a parser
+change; the literal route gets the same optional, gated index treatment as
+vectors (`pg_trgm`); and the regex's one known false-positive class is
+recorded with the override that resolves it.
 
 Revision 9 replaces the earlier overlapping policies with one implementation
 contract. It resolves configuration, parser precedence, schema constraints,
@@ -124,9 +136,14 @@ Validation and defaults:
   slash; `""` is the root prefix. Reject `..`, absolute prefixes, duplicates and
   unknown dialects/languages. Suffix comparison is case-sensitive; `""` explicitly
   allows extensionless files. Skip symlinks, including symlinked directories.
-- V1 month tables are code-owned English, Danish and German full/three-letter
-  names, matched case-insensitively. Unknown month tokens remain undated with a
-  diagnostic. Other languages require a tested parser change.
+- Month names come from `babel.dates.get_month_names` (`wide` and
+  `abbreviated`, trailing period stripped, matched case-insensitively) for
+  each language tag in `month_languages`; `babel` 2.18 is already in the
+  venv and covers the operator's languages (`juli`, `Juli`, `jul.`). The
+  tables are materialized into the parser configuration at register time,
+  so the fingerprint covers them and a Babel upgrade cannot silently change
+  a parse. Unknown month tokens remain undated with a diagnostic. Adding a
+  language is a manifest edit; the fixture pins English, Danish and German.
 - `file_overrides` keys are relative file paths. Each value contains
   `content_sha256`, `force_boundary_offsets: []`, `suppress_boundary_offsets: []`
   and `pasted_ranges: []`. Offsets refer to UTF-8 bytes at line starts; pasted
@@ -138,8 +155,8 @@ Validation and defaults:
   is an idea marker, not proof of an addressee. Neither hint activates behavior.
 
 Keep immutable parser configuration on each generation. Its SHA-256 fingerprint
-covers canonical JSON, parser/identifier versions, chunk cap and month-table
-version. Policy fields have their own monotonically increasing `policy_version`;
+covers canonical JSON, parser/identifier versions, chunk cap and the
+materialized month tables. Policy fields have their own monotonically increasing `policy_version`;
 changing access does not require re-embedding content. Root changes require a
 new source rather than rebinding existing citations to another tree.
 
@@ -246,7 +263,21 @@ The terminal-start regex is
 `^(?:\$[ \t]|[A-Za-z0-9_.@-]+:[~/][^\r\n]*?[#$](?:[ \t]|$))`.
 It matches a leading `$ ` prompt or a host/path prompt such as
 `www:/srv/skynet/www#`, optionally followed by a command. Pin positive/negative
-fixtures. Once started, the likely terminal region includes successive prompts/output and ends before two
+fixtures; verified against the synthetic samples on 2026-09-21:
+
+```text
+match     www:/srv/skynet/www# svn st
+match     www:/srv/skynet/www#
+match     $ ls
+no match  https://example.org/notes/threat-model#top   (the # is not followed by whitespace or end of line)
+no match  note: /tmp is full # really                   (a space follows the colon)
+match     host:/path#                                   (KNOWN FALSE POSITIVE: a URL-like token whose fragment marker ends the line)
+```
+
+The last case is the one shape prose can produce that the regex cannot
+tell from a prompt; it is rare, it only affects boundary suppression inside
+the region that follows, and a `pasted_ranges` override on that file
+resolves it. Add it to the fixture as a documented limitation, not a bug. Once started, the likely terminal region includes successive prompts/output and ends before two
 consecutive empty lines, an explicit override boundary, or EOF. One empty line
 inside it does not end it. A header-shaped line suppressed there produces a
 `possible_boundary_in_terminal` diagnostic. The region is a parsing heuristic,
@@ -395,8 +426,10 @@ Contract:
   `ok=false,error=invalid_request` before retrieval. Disabled diary returns
   `ok=false,error=diary_disabled`. Search with no matches is a successful empty
   result. Partial routes return `ok=true` plus degraded/coverage metadata.
-- No free-form natural-language date parser in v1. The assistant supplies date
-  bounds for clear requests; ambiguous “before the rewrite” uses search first.
+- No free-form natural-language date parser in v1. `dateparser` is present in
+  the venv for other features; the diary branch does not use it. The assistant
+  supplies date bounds for clear requests; ambiguous “before the rewrite”
+  uses search first.
   Speaker/addressee filtering is unsupported and must not silently do nothing.
 
 Internal Python seams:
@@ -437,6 +470,12 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   ranges. Explicit literal mode ranks earlier source-order occurrences first,
   returns exact match windows and skips FTS/vector calls. Multiple hits are not
   silently declared unique. Return a cursor to enumerate additional matches.
+  The scan is a sequential `strpos` over eligible entry text, which is well
+  inside the 2-second statement timeout at 15 MB; an optional `pg_trgm` GIN
+  index on `diary_entry.text` is the same kind of gated optimization as
+  HNSW below — created by the CLI, enabled per source only when it measurably
+  improves p95 without changing any literal result, since the route must
+  stay exact either way.
 - **Identifier route in search:** at most eight recognized query tokens; equality
   first, hash-prefix matches second (minimum seven hex characters). Keep subtype
   and original spelling. Paths/symbols are case-sensitive; ambiguous hash prefixes
