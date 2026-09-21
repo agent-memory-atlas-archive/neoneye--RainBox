@@ -1,1152 +1,325 @@
 # Representing a Long-Running Diary for AI Memory
 
-## Purpose
+**Status:** Proposal. Nothing here is built.
+**Date:** 2026-09-21 (revision 2, same day)
+**Relates to:** `memory-architecture.md`, `qa-system.md`,
+`2026-08-17-recall-filter-and-retrieval-granularity.md`,
+`2026-06-30-memory-design-patterns.md` §diary ingestion, `eval-loop.md`.
 
-This document proposes three ways to represent a long-running, multilingual diary so that an AI assistant can retrieve relevant prior information without relying only on a short rolling chat window.
-
-The diary is assumed to contain heterogeneous material such as:
-
-- personal observations
-- project notes
-- technical debugging
-- commands sent to AI agents
-- external user feedback
-- ideas and hypotheses
-- tasks and follow-ups
-- URLs, commit hashes, code symbols, and error messages
-- English, Spanish, and potentially mixed-language passages
-
-All examples below are synthetic. No real diary content is used.
-
-The central design principle is:
-
-> Preserve the original diary as immutable source material, and derive additional representations from it rather than replacing it with a single normalized form.
-
-A useful memory system should support both of these questions:
-
-- “Find the exact error message I recorded.”
-- “Why did I change this design three months later?”
-
-Those are different retrieval problems and should not be forced through the same representation.
+**Revision 2 — what changed.** Revision 1 surveyed three architectures as if
+RainBox had no memory system. It does: `memory_claim` already is the
+temporal fact table revision 1 proposed (with `supersedes_uuid`,
+`conflicts_with_uuid`, `expires_at`, `epistemic_confidence`,
+`support_count`), `memory_evidence` is its provenance, the rejected-value
+tombstones stop laundering, the actor/trust model decides what a model may
+assert, and `retrieve_memories_hybrid` plus the recall filter is the
+hybrid retrieval it recommended. This revision maps every idea onto that,
+keeps only what is genuinely new, decides the open forks instead of
+listing them, and adds the two constraints revision 1 ignored: extraction
+runs on small local models with a token budget, and model-phrased text is
+a candidate, never a belief. It also takes one position revision 1 did
+not: for a diary, retrieval should quote the operator's own passage, and
+the extracted structure is only the index that finds it.
 
 ---
 
-# Proposal 1 — Temporal Event Store with Typed Records
+## The diary
 
-## Summary
+A folder of dated Markdown files the operator appends to, in more than one
+language, mixing personal observations, project notes, debugging sessions,
+commands given to agents, feedback received from other people, ideas,
+tasks, and exact technical strings (URLs, commit hashes, symbols, error
+messages). It grows for years. It is the operator's own words.
 
-Treat the diary as an append-only event stream.
+Two questions it must answer, which are different retrieval problems and
+must not share one representation:
 
-Each diary entry is segmented into atomic events, and every event receives structured metadata. PostgreSQL remains the canonical store.
+- "Find the exact error message I recorded."
+- "Why did I change this design three months later?"
 
-This is the most conservative and practical architecture.
+All examples in this document are synthetic.
 
-## Core model
+## Principles
 
-Keep the source text unchanged:
+1. **The diary is immutable source.** Ingestion never edits it. Every
+   derived row points back at a byte range of a file.
+2. **Derived layers are rebuildable.** Extraction is versioned; a better
+   local model later means re-running a pass, not migrating data.
+3. **Quote, don't paraphrase.** What reaches a prompt from the diary is the
+   operator's passage, fenced as recalled data. Extracted events, entities
+   and summaries decide *which* passage; they are not what the model reads
+   as fact. This is the diary's answer to the trust model: the passage is
+   operator-authored and needs no confirmation, while the model's reading of
+   it stays a candidate.
+4. **Current state is a projection**, answered from `memory_claim`, never
+   inferred from which diary chunk ranked highest.
+5. **Exact strings get exact search.** An embedding must never be the only
+   route to a commit hash.
 
-```sql
-diary_source (
-    id                  uuid primary key,
-    source_date         date,
-    sequence_no         integer,
-    raw_text            text,
-    created_at          timestamptz
-);
-```
+---
 
-Extract zero or more events from each source block:
+# What already exists, and what the diary adds
 
-```sql
-memory_event (
-    id                  uuid primary key,
-    source_id           uuid references diary_source(id),
+| Revision 1 proposed | RainBox already has | Diary work needed |
+|---|---|---|
+| `memory_fact` with validity, supersession, epistemic status | `memory_claim` (`supersedes_uuid`, `conflicts_with_uuid`, `expires_at`, `epistemic_confidence`, `support_count`, `subj_pred_key`) | a `valid_from` column: claims know when they were superseded, not when they became true; a diary is the one source that dates facts |
+| provenance to source passages | `memory_evidence` (`source_type`, `source_id`, `excerpt`) | a `source_type` of `diary_passage` whose `source_id` is `file:byte_start-byte_end`, so evidence can open the passage |
+| actor kinds; keep "I decided" apart from "a user asked" | the actor/trust model (override-authorized vs candidate-by-default) | nothing new for trust; a `speaker` on the *event* for who said it inside the diary |
+| tombstones against re-entry of rejected values | `memory_rejected_value` | nothing |
+| hybrid retrieval: exact, lexical, vector, filters, rerank | `retrieve_memories_hybrid` (FTS + pgvector + entity boost), the recall-filter call | an exact-identifier route; time and speaker filters; the diary passage as a retrievable unit |
+| embeddings | `memory_embedding`, `embeddinggemma:300m`, 768-d, multilingual | embed passages, not only claims |
+| eval benchmark | `eval_case` / `eval_run` / `eval_result`, deterministic runner | a `diary_recall` case kind and the categories below |
 
-    occurred_at         timestamptz,
-    event_kind          text,
-    language            text,
+Everything below the double rule is new. It is one proposal, not three.
 
-    author_actor_id     uuid null,
-    target_actor_id     uuid null,
+---
 
-    project_id          uuid null,
-    thread_id           uuid null,
+# The design
 
-    title               text null,
-    normalized_summary  text null,
-
-    confidence          real,
-    extraction_version  text
-);
-```
-
-Typical `event_kind` values:
-
-```text
-observation
-task
-idea
-decision
-requirement
-agent_command
-external_feedback
-feature_request
-bug_report
-diagnostic
-experiment
-result
-resource
-state_change
-commitment
-follow_up
-question
-```
-
-Actors are separate entities:
+## Layer 0 — source
 
 ```sql
-actor (
+diary_file (
     id            uuid primary key,
-    kind          text,
-    display_name  text,
-    aliases       jsonb
+    path          text unique,        -- relative to the diary root
+    sha256        text,               -- of the last ingested content
+    ingested_at   timestamptz
+);
+
+diary_passage (
+    id            uuid primary key,
+    file_id       uuid references diary_file(id),
+    byte_start    integer,
+    byte_end      integer,
+    recorded_on   date,               -- from the file name or a heading
+    language      text,               -- detected tag, e.g. "da", "en"
+    text          text,               -- verbatim copy, for FTS and display
+    text_hash     text
 );
 ```
 
-Example actor kinds:
+A passage is a deterministic split: a dated heading, a blank-line-separated
+block, or a fenced code block, whichever is smaller than the passage cap.
+No model is involved. Re-ingesting a changed file re-splits it and keeps
+every passage whose `text_hash` is unchanged, so derived rows survive an
+append.
 
-```text
-self
-person
-project_user
-ai_agent
-organization
-unknown
-```
-
-This matters because:
-
-```text
-A user requested X
-```
-
-is different from:
-
-```text
-I decided X
-```
-
-and both are different from:
-
-```text
-An AI assistant suggested X
-```
-
-## Preserve exact technical evidence
-
-Developer diaries often contain information that semantic embeddings should not normalize:
-
-```text
-FooBarConfig
-_prepare_client()
-7f0a1b4...
-TypeError: unexpected keyword argument
-/api/models
-```
-
-Store these separately:
+## Layer 1 — exact index (deterministic, no model)
 
 ```sql
-memory_identifier (
-    event_id       uuid,
-    identifier     text,
-    identifier_kind text
+diary_identifier (
+    passage_id    uuid references diary_passage(id),
+    kind          text,   -- url | commit | path | symbol | error | issue | model
+    value         text,
+    primary key (passage_id, kind, value)
 );
 ```
 
-Possible kinds:
+Regular expressions, not a model: URLs, 7-40 hex-digit hashes, paths with
+a slash and an extension, `CamelCase` and `snake_case()` tokens inside code
+spans, lines that look like exceptions, `#123`-style references, model
+names in `name:tag` form. Exact and prefix lookup on `value` is the first
+route for any query that itself contains such a token. This layer alone
+answers the first of the two questions above, and it costs nothing to
+rebuild.
 
-```text
-code_symbol
-commit_hash
-url
-route
-filename
-error_signature
-model_name
-issue_id
-```
-
-Exact search should be preferred for these fields.
-
-## Model state changes explicitly
-
-An event should be able to supersede prior state.
-
-Example:
-
-```text
-2026-01: backend = Redis
-2026-04: backend = PostgreSQL
-```
-
-Store that as temporal state:
+## Layer 2 — events (one local-model pass per passage)
 
 ```sql
-memory_fact (
-    id              uuid primary key,
-    subject_id      uuid,
-    predicate       text,
-    object_value    jsonb,
+diary_event (
+    id                 uuid primary key,
+    passage_id         uuid references diary_passage(id),
+    occurred_on        date,           -- defaults to the passage date
+    kind               text,           -- see the vocabulary below
+    speaker            text,           -- self | named person | agent | quoted
+    summary            text,           -- one sentence, in the passage's language
+    extraction_version integer,
+    model              text
+);
 
-    valid_from      timestamptz,
-    valid_to        timestamptz null,
-
-    epistemic_status text,
-    source_event_id uuid,
-    superseded_by   uuid null
+diary_event_entity (
+    event_id     uuid references diary_event(id),
+    entity       text,                 -- normalized name
+    role         text,                 -- subject | object | mentioned
+    primary key (event_id, entity, role)
 );
 ```
 
-This lets the assistant answer:
+Kind vocabulary, kept small on purpose:
 
 ```text
-What do I use now?
+observation  decision  task  idea  question
+request      feedback  bug   experiment  result
 ```
 
-rather than returning both historical states as if they were simultaneously true.
+Revision 1 listed seventeen kinds; a small model sorts reliably into ten.
+Anything else is `observation` with entities.
 
-## Epistemic status
+`speaker` is not the trust actor. Every row here is `model_inferred` in the
+trust model's terms, because a model wrote the summary; `speaker` records
+who the diary says said it, so "a user asked for JSONL export" and "I
+decided to add it" never merge.
 
-Do not treat all extracted statements as facts.
+**Cost.** This is the pass that revision 1 never priced. A diary of 3 000
+passages at roughly 300 tokens each, with a 600-token instruction prefix
+shared across the run, is about 1 M input tokens and 150 k output tokens
+once. On the operator's local `gemma4:e4b` at the throughput measured on
+a live run today (about 700 tok/s uncached prefill, about 50 tok/s decode)
+that is roughly 25 minutes of prefill and 50 minutes of decode — an hour
+and a quarter, once per `extraction_version`, never per turn. The pass is incremental (only passages
+without a row at the current version), resumable, and runs as a background
+job on the assistant's model slot with the same structured-output contract
+as every other call — no tool calling, one JSON object per passage, no
+example values in the instruction.
 
-Useful values:
+## Layer 3 — beliefs (candidates into the existing store)
 
-```text
-observed
-reported_by_other
-hypothesized
-inferred
-confirmed
-disproved
-superseded
+From events of kind `decision`, `result` and any event with a
+`subject`-`predicate` shape, the pass proposes `memory_claim` candidates
+through the governed write path, actor `model_inferred`, with a
+`memory_evidence` row of `source_type = diary_passage`. They obey every
+existing rule: candidate status, tombstones, conflict detection on
+`subj_pred_key`. What is new is `valid_from = occurred_on`, so two
+decisions six months apart about the same predicate become an ordered
+history rather than a conflict.
+
+The operator confirms candidates on `/memory` as today. The diary does not
+get a shortcut past confirmation: its *passages* are trusted as quotes, its
+*claims* are not trusted as beliefs until confirmed. That split is the
+whole reason principle 3 exists.
+
+## Layer 4 — threads (deterministic first, model second)
+
+```sql
+diary_thread (
+    id          uuid primary key,
+    title       text,
+    kind        text,        -- topic | debugging | project | person
+    opened_on   date,
+    closed_on   date null,
+    state       text null    -- one sentence, model-written, dated
+);
+
+diary_thread_event (
+    thread_id   uuid references diary_thread(id),
+    event_id    uuid references diary_event(id),
+    primary key (thread_id, event_id)
+);
 ```
 
-For example:
+A thread is what revision 1 called an episode or a memory object. The
+first assignment is deterministic: events sharing an entity within a
+window of days join the same thread. A model pass then writes only the
+`state` sentence, dated, from the thread's passages — a sentence, not a
+dossier, so there is nothing long enough to hallucinate a history into.
+The thread's content at retrieval time is its passages, quoted.
 
-```text
-"Service X crashed because of Y"
-```
+This replaces revision 1's consolidation ladder (daily → thread → monthly →
+object). Summaries of summaries are exactly the chain principle 3 forbids;
+a thread pointing at its passages gives the compact context revision 1
+wanted without a derived text that can go stale.
 
-may initially be a hypothesis and later be confirmed or disproved.
+## Not in the design
 
-## Retrieval
+- **Datalog.** Every query revision 1 wrote in Datalog (`open_commitment`,
+  `follow_up_needed`) is a join over `diary_event` and `memory_claim`. Write
+  them as SQL views first. Bring in a Datalog engine only when a query
+  needs recursion Postgres cannot express well — none of the listed ones
+  does. This removes a dependency and a second copy of the data.
+- **A graph database.** The relationships that matter (`supersedes`,
+  `conflicts_with`, `resolved_by`, `caused_by`) are columns or a small
+  `diary_relation(event_id, relation, target_event_id)` table; two hops is
+  a self-join.
+- **UMAP/HDBSCAN at runtime.** Useful as a one-off script under `tools/`
+  to look at the corpus and check whether threads cluster as expected;
+  never a source of truth and never in the request path.
+- **A canonical language.** Passages stay in their language; summaries are
+  written in the passage's language; entities are normalized strings the
+  extraction pass is told to keep language-independent (a project name is
+  the same in every language). The embedder is multilingual, so
+  cross-language recall is measured, not assumed.
 
-Use several retrieval routes:
+---
 
-1. exact identifier lookup
-2. PostgreSQL full-text search
-3. vector similarity
-4. temporal filtering
-5. actor filtering
-6. project/thread filtering
-7. structured SQL queries
-8. reranking over the merged candidate set
+# Retrieval
 
-Conceptually:
+The diary joins the existing hybrid path as one more candidate source, with
+two additions and one rule.
 
 ```text
 query
-  |
-  +--> exact symbols
-  +--> lexical search
-  +--> embeddings
-  +--> structured filters
-  +--> time constraints
-  |
-candidate union
-  |
-reranker
-  |
-context builder
+  ├─ contains an identifier?  →  diary_identifier exact/prefix  (first, cheap)
+  ├─ FTS over diary_passage.text
+  ├─ pgvector over passage embeddings
+  ├─ time filter (a date, "last spring", "before the rewrite")
+  └─ speaker filter ("what did people ask for")
+        ↓
+  candidate passages (+ the thread each belongs to)
+        ↓
+  recall-filter call (existing; scores claims, Q&A entries and passages alike)
+        ↓
+  context: kept claims as today, then passages quoted in a recalled fence
+           with their date and file, at most N passages, thread state
+           sentence when the passages share a thread
 ```
 
-## Strengths
+The rule: **a passage is injected verbatim, never summarized.** The budget
+follows the existing recalled-fence budget. If the best passages do not
+fit, fewer passages, never shorter ones — a truncated error message is
+worse than none.
 
-- simple mental model
-- works well with PostgreSQL
-- provenance is straightforward
-- excellent for timeline queries
-- supports exact technical retrieval
-- easy to inspect and debug
-- derived representations can be regenerated later
-
-## Weaknesses
-
-- entity resolution can become messy
-- high-level narratives are not represented naturally
-- multi-step causal questions require additional logic
-- many small events can create retrieval noise
-
-## Best fit
-
-Choose this if the first priority is:
-
-> Build something reliable, inspectable, and difficult to corrupt.
-
-For a first serious implementation, this is the strongest foundation.
+Time expressions resolve in code against the profile's timezone and the
+current local time, before the query reaches any index; a small model is
+not asked to do date arithmetic.
 
 ---
 
-# Proposal 2 — Temporal Knowledge Graph / Datalog Projection
+# Evaluation
 
-## Summary
-
-Represent extracted events and facts as a graph of actors, projects, concepts, events, artifacts, decisions, and relationships.
-
-The raw diary remains immutable, but a graph becomes the primary reasoning layer.
-
-This proposal is especially useful for questions involving relationships, history, causality, commitments, and multi-hop retrieval.
-
-## Example graph
-
-Synthetic diary fragment:
+Use the existing eval tables with a `diary_recall` case kind and a small
+synthetic diary fixture under `data/` (Terminator-universe content, several
+languages, no operator text). Case categories:
 
 ```text
-09:10
-A project user requested JSONL export.
-
-10:20
-I decided to investigate it next week.
-
-Two weeks later
-Implemented JSONL export in commit abc123.
+exact lookup        the query holds a hash / symbol / error string
+semantic recall     paraphrased topic, no shared tokens
+temporal recall     "what was I doing in the week of …"
+cross-language      query in one language, passage in another
+state change        two dated decisions; the answer is the later one
+open follow-ups     a request with no later result event
+who-said-it         a request by a person vs. the operator's own decision
 ```
 
-Possible graph:
-
-```text
-User_A
-  |
-  | requested
-  v
-Feature_JSONL
-  |
-  | creates
-  v
-Commitment_17
-  |
-  | assigned_to
-  v
-Self
-
-Commit_abc123
-  |
-  | implements
-  v
-Feature_JSONL
-
-Commitment_17
-  |
-  | resolved_by
-  v
-Commit_abc123
-```
-
-Now the assistant can answer:
-
-```text
-Which user requests are still unresolved?
-```
-
-without semantic search.
-
-## Datalog representation
-
-A derived Datalog database could contain:
-
-```prolog
-requested(user_a, jsonl_export, event_17).
-committed_to(self, investigate(jsonl_export), event_18).
-implemented(commit_abc123, jsonl_export).
-resolves(commit_abc123, event_18).
-```
-
-Rules can derive:
-
-```prolog
-open_commitment(C) :-
-    commitment(C),
-    not resolved(C).
-```
-
-Or:
-
-```prolog
-follow_up_needed(User, Request) :-
-    requested(User, Request, _),
-    committed_to(self, Request, _),
-    not resolved_request(Request).
-```
-
-## Why Datalog is attractive
-
-Compared with unrestricted Prolog, Datalog is a better fit for memory experiments because it is usually:
-
-- finite
-- declarative
-- easier to reason about
-- well suited to joins and rules
-- less dependent on procedural evaluation order
-
-The diary should not be stored only as Datalog.
-
-Instead:
-
-```text
-raw diary
-   |
-structured events
-   |
-canonical PostgreSQL representation
-   |
-generated Datalog facts
-```
-
-The Datalog layer should be disposable and regeneratable.
-
-## Temporal relationships
-
-Use explicit relations:
-
-```text
-precedes
-follows
-supersedes
-contradicts
-caused_by
-resolved_by
-elaborates
-reopens
-depends_on
-reported_by
-requested_by
-affects
-```
-
-This is particularly valuable for debugging episodes.
-
-Example:
-
-```text
-Bug_Report
-   |
-   +--> caused_by --> ConfigOverride
-   |
-   +--> investigated_by --> Experiment_4
-   |
-   +--> resolved_by --> Commit_abc123
-```
-
-## Threads and episodes
-
-A graph makes it natural to represent an episode:
-
-```text
-DebuggingEpisode_42
-  |
-  +-- symptom
-  +-- hypothesis
-  +-- failed experiment
-  +-- new observation
-  +-- decision
-  +-- fix
-  +-- regression
-```
-
-That gives the assistant something much closer to human episodic recall than isolated chunks.
-
-## Retrieval
-
-A query can use hybrid graph expansion:
-
-```text
-user query
-   |
-semantic seed retrieval
-   |
-matching entities/events
-   |
-1-2 graph hops
-   |
-candidate subgraph
-   |
-rerank
-```
-
-Example:
-
-```text
-"Why did I stop using feature X?"
-```
-
-could resolve:
-
-```text
-feature X
-  -> related decision
-  -> preceding failed experiments
-  -> diagnostic evidence
-  -> replacement design
-```
-
-## Strengths
-
-- excellent multi-hop retrieval
-- strong provenance
-- good representation of commitments and follow-ups
-- supports temporal reasoning
-- natural fit for Datalog experiments
-- useful for “why?” and “what led to?” questions
-- can expose unresolved relationships directly
-
-## Weaknesses
-
-- entity resolution becomes critical
-- extraction mistakes can create misleading graph edges
-- schema design can expand without bound
-- graph databases are not automatically better than PostgreSQL
-- requires careful handling of uncertainty
-
-## Best practice
-
-Do not attempt to build an ontology for everything.
-
-Prefer a small vocabulary of stable relationships and allow free-form tags for the long tail.
-
-For example:
-
-```text
-requested_by
-reported_by
-supersedes
-contradicts
-resolved_by
-caused_by
-related_to
-part_of
-```
-
-is better than inventing hundreds of predicates immediately.
-
-## Best fit
-
-Choose this if the research question is:
-
-> Can symbolic structure make long-term recall more reliable than semantic similarity alone?
-
-This is the most interesting proposal for Datalog/Prolog experimentation.
+Metrics: Recall@5 on passage ids, current-state correctness, and
+provenance correctness (the injected passage is the one the case names).
+Run the deterministic runner against: (A) FTS only, (B) FTS + vector,
+(C) B + identifier route, (D) C + threads. Ship a layer only when it moves
+its category without hurting the others — the same discipline the profile
+gate applies.
 
 ---
 
-# Proposal 3 — Hierarchical Semantic Memory with Consolidated “Memory Objects”
+# Order of work
 
-## Summary
+1. **Layer 0 + 1 + FTS + passage embeddings + the retrieval route.** No
+   model pass. This alone answers exact and semantic recall and is the
+   smallest thing that changes a real conversation.
+2. **Evaluation fixture and cases**, so 3 and 4 are measured.
+3. **Layer 2 events** as a background pass, and time/speaker filters.
+4. **Layer 3 claims** through the governed write path, with `valid_from`.
+5. **Layer 4 threads**, deterministic grouping first, the state sentence
+   second.
 
-Instead of primarily storing individual facts, periodically consolidate diary events into durable higher-level memory objects.
-
-Examples:
-
-```text
-project state
-person dossier
-research thread
-debugging episode
-decision history
-open commitments
-monthly summary
-current beliefs
-```
-
-This is closest to how an assistant might maintain a usable long-term working memory.
-
-## Hierarchy
-
-The diary naturally supports multiple resolutions:
-
-```text
-raw entry
-   |
-atomic event
-   |
-daily summary
-   |
-thread summary
-   |
-monthly summary
-   |
-long-running memory object
-```
-
-Example synthetic research thread:
-
-```text
-Topic: alternative retrieval methods
-
-Started:
-2026-02
-
-Current state:
-Actively comparing symbolic, vector, and graph approaches.
-
-Investigated:
-- method A
-- method B
-- method C
-
-Current hypothesis:
-Hybrid retrieval appears more robust than a single index.
-
-Open questions:
-- cross-language retrieval
-- temporal supersession
-- duplicate memories
-
-Important artifacts:
-- note-a.md
-- experiment-results.csv
-```
-
-That object is updated over time.
-
-## Memory object types
-
-Useful object types might include:
-
-```text
-PersonMemory
-ProjectMemory
-ResearchThread
-DebuggingEpisode
-DecisionRecord
-OpenCommitment
-KnowledgeState
-PreferenceState
-ArtifactHistory
-```
-
-Example:
-
-```yaml
-type: ResearchThread
-id: retrieval-research
-
-title: Retrieval architecture experiments
-
-status: active
-
-summary:
-  Investigating several representations for long-term assistant memory.
-
-questions:
-  - How much does semantic retrieval miss?
-  - Can symbolic retrieval improve precision?
-  - How should superseded state be represented?
-
-related_entities:
-  - postgres
-  - vector_search
-  - datalog
-
-sources:
-  - event:123
-  - event:175
-  - event:220
-
-last_updated: 2026-09-21
-```
-
-## Consolidation
-
-A consolidation pass compares new memories with existing objects:
-
-```text
-new event
-   |
-find related memory objects
-   |
-   +-- duplicate -----> reinforce
-   +-- elaboration ---> expand
-   +-- contradiction -> preserve + mark conflict
-   +-- state change --> supersede
-   +-- continuation --> append
-   +-- new topic -----> create object
-```
-
-The original source is never deleted.
-
-## Retrieval
-
-The assistant first retrieves high-level objects:
-
-```text
-query
-   |
-memory objects
-   |
-relevant episodes/threads
-   |
-supporting raw evidence
-```
-
-This prevents the system from filling context with twenty nearly identical diary chunks.
-
-A good context builder might include:
-
-```text
-1 current-state object
-2 relevant thread summaries
-3-5 supporting raw events
-```
-
-instead of:
-
-```text
-top 20 embedding matches
-```
-
-## Multilingual handling
-
-Keep original text in its original language.
-
-Derived memory objects may use a configurable canonical language, but concepts and identifiers should be language-independent where possible.
-
-For retrieval, evaluate:
-
-```text
-English query -> English source
-Spanish query -> Spanish source
-English query -> Spanish source
-Spanish query -> English source
-mixed query   -> mixed source
-```
-
-A multilingual embedding model can help, but structured entities and concepts should not depend on translation.
-
-## Clustering and UMAP
-
-UMAP is useful in this architecture as an exploratory layer:
-
-```text
-embeddings
-   |
-UMAP
-   |
-HDBSCAN
-   |
-candidate clusters
-   |
-LLM labels / summaries
-```
-
-Good uses:
-
-- discover major themes
-- inspect whether expected topics cluster
-- find outliers
-- identify candidate thread boundaries
-- debug the embedding space
-
-Less suitable uses:
-
-- determining current truth
-- deciding whether one state supersedes another
-- resolving commitments
-- representing causal history
-
-UMAP should be treated primarily as an analysis and routing tool, not as the canonical memory representation.
-
-## Strengths
-
-- produces compact context
-- resembles durable human memory
-- reduces duplicate retrieval
-- good conversational continuity
-- excellent for long-running projects and research threads
-- supports progressive summarization
-
-## Weaknesses
-
-- consolidation can hallucinate
-- summaries can erase important nuance
-- difficult to know when to update versus create
-- requires rigorous provenance
-- stale summaries can become dangerous
-
-## Best fit
-
-Choose this if the main goal is:
-
-> Make conversations feel continuous over months or years.
-
-This architecture is the most likely to reduce the subjective feeling of amnesia.
+Stop after any step if the eval says the next layer does not pay.
 
 ---
 
-# Recommended Best Practice — Hybrid Architecture
-
-None of the three proposals should be used alone.
-
-The strongest design is:
-
-```text
-                    immutable diary
-                          |
-                          v
-                 deterministic parser
-                          |
-              +-----------+-----------+
-              |                       |
-              v                       v
-      exact technical data      LLM extraction
-      URLs, hashes, symbols     events, actors,
-      timestamps, commands      relationships
-              |                       |
-              +-----------+-----------+
-                          |
-                          v
-                  temporal event store
-                          |
-              +-----------+------------+
-              |            |            |
-              v            v            v
-           vectors      graph facts   summaries
-           + FTS         / Datalog     / memory
-                                       objects
-              \            |            /
-               \           |           /
-                +----------+----------+
-                           |
-                    retrieval router
-                           |
-                 candidate aggregation
-                           |
-                       reranker
-                           |
-                    context builder
-```
-
-The canonical source of truth should be:
-
-```text
-1. immutable source text
-2. structured events with provenance
-```
-
-Everything else should be rebuildable.
-
-That includes:
-
-- embeddings
-- Datalog facts
-- graph edges
-- summaries
-- UMAP coordinates
-- clusters
-- entity dossiers
-
-If an extraction model improves later, the derived layers can be regenerated.
-
----
-
-# Recommended PostgreSQL Layout
-
-A practical starting point:
-
-```text
-diary_source
-memory_event
-actor
-entity
-event_entity
-memory_fact
-memory_relation
-memory_identifier
-memory_embedding
-memory_thread
-thread_event
-memory_object
-memory_object_source
-```
-
-Do not start with all of them.
-
-A minimal first experiment could use:
-
-```text
-diary_source
-memory_event
-entity
-event_entity
-memory_embedding
-memory_relation
-```
-
-Then add memory objects after observing actual retrieval failures.
-
----
-
-# Retrieval Best Practices
-
-## 1. Route before retrieving
-
-Classify the query first.
-
-Examples:
-
-```text
-exact technical lookup
-temporal question
-person/entity question
-project question
-diagnostic question
-open commitment
-semantic recall
-```
-
-Different query types should use different indexes.
-
-## 2. Prefer exact retrieval for exact artifacts
-
-If the query contains:
-
-```text
-commit hash
-filename
-function name
-class name
-error message
-URL
-issue number
-```
-
-search exact and lexical indexes before embeddings.
-
-## 3. Use embeddings for semantic recall, not truth
-
-Embeddings are good for:
-
-```text
-"that experiment about model memory"
-```
-
-They are poor at determining:
-
-```text
-what is currently true?
-which value superseded another?
-was this fixed?
-who said this?
-```
-
-## 4. Preserve provenance
-
-Every derived claim should be traceable to one or more source passages.
-
-Never allow:
-
-```text
-summary -> summary -> summary -> fact
-```
-
-without retaining source references.
-
-## 5. Represent uncertainty
-
-Use confidence and epistemic state.
-
-A memory system should know the difference between:
-
-```text
-observed
-claimed
-suspected
-confirmed
-disproved
-superseded
-```
-
-## 6. Keep actors separate
-
-Do not collapse:
-
-```text
-user statement
-external user's statement
-AI-generated suggestion
-quoted web content
-```
-
-into a single pool of asserted facts.
-
-## 7. Store current state separately from history
-
-Keep both:
-
-```text
-historical events
-current projection
-```
-
-The historical log answers:
-
-```text
-What happened?
-```
-
-The projection answers:
-
-```text
-What is true now?
-```
-
----
-
-# Experimental Plan
-
-The goal should not be to choose an architecture by intuition.
-
-Build a small benchmark from real questions you would naturally ask your assistant.
-
-Do not include sensitive content in public test fixtures.
-
-## Query categories
-
-Create questions across:
-
-```text
-exact lookup
-semantic recall
-temporal recall
-cross-language retrieval
-state changes
-debugging history
-external feedback
-open follow-ups
-decision rationale
-multi-hop relationships
-```
-
-## Compare systems
-
-Run the same benchmark against:
-
-```text
-A. vector search only
-B. vector + reranker
-C. vector + FTS
-D. event store + hybrid retrieval
-E. event store + Datalog
-F. event store + memory objects
-G. full hybrid
-```
-
-## Metrics
-
-Useful metrics:
-
-```text
-Recall@5
-Recall@10
-MRR
-irrelevant-context rate
-duplicate-context rate
-answerability after retrieval
-provenance correctness
-current-state correctness
-```
-
-The last two matter more than standard retrieval metrics for a memory system.
-
-A system that retrieves the historical value perfectly but answers with obsolete state is still failing.
-
----
-
-# Recommended Order of Implementation
-
-## Phase 1 — Establish the event model
-
-Implement:
-
-```text
-immutable source
-timestamps
-event kinds
-actors
-entities
-exact identifiers
-multilingual embeddings
-FTS
-```
-
-## Phase 2 — Add temporal state
-
-Implement:
-
-```text
-supersedes
-contradicts
-resolved_by
-current-state projections
-```
-
-## Phase 3 — Add Datalog
-
-Generate a small Datalog projection and test relational queries.
-
-Avoid trying to encode the entire diary ontology.
-
-## Phase 4 — Add memory objects
-
-Introduce:
-
-```text
-research threads
-debugging episodes
-project state
-open commitments
-```
-
-Measure whether conversational continuity improves.
-
-## Phase 5 — Explore UMAP/clustering
-
-Use it to understand the corpus and discover themes.
-
-Do not make it responsible for correctness.
-
----
-
-# Overall Recommendation
-
-Use **Proposal 1 as the foundation**, **Proposal 2 as the reasoning experiment**, and **Proposal 3 as the conversational memory layer**.
-
-In shorthand:
-
-```text
-Event store = truth and provenance
-Graph/Datalog = relationships and reasoning
-Memory objects = compression and continuity
-Vectors/FTS = discovery
-UMAP = exploration
-```
-
-The most important best practice is not a particular database or algorithm.
-
-It is to avoid having a single representation of memory.
-
-A long-running diary contains exact strings, events, changing state, relationships, commitments, observations, external statements, technical evidence, and high-level narratives. Each of those benefits from a different representation.
-
-The original diary should remain immutable.
-
-Everything else should be a derived, versioned, rebuildable projection.
+# What this proposal decides
+
+- One design, four layers, all rebuildable from the files.
+- The passage is the unit of retrieval and is quoted; structure is index.
+- Beliefs go through the existing store and trust model; the only schema
+  change to `memory_claim` is `valid_from`.
+- No Datalog, no graph store, no consolidation ladder, no canonical
+  language, no runtime clustering.
+- Extraction is priced, versioned, incremental, and off the request path.
