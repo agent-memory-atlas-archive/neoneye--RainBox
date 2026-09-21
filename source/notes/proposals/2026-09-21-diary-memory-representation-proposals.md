@@ -1,7 +1,7 @@
 # Representing a Long-Running Diary for AI Memory
 
 **Status:** Proposal. The diary-specific components below are not built.
-**Date:** 2026-09-21 (revision 4)
+**Date:** 2026-09-21 (revision 5)
 **Relates to:** [memory architecture](../memory-architecture.md),
 [Q&A system](../qa-system.md),
 [recall and retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
@@ -14,6 +14,16 @@ search, and passage embeddings. Return cited source text. Add event extraction,
 reviewable belief proposals, and thread navigation only when they improve
 measured recall. Reuse RainBox's governed belief store; do not turn a diary
 import into automatic belief confirmation.
+
+**Revision 5 — more than one dialect.** The diary spans decades and its
+format changed along the way. Revision 4 described only the current one
+(a `YYYYMMDD` line, then `HHhMM` entries). Older years use a ChangeLog
+shape: a header of `DD-month-YYYY` plus an author token, `*` bullets with
+indented continuation lines, no times, and the newest day first. The
+splitter is therefore a registry of versioned dialect recognizers chosen
+per file, entry order comes from parsed dates and never from file
+position, and date parsing accepts numeric and month-name forms in more
+than one language. The eval "Format" family gains dialect cases.
 
 **Revision 4 — the real format, addressees, and the assistant's own diary.**
 Revisions 1–3 assumed a folder of dated Markdown files. The diary is plain
@@ -41,11 +51,13 @@ in git.
 
 ## The problem and the answer contract
 
-The input is plain text the operator has appended to for years and
-occasionally corrects. Its grammar is fixed and small: a line holding one
-date, `YYYYMMDD`, then entries each opened by a time line — a start time
-`HHhMM` or a range `HHhMM - HHhMM` — followed by free text until the next
-time line or date line. Nothing else is structured. A synthetic day in
+The input is plain text the operator has appended to for decades and
+occasionally corrects. The format has changed over the years, and the
+files keep whichever shape they were written in, so the design assumes a
+small set of **dialects**, each with a fixed and small grammar. The
+current one: a line holding one date, `YYYYMMDD`, then entries each opened
+by a time line — a start time `HHhMM` or a range `HHhMM - HHhMM` — followed
+by free text until the next time line or date line. A synthetic day in
 that shape:
 
 ```text
@@ -76,6 +88,24 @@ next week.
 
 13h15
 Mein Rücken fühlt sich wieder normal an.
+```
+
+An older dialect is a ChangeLog: a header line of a day-month-year date
+with the month spelled out, followed by an author token, then one `*`
+bullet per entry with continuation lines indented, no times, and the
+newest day first in the file. Synthetic:
+
+```text
+27-juli-2027 kreese
+*	refactoring: true/false return values from commands have been
+	replaced by an exception system; a thrown exception means no
+	modification occurred. This has improved robustness a lot.
+*	version 0.8 is released.
+*	bugfix: Edit::VSpace#move_left did not report its change,
+	trashing undo/redo completely.
+
+26-juli-2027 kreese
+*	re-enabled Buffer#test_exception_xxx.
 ```
 
 Entries mix languages, sometimes inside one entry; carry exact technical
@@ -166,14 +196,17 @@ diary_revision
   id, file_id, content_sha256, raw_bytes, ingested_at
 
 diary_passage
-  id, revision_id, byte_start, byte_end, text_hash, splitter_version,
-  recorded_start, recorded_end, time_basis, language_hint
+  id, revision_id, byte_start, byte_end, text_hash,
+  dialect, dialect_version,
+  recorded_start, recorded_end, time_basis, author_token, language_hint
 
 diary_embedding
   passage_id, model_digest, input_hash, dimension, embedding
 ```
 
-A passage is one diary entry: the time line and the text under it.
+A passage is one diary entry in whatever dialect the file is written in:
+a time line and the text under it, or one `*` bullet with its
+continuation lines.
 `root_key` resolves an operator-configured diary root; it is not a path supplied
 by the model. Scope and sensitivity are configured at the source and inherited
 by all derived objects. Start with explicit room/agent access and private
@@ -199,19 +232,42 @@ normal current-source search.
 
 ### Splitting and incremental ingestion
 
-The splitter is two anchored patterns, versioned: a line that is exactly
-eight digits sets the current date; a line matching
-`^\d{2}h\d{2}( - \d{2}h\d{2})?$` opens an entry that runs to the next such
-line or the next date line. Text between a date line and the first time line
-(the "Woke at…" paragraph above) is an entry with `time_basis = date_only`.
-`recorded_start` is the date plus the entry time in the profile's timezone,
-`recorded_end` the range end when there is one; a time earlier than the
-previous entry's on the same date is kept as written and flagged, not
-reordered. A malformed time line is text, not a boundary. Nothing else in
-the body is parsed. A chunk cap is a bound, not a reason to split an entry
-into sentences: an oversized entry is sliced at line boundaries with all
-continuations labeled and neighbor links retained; a pathological single
-long line needs bounded UTF-8-safe slices, marked as partial.
+The splitter is a registry of **dialect recognizers**, each a few anchored
+patterns, each versioned on its own. A file's dialect is chosen once per
+revision by which recognizer matches the most header lines; a tie or a
+file with no recognized header falls back to the `plain` dialect
+(blank-line paragraphs, `time_basis = unknown`, no dates) so nothing is
+lost, only unlabeled. The dialect and its version are stored on every
+passage, and a recognizer change re-splits only files of that dialect.
+
+- **`timed`** (current): a line that is exactly eight digits sets the
+  current date; a line matching `^\d{2}h\d{2}( - \d{2}h\d{2})?$` opens an
+  entry that runs to the next such line or date line. Text between a date
+  line and the first time line is an entry with `time_basis = date_only`.
+  `recorded_start` is the date plus the entry time in the profile's
+  timezone, `recorded_end` the range end when there is one; a time earlier
+  than the previous entry's on the same date is kept as written and
+  flagged, not reordered. A malformed time line is text, not a boundary.
+- **`changelog`** (older years): a header line `<day>-<month>-<year>
+  <token>` sets the current date and records the token as
+  `author_token` (it is not parsed as a name anywhere else; speaker stays
+  `self` unless Layer 2 finds otherwise); each following line starting
+  with `*` opens an entry that runs until the next `*` line, header line
+  or blank line, with indented continuation lines folded in.
+  `time_basis = date_only` for every entry; entries within a day keep
+  file order as their tie-break, and days are ordered by the parsed date,
+  because this dialect lists the newest day first.
+
+Dates are parsed by one shared routine that accepts the numeric forms
+(`YYYYMMDD`, `DD-MM-YYYY`) and the day-month-year form with the month
+spelled out, matched case-insensitively against a per-language table of
+month names (full and three-letter, in the profile's declared languages
+plus English); an unparseable date leaves the passage undated rather than
+guessing. Nothing else in a body is parsed. A chunk cap is a bound, not a
+reason to split an entry into sentences: an oversized entry is sliced at
+line boundaries with all continuations labeled and neighbor links
+retained; a pathological single long line needs bounded UTF-8-safe slices,
+marked as partial.
 
 Build a revision from one stable read, verify its hash, and publish its passages
 and deterministic indexes by atomically changing `current_revision_id`. A file
@@ -579,9 +635,10 @@ first retriever ships. Include code, prose, duplicate paragraphs, long entries
 and file revisions. Keep operator text out of repository fixtures and CI output.
 Each case names the query, mode, access context, fixed clock/timezone, source
 revision manifest, required evidence ranges and forbidden passages. The
-fixture is in the real grammar (date lines, time lines, ranges), two
-languages, Terminator-universe content, with both an operator diary and an
-assistant diary.
+fixture covers both dialects (date and time lines with ranges; ChangeLog
+headers with bullets), two languages including a spelled-out month name,
+Terminator-universe content and author tokens, with both an operator diary
+and an assistant diary.
 
 | Family | Cases that distinguish success from a plausible-looking answer |
 |---|---|
@@ -591,7 +648,7 @@ assistant diary.
 | History/current state | Earlier decision + reversal + stated reason; no reason; confirmed state vs newer unconfirmed mention |
 | Attribution/outcomes | Quoted person vs operator, pasted agent commands, unsupported causal links, incomplete outcome coverage |
 | Addressee | A `/word` line and an imperative to the agent come back as past requests, never as tasks the answer performs; a `task` for self is not an instruction; an operator goal is not an agent goal |
-| Format | Ranges, an entry before the first time line, two dates in one file, a malformed time line, a time earlier than the previous entry, a one-line entry, an entry that mixes two languages |
+| Format | Both dialects in one fixture; a file whose dialect is ambiguous falls back to `plain`; ranges; an entry before the first time line; two dates in one file; a malformed time line; a time earlier than the previous entry; newest-first `changelog` days ordered by date; a bullet with three continuation lines; a month name in another language; a one-line entry; an entry that mixes two languages |
 | Assistant diary | "What did you do on the 12th" answered from the assistant's file with the run identifier; the two diaries never merge speakers |
 | Lifecycle | Append, duplicate text, edits, rename/removal, stale workers/vectors, empty extraction, retries, re-extraction without added support |
 | Context/access | Answer near middle/end of long block, budget exhaustion, hidden neighbor/thread member, excluded citation, adversarial fence text |
@@ -631,7 +688,8 @@ layer disabled when the evidence is too small or mixed to justify its cost.
 ## Order of work and stopping points
 
 1. **Fixture and source contract:** define eligible sources, revision/range
-   semantics, exclusions, splitter caps, lookup behavior and evaluation cases.
+   semantics, exclusions, the dialect registry and its fallback, splitter
+   caps, lookup behavior and evaluation cases.
    This makes provenance and access testable before retrieval integration.
 2. **Smallest useful retrieval:** Layer 0 + Layer 1, explicit `memory_query`
    integration, source viewer, bounded rendering and diagnostics. Ship literal
