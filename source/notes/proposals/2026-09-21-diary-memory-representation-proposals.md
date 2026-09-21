@@ -1,54 +1,20 @@
 # Diary Memory: First-Release Implementation Specification
 
-**Status:** Ready to implement the v1 scope below. No diary components are built.
-**Date:** 2026-09-21 (revision 11)
+**Status:** Ready to implement. No diary components are built.
+**Date:** 2026-09-21
 **Related:** [memory architecture](../memory-architecture.md),
 [Q&A](../qa-system.md), [retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
 [eval loop](../eval-loop.md), [testing](../testing.md),
 [assistant design](../assistant-design.md).
 
-**Build v1 as a read-only diary search service:** import configured UTF-8 files,
+**Build the first release as a read-only diary search service:** import configured UTF-8 files,
 retain immutable snapshots, parse their historical formats, search original
 passages, and return bounded citations through an explicit `memory_query` diary
 branch. Test it on synthetic data, then pilot one real month in the sandbox.
 
-Revision 11 answers an outside review that read revision 10 as a maintainer
-would. Its verdict: the boundary between deterministic retrieval and
-generative work is right, and the parser's failure modes are too brittle for
-text humans actually write. Accepted and fixed here: an unmatched fence no
-longer swallows a file (it closes at the next date header or after a byte
-cap); a stale override is a warning, not a quarantine; the parser works in
-one unit (code points) and converts to bytes only at the edge; the BOM has a
-defined coordinate; a merged excerpt that would exceed its cap is not
-truncated but split into separately budgeted windows. Accepted in direction
-but scaled to this corpus: the trigram index becomes automatic above a size
-threshold rather than a manual gate. Declined: dropping the composite key
-that ties a file's publication pointer to its own generations — that one
-constraint is what makes "there is no separate active flag" true; the
-second, redundant composite (generation → revision) is dropped instead.
-
-Revision 10 is a verification pass over revision 9. Every code fact it cites
-— the recall stage, the fence helper, the observation caps, the audit
-shortening, the bootstrap constraint names, the test files — was checked
-against the repository and holds. The pinned terminal regex was run against
-the synthetic samples and behaves as described, including on URLs carrying a
-`#` fragment. Three changes follow from what the checks turned up: month
-names come from the installed `babel` tables for whatever languages the
-manifest lists, so a fourth language is configuration rather than a parser
-change; the literal route gets the same optional, gated index treatment as
-vectors (`pg_trgm`); and the regex's one known false-positive class is
-recorded with the override that resolves it.
-
-Revision 9 replaces the earlier overlapping policies with one implementation
-contract. It resolves configuration, parser precedence, schema constraints,
-publication, query arguments, pagination, output limits, migration and rollout.
-The pilot now follows the components it needs. Events, belief promotion, threads
-and assistant-diary export remain follow-on work, not hidden v1 prerequisites.
-Earlier design and revision history remain in git.
-
 ## 1. Release boundary and decisions
 
-| In v1 | Deferred |
+| In scope | Deferred |
 |---|---|
 | Directory-selected `timed`, `daily`, `changelog`, `plain` parsers | Automatic dialect classification, non-UTF-8 conversion |
 | Immutable bytes, versioned parses, bounded passages and citations | Cross-file entity resolution and causal relationships |
@@ -75,16 +41,17 @@ Decisions are code defaults unless marked as configuration:
   edit does not change the source; an explicit source edit creates new parses.
   Written local dates/times remain the primary values.
 - **Access:** each source belongs to one room, optionally one agent in that room.
-  No global/project diary sources in v1. `private` does not establish isolation.
+  No global/project diary sources. `private` does not establish isolation.
 - **Search:** exact filtered vectors first. HNSW is an optional, measured
   optimization with a defined fallback; it is not needed to run the pilot.
-- **Reranking:** deterministic rank fusion in v1, with no generative recall
+- **Reranking:** deterministic rank fusion, with no generative recall
   filter. Preserve the existing claim/Q&A branch and its configured backend.
 - **Budget:** use explicit character limits compatible with today's assistant.
-  The previous “1,200 tokens” is not enforceable by the current character-based
-  prompt pipeline; do not describe a character count as a token guarantee.
+  A token budget is not enforceable by the current character-based prompt
+  pipeline; do not describe a character count as a token guarantee.
 - **Human control:** source files are never edited. Import, embedding and
-  source-policy changes run outside the request path. V1 writes no claims.
+  source-policy changes run outside the request path. The first release writes
+  no claims.
 
 The first release answers “find this error,” “what did I record that day?” and
 “show the passages about this design.” It can present a historical sequence.
@@ -198,7 +165,7 @@ except the current-generation pointer. A source record is retained on purge.
 | `diary_source` | `name text`, `root_path text`, `room_uuid uuid`, `agent_uuid uuid?`, `timezone text`, `sensitivity text`, `config jsonb`, `enabled bool=false`, `vector_mode text=off`, `embedding_spec jsonb?`, `policy_version bigint=1`, `catalog_version bigint=1`, `created_at`, `updated_at` | Unique name and canonical root; sensitivity in private/secret; vector_mode off/exact/hnsw; positive versions |
 | `diary_file` | `source_uuid FK`, `relative_path text`, `current_generation_uuid uuid?`, `availability text`, `last_seen_at`, `diagnostics jsonb=[]` | Unique `(source_uuid,relative_path)`; availability pending/ready/quarantined/missing |
 | `diary_revision` | `file_uuid FK`, `sha256 text`, `raw_bytes bytea`, `first_ingested_at` | Unique `(file_uuid,sha256)` |
-| `diary_generation` | `file_uuid FK`, `revision_uuid FK`, `parser_fingerprint text`, `parser_config jsonb`, `dialect text`, `diagnostics jsonb=[]`, `coverage jsonb`, `created_at` | Unique `(revision_uuid,parser_fingerprint)` and `(uuid,file_uuid)`; plain FK to revision — that the revision belongs to the same file is checked in the publisher's transaction, not by a second composite key; dialect enum |
+| `diary_generation` | `file_uuid FK`, `revision_uuid FK`, `parser_fingerprint text`, `parser_config jsonb`, `dialect text`, `diagnostics jsonb=[]`, `coverage jsonb`, `created_at` | Unique `(revision_uuid,parser_fingerprint)` and `(uuid,file_uuid)`; plain FK to revision; that the revision belongs to the same file is checked in the publisher's transaction; dialect enum |
 | `diary_entry` | `generation_uuid FK`, `ordinal int`, `byte_start bigint`, `byte_end bigint`, `text text`, `date_local date?`, `clock_start time?`, `clock_end time?`, `date_basis text`, `time_status text`, `author_token text?`, `context_ranges jsonb=[]` | Unique `(generation_uuid,ordinal)`; positive nonempty range; ordinal ≥ 0 |
 | `diary_passage` | `entry_uuid FK`, `part_index int`, `byte_start bigint`, `byte_end bigint`, `text text`, `text_hash text`, `search_vector tsvector` | Unique `(entry_uuid,part_index)`; positive range; part_index ≥ 0 |
 | `diary_annotation` | `entry_uuid FK`, `kind text`, `subtype text`, `value text`, `byte_start bigint`, `byte_end bigint`, `basis text` | Unique `(entry_uuid,kind,subtype,byte_start,byte_end,value)`; kinds identifier/command_hint/idea_hint/pasted; basis rule/explicit_override |
@@ -216,7 +183,7 @@ the entry. Identifier rules are conservative and fixture-pinned: HTTP(S) URLs,
 7–40 hex-digit runs with token boundaries, slash-containing non-whitespace paths,
 code-span symbols, `#` plus digits, and model `name:tag` tokens. Overlapping kinds
 are allowed. Coverage of unusual identifiers comes from literal mode.
-Keep the schema narrow; no event/extraction/promotion tables are created in v1.
+Keep the schema narrow; no event/extraction/promotion tables exist.
 
 Add a deferred composite FK from
 `diary_file(current_generation_uuid,uuid)` to
@@ -324,8 +291,8 @@ inside it does not end it. A header-shaped line suppressed there produces a
 `possible_boundary_in_terminal` diagnostic. The region is a parsing heuristic,
 not a verified speaker label; the following prose is not automatically quoted.
 
-Two empty lines can also occur in terminal output. V1 makes this choice explicit
-rather than claiming perfect recognition: retain the raw bytes, flag boundary
+Two empty lines can also occur in terminal output. The parser makes this choice
+explicit rather than claiming perfect recognition: retain the raw bytes, flag boundary
 candidates immediately after such a region, and use hash-bound overrides when
 inspection shows a false split. No content is discarded to resolve ambiguity.
 
@@ -357,7 +324,8 @@ author typed a record or when its event occurred. An end earlier than a start is
 `invalid_range`; do not infer midnight rollover. DST gaps/overlaps are
 `ambiguous`; retain local values without inventing a unique UTC instant.
 Date-only entries do not acquire midnight timestamps. The generation records
-its assumed source timezone. V1 filters local calendar dates, not UTC instants.
+its assumed source timezone. Filters apply to local calendar dates, not UTC
+instants.
 
 Source order controls neighbors. Timeline order is
 `(date_local, clock_start NULLS FIRST, source_uuid, relative_path, ordinal,
@@ -377,7 +345,7 @@ Every diagnostic code has a fixture. Expected free-form body lines are not error
 
 ## 6. Import, exclusion and publication state machine
 
-`sync_source(source_uuid)` is CLI-only in v1. Acquire a session-level PostgreSQL
+`sync_source(source_uuid)` is CLI-only. Acquire a session-level PostgreSQL
 advisory lock on a dedicated connection for that source; another sync returns
 `busy`. Hold it across per-file transactions and release it in `finally`.
 Model/network calls never run under that lock or an open write transaction.
@@ -418,7 +386,7 @@ An unchanged append preserves byte locators to the old snapshot; new passage IDs
 may differ. Reuse vector work only for identical complete embedding inputs.
 No general occurrence-lineage algorithm is required until belief promotion.
 
-V1 exclusions are **file-level**, keyed by source and relative path, and apply to
+Exclusions are **file-level**, keyed by source and relative path, and apply to
 all revisions and all routes. They survive rebuilds and purges. `exclude` takes
 effect immediately; `unexclude` is an explicit local operation. An excluded file
 that disappears while new files appear is a potential rename: disable that source
@@ -467,7 +435,7 @@ Contract:
   `ok=false,error=invalid_request` before retrieval. Disabled diary returns
   `ok=false,error=diary_disabled`. Search with no matches is a successful empty
   result. Partial routes return `ok=true` plus degraded/coverage metadata.
-- No free-form natural-language date parser in v1. `dateparser` is present in
+- No free-form natural-language date parser. `dateparser` is present in
   the venv for other features; the diary branch does not use it. The assistant
   supplies date bounds for clear requests; ambiguous “before the rewrite”
   uses search first.
@@ -554,7 +522,7 @@ page generates a cursor for its next position. CLI cleanup deletes expired rows.
 ### Embeddings and HNSW
 
 Use local `embeddinggemma:300m`, 768 dimensions, batches of 32 for backfill.
-Configure a loopback endpoint for v1 and record its model digest before a job.
+Configure a loopback endpoint and record its model digest before a job.
 The embedding input is exactly `passage.text`; inherited dates and author labels
 are retrieval metadata, not prose prepended to the vector. Cache by input SHA
 plus epoch (model name/digest, dimension and input-format version).
@@ -594,7 +562,7 @@ remains byte-exact; prompt text may contain escaped angle brackets. Each excerpt
 includes source name, path, diary date/time precision, snapshot time, citation and
 “historical diary data” label. No model-written summary or scorer explanation.
 
-| Limit | V1 value and meaning |
+| Limit | Value and meaning |
 |---|---|
 | Stored passage | 1,500 Unicode code points, no token-equivalence promise |
 | Search candidates | 20 per route; no generative scorer call |
@@ -688,7 +656,7 @@ activation. Copy one calendar month's selected files into a private scratch root
 use a sandbox source/room. Pin its file hashes and write 20 private queries with
 expected byte ranges before tuning: six literal, eight topical (at least two
 query/source language pairs), four timeline, and two negative queries. Do not
-require addressee extraction in this v1 pilot.
+require addressee extraction in this pilot.
 
 1. Dry-run, inspect every diagnostic, then `sync` and probe literal/FTS baseline A.
 2. `embed`; probe baseline B with vectors. Keep the same queries/gold ranges.
@@ -699,7 +667,7 @@ require addressee extraction in this v1 pilot.
    gold-range results, p50/p95 latency, cold/warm timings, DB/snapshot/index size,
    failures and fallback mode. Console diagnostics contain offsets, not snippets.
 
-**The v1 gate is executable:** all synthetic hard-invariant tests pass; every
+**The release gate is executable:** all synthetic hard-invariant tests pass; every
 pilot literal finds a gold match at rank 1; at least seven of eight topical
 queries inject a gold span; all four timelines enumerate expected entries through
 pagination without skips/duplicates; both negatives produce no false literal/date
@@ -716,16 +684,16 @@ route until fixed or an explicit new budget is recorded; it does not block
 continued development of other routes. A local-model outage must produce a
 bounded lexical result rather than a stalled or empty-success response.
 
-Revision 8 reported 44 ms for one warm embedding, 17 ms/passage in batches of 32,
-about 700 input and 50 output tokens/s for extraction, and a 9.8-second median
-assistant decide step. Preserve these as **reported planning observations**,
-not fresh measurements or release guarantees: no benchmark manifest accompanies
-them here. The pilot supplies reproducible measurements. Its query embedding is
+Planning observations taken on the operator's machine: 44 ms for one warm
+embedding, 17 ms/passage in batches of 32, about 700 input and 50 output
+tokens/s for extraction, and a 9.8-second median assistant decide step. These
+are **planning observations**, not release guarantees: no benchmark manifest
+accompanies them. The pilot supplies reproducible measurements. Its query embedding is
 a model call; “no model call” applies only to literal/FTS/timeline routes.
 
-Do not gate v1 on event extraction or “a weekend of GPU time.” For a later event
+Do not gate the first release on event extraction or “a weekend of GPU time.” For a later event
 pilot, record a seeded sample of up to 200 passages and measure actual prefix
-cache misses, output lengths and validation failures. The previous 12–15-hour
+cache misses, output lengths and validation failures. A 12–15-hour
 full-corpus estimate assumes prefix caching and roughly 50 output tokens per
 passage. Without caching, 40,000 repeated 600-token prefixes alone add 24 million
 input tokens. Extraction remains opt-in, initially one month and then at most
@@ -773,8 +741,8 @@ occurs on the first user query.
 
 ## 11. Follow-on designs: retain the direction, do not implement yet
 
-These were part of the earlier proposal. Each needs its own implementation
-contract and gate; none is implied by “v1 is ready.”
+Each needs its own implementation contract and gate; none is implied by the
+first release being ready.
 
 - **Events:** zero-or-more supported spans per entry, distinct author/speaker/
   addressee, diary time vs occurred time, uncertain attribution retained. Marker
