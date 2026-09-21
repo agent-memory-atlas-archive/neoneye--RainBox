@@ -1,61 +1,731 @@
-# Representing a Long-Running Diary for AI Memory
+# Diary Memory: First-Release Implementation Specification
 
-**Status:** Proposal. The diary-specific components below are not built.
-**Date:** 2026-09-21 (revision 8)
-**Relates to:** [memory architecture](../memory-architecture.md),
-[Q&A system](../qa-system.md),
-[recall and retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
-[memory design patterns](2026-06-30-memory-design-patterns.md),
-[eval loop](../eval-loop.md),
-[assistant design](../assistant-design.md) §Run summarizer.
+**Status:** Ready to implement the v1 scope below. No diary components are built.
+**Date:** 2026-09-21 (revision 9)
+**Related:** [memory architecture](../memory-architecture.md),
+[Q&A](../qa-system.md), [retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
+[eval loop](../eval-loop.md), [testing](../testing.md),
+[assistant design](../assistant-design.md).
 
-**Recommendation:** Start with versioned source passages, exact and lexical
-search, and passage embeddings. Return cited source text. Add event extraction,
-reviewable belief proposals, and thread navigation only when they improve
-measured recall. Reuse RainBox's governed belief store; do not turn a diary
-import into automatic belief confirmation.
+**Build v1 as a read-only diary search service:** import configured UTF-8 files,
+retain immutable snapshots, parse their historical formats, search original
+passages, and return bounded citations through an explicit `memory_query` diary
+branch. Test it on synthetic data, then pilot one real month in the sandbox.
 
-**Revision 8 — concrete.** Revision 7 is correct and complete as a contract,
-and too open to build from: its hard cases defer to "a policy" or "an
-override". This revision takes those decisions, replaces the illustrative
-cost figures with measurements taken on the operator's machine, fixes the
-retrieval budgets as numbers, names the vector index, and adds a **pilot on
-one month of diary** as the first thing to run — with its steps, the numbers
-it must report, and the criteria for going on to milestone 2.
+Revision 9 replaces the earlier overlapping policies with one implementation
+contract. It resolves configuration, parser precedence, schema constraints,
+publication, query arguments, pagination, output limits, migration and rollout.
+The pilot now follows the components it needs. Events, belief promotion, threads
+and assistant-diary export remain follow-on work, not hidden v1 prerequisites.
+Earlier design and revision history remain in git.
 
-**Revision 7 — distinguish syntax, interpretation and authority.** Keep the
-three historical diary dialects and the assistant diary introduced in revisions
-4–6. Correct their overconfident parsing and attribution rules: a plausible time,
-shell prompt or slash token is not conclusive evidence of an entry boundary or
-addressee. Separate file revisions from parser generations, make restrictive
-policy changes durable, and treat assistant digests as generated navigation to
-run evidence. The original source-first recommendation remains. Earlier
-revision history is in git.
+## 1. Release boundary and decisions
 
-## Decisions taken in revision 8
+| In v1 | Deferred |
+|---|---|
+| Directory-selected `timed`, `daily`, `changelog`, `plain` parsers | Automatic dialect classification, non-UTF-8 conversion |
+| Immutable bytes, versioned parses, bounded passages and citations | Cross-file entity resolution and causal relationships |
+| Literal/identifier search, FTS, optional local passage embeddings | Event/addressee extraction and generated sensitivity classification |
+| Search, literal lookup, dated timeline and citation read | A dedicated comparison planner; use multiple reads meanwhile |
+| Room isolation, optional agent restriction, source/file exclusions | Entry-level access rules and inferred policy changes |
+| CLI import, inspect, exclude, disable and source purge | Web management/viewer routes and automatic scheduled ingestion |
+| Explicit diary branch of `memory_query` | Mixing diary candidates into the existing claim/Q&A scorer |
+| Deterministic evals and a private pilot report | Belief writes, assistant-diary export, always-on profile/chat injection |
 
-These replace the "policy" and "override" deferrals below wherever they
-conflict. Each is reversible; none is worth a generic mechanism for one
-operator's files.
+Decisions are code defaults unless marked as configuration:
 
-| Question | Decision | Why |
+- **Encoding:** strict UTF-8 only. Preserve BOM/CRLF bytes; ignore a leading BOM
+  only for recognizing the first header. Invalid UTF-8 or NUL quarantines that
+  file. No automatic conversion or replacement characters.
+- **Dialect:** longest matching directory prefix in the source manifest, using
+  path-component boundaries; unmatched files are `plain`. No glob precedence.
+- **Timezone:** a required IANA timezone copied from the operator's profile into
+  source configuration. Apply it as an *assumed* zone to all eras. A later profile
+  edit does not change the source; an explicit source edit creates new parses.
+  Written local dates/times remain the primary values.
+- **Access:** each source belongs to one room, optionally one agent in that room.
+  No global/project diary sources in v1. `private` does not establish isolation.
+- **Search:** exact filtered vectors first. HNSW is an optional, measured
+  optimization with a defined fallback; it is not needed to run the pilot.
+- **Reranking:** deterministic rank fusion in v1, with no generative recall
+  filter. Preserve the existing claim/Q&A branch and its configured backend.
+- **Budget:** use explicit character limits compatible with today's assistant.
+  The previous “1,200 tokens” is not enforceable by the current character-based
+  prompt pipeline; do not describe a character count as a token guarantee.
+- **Human control:** source files are never edited. Import, embedding and
+  source-policy changes run outside the request path. V1 writes no claims.
+
+The first release answers “find this error,” “what did I record that day?” and
+“show the passages about this design.” It can present a historical sequence.
+It must not infer current truth from the latest passage, treat chronology as
+causation, or treat an old command as authorization to act now. Confirmed current
+state continues to come from the existing belief store.
+
+## 2. Repository integration and ownership
+
+Paths below are relative to `source/`; names marked **new** are proposed files.
+
+| Area | Implementation location | Boundary |
 |---|---|---|
-| How is a file's dialect chosen? | **By directory.** A small table maps each diary directory (or glob) to one dialect; the recognizer for that dialect only *validates* and reports diagnostics. Files outside every mapping are `plain`. | The three formats are historically contiguous. A mapping removes recognizer ambiguity and the "most matching lines" heuristic entirely. |
-| Encoding? | **UTF-8 only.** A file that fails to decode is quarantined with its path and byte offset; no offset maps, no per-file encoding override. | Legacy encodings are a one-off conversion job outside the app, not a runtime feature. |
-| Timezone for old entries? | **The profile timezone for every era**, recorded on each generation. | A per-era policy is correct in principle and has no data to feed it. |
-| `/goal`-style commands? | **A configured command vocabulary** (`/goal` plus whatever the operator lists) recognized only as the first token of an entry's first line; everything else with a leading slash is text. | Removes the `/tmp` false positive without a model. |
-| Layer 2 on how much? | **The pilot month first, then at most the latest two years**, extended only if the eval moves. Never the whole corpus by default. | Full extraction is 12–15 GPU-hours (see Measured costs) and reruns on every prompt change. |
-| Vector index? | **HNSW** on the passage embedding table (`vector_cosine_ops`, `m=16`, `ef_construction=64`), created after the first bulk load. | The existing claim table has no vector index; an exact scan is fine at hundreds of rows and 100 ms+ at forty thousand. |
-| Where does the diary enter a turn? | **`memory_query` only** for milestones 1–2; always-on injection is a separate decision after the eval. | As the document already says; now with the cost in seconds below. |
+| Models and bootstrap | [`db/models.py`](../../db/models.py), [`db/__init__.py`](../../db/__init__.py) | New tables and additive, idempotent constraint changes; no new migration framework |
+| DB operations | `db/diary.py` **new**, re-exported by `db/__init__.py` | Transactions, eligibility query, exclusions, cursor persistence |
+| Configuration/parser | `diary/config.py`, `diary/parsing.py` **new** | Pure validation/parsing; no DB, model or file writes |
+| Reconciliation | `diary/ingest.py` **new** | Stable reads, generation publication, filesystem reconciliation |
+| Retrieval/embeddings | `diary/retrieval.py`, `diary/embeddings.py` **new** | Injectable embedding client and deterministic candidate selection |
+| Rendering/action adapter | `diary/render.py`, `diary/action.py` **new** | Schema validation, bounded original excerpts, observation metadata |
+| Assistant integration | [`agents/assistant.py`](../../agents/assistant.py) | Capability args/description, diary dispatch, audit preservation |
+| CLI | `tools/diary.py` **new** | Import/inspect/pilot; explicit database selection before importing `db` |
+| Settings | [`db/settings.py`](../../db/settings.py) | `diary.enabled`, boolean, default false, env `RAINBOX_DIARY_ENABLED` |
+| Evaluation | `evals/diary.py` **new**, [`evals/runner.py`](../../evals/runner.py) | `diary_recall` cases with deterministic scoring and hard failures |
+| Fixtures | `data/diary_fixture/` **new** | Synthetic bytes, expected ranges and versioned query cases |
 
-## The problem and the answer contract
+Use a `diary/` package with `__init__.py`. Do not put ingestion in
+`memory/seed_memory.py` or overload `memory_embedding`: its foreign key points
+to claims. Reuse the local embedding client pattern, not its singleton cache
+without a model-version key. No new HTTP routes or authentication assumptions
+are needed for this release; the CLI is the source viewer.
+
+## 3. Source configuration
+
+The CLI imports a private JSON manifest into `diary_source`. The database is the
+runtime configuration; agents cannot supply roots, room identities or policy.
+A manifest update is explicit, validated in full before writing, and atomic.
+This is a synthetic example, not an existing installation:
+
+```json
+{
+  "schema_version": 1,
+  "name": "diary-pilot",
+  "root": "/private/tmp/rainbox-diary-pilot/input",
+  "room_uuid": "10000000-0000-4000-8000-000000000001",
+  "agent_uuid": null,
+  "timezone": "Europe/Copenhagen",
+  "sensitivity": "private",
+  "include_suffixes": [".txt"],
+  "dialect_rules": [
+    {"prefix": "current/", "dialect": "timed"},
+    {"prefix": "daily/", "dialect": "daily"},
+    {"prefix": "archive/", "dialect": "changelog"}
+  ],
+  "month_languages": ["en", "da", "de"],
+  "command_tokens": ["/goal"],
+  "author_tokens": {"kreese": "operator"},
+  "file_overrides": {}
+}
+```
+
+Validation and defaults:
+
+- Require an absolute existing directory, an existing room, and a valid agent
+  identity when supplied. Canonical roots are unique and may not overlap.
+  Sources start disabled. `sensitivity` is `private` or `secret`; secret sources
+  can be inspected locally but are never available to the assistant.
+- Prefixes are normalized relative POSIX directory paths, including a trailing
+  slash; `""` is the root prefix. Reject `..`, absolute prefixes, duplicates and
+  unknown dialects/languages. Suffix comparison is case-sensitive; `""` explicitly
+  allows extensionless files. Skip symlinks, including symlinked directories.
+- V1 month tables are code-owned English, Danish and German full/three-letter
+  names, matched case-insensitively. Unknown month tokens remain undated with a
+  diagnostic. Other languages require a tested parser change.
+- `file_overrides` keys are relative file paths. Each value contains
+  `content_sha256`, `force_boundary_offsets: []`, `suppress_boundary_offsets: []`
+  and `pasted_ranges: []`. Offsets refer to UTF-8 bytes at line starts; pasted
+  ranges are `[start,end)`. Validate bounds, overlap and conflicting overrides.
+  A hash mismatch quarantines the file until the override is updated or removed.
+  This is the sole file-level escape hatch for genuinely ambiguous syntax.
+- `command_tokens` supply hints only when the first body token exactly matches
+  and is outside pasted text. `/tmp` is not a command unless configured. `IDEA:`
+  is an idea marker, not proof of an addressee. Neither hint activates behavior.
+
+Keep immutable parser configuration on each generation. Its SHA-256 fingerprint
+covers canonical JSON, parser/identifier versions, chunk cap and month-table
+version. Policy fields have their own monotonically increasing `policy_version`;
+changing access does not require re-embedding content. Root changes require a
+new source rather than rebinding existing citations to another tree.
+
+## 4. Persistence contract
+
+Use UUID primary keys generated in Python. All columns are NOT NULL unless
+marked `?`; timestamps are UTC `timestamptz`, hashes are 64-character lowercase
+hex text, and JSON is JSONB. New dependent foreign keys use `ON DELETE CASCADE`
+except the current-generation pointer. A source record is retained on purge.
+
+| Table | Columns in addition to `uuid` | Uniqueness / checks |
+|---|---|---|
+| `diary_source` | `name text`, `root_path text`, `room_uuid uuid`, `agent_uuid uuid?`, `timezone text`, `sensitivity text`, `config jsonb`, `enabled bool=false`, `vector_mode text=off`, `embedding_spec jsonb?`, `policy_version bigint=1`, `catalog_version bigint=1`, `created_at`, `updated_at` | Unique name and canonical root; sensitivity in private/secret; vector_mode off/exact/hnsw; positive versions |
+| `diary_file` | `source_uuid FK`, `relative_path text`, `current_generation_uuid uuid?`, `availability text`, `last_seen_at`, `diagnostics jsonb=[]` | Unique `(source_uuid,relative_path)`; availability pending/ready/quarantined/missing |
+| `diary_revision` | `file_uuid FK`, `sha256 text`, `raw_bytes bytea`, `first_ingested_at` | Unique `(file_uuid,sha256)`; unique `(uuid,file_uuid)` for composite FK |
+| `diary_generation` | `file_uuid FK`, `revision_uuid uuid`, `parser_fingerprint text`, `parser_config jsonb`, `dialect text`, `diagnostics jsonb=[]`, `coverage jsonb`, `created_at` | Unique `(revision_uuid,parser_fingerprint)` and `(uuid,file_uuid)`; composite `(revision_uuid,file_uuid)` references revision; dialect enum |
+| `diary_entry` | `generation_uuid FK`, `ordinal int`, `byte_start bigint`, `byte_end bigint`, `text text`, `date_local date?`, `clock_start time?`, `clock_end time?`, `date_basis text`, `time_status text`, `author_token text?`, `context_ranges jsonb=[]` | Unique `(generation_uuid,ordinal)`; positive nonempty range; ordinal ≥ 0 |
+| `diary_passage` | `entry_uuid FK`, `part_index int`, `byte_start bigint`, `byte_end bigint`, `text text`, `text_hash text`, `search_vector tsvector` | Unique `(entry_uuid,part_index)`; positive range; part_index ≥ 0 |
+| `diary_annotation` | `entry_uuid FK`, `kind text`, `subtype text`, `value text`, `byte_start bigint`, `byte_end bigint`, `basis text` | Unique `(entry_uuid,kind,subtype,byte_start,byte_end,value)`; kinds identifier/command_hint/idea_hint/pasted; basis rule/explicit_override |
+| `diary_embedding` | `passage_uuid FK`, `model_epoch text`, `input_hash text`, `embedding vector(768)`, `created_at` | Unique `(passage_uuid,model_epoch,input_hash)`; reject nonfinite/zero vectors in adapter |
+| `diary_exclusion` | `source_uuid FK`, `relative_path text`, `created_at` | Unique `(source_uuid,relative_path)`; excludes the entire file, all revisions |
+| `diary_cursor` | `room_uuid uuid`, `agent_uuid uuid?`, `request jsonb`, `catalog_manifest jsonb`, `position jsonb`, `expires_at` | Opaque UUID; expires after 30 minutes; never contains copied source text |
+
+`date_basis` is `header`, `filename` or `unknown`.
+`time_status` is `date_only`, `minute`, `range`, `unknown`, `ambiguous` or
+`invalid_range`. For identifier annotations, subtype is `url`, `hash`, `path`,
+`symbol`, `issue` or `model`; other kinds use `none`. `value` is the original
+literal string, never a concatenated compound key. Pasted annotations use value
+`terminal_likely` or `fenced`. All annotation ranges must be nonempty and within
+the entry. Identifier rules are conservative and fixture-pinned: HTTP(S) URLs,
+7–40 hex-digit runs with token boundaries, slash-containing non-whitespace paths,
+code-span symbols, `#` plus digits, and model `name:tag` tokens. Overlapping kinds
+are allowed. Coverage of unusual identifiers comes from literal mode.
+Keep the schema narrow; no event/extraction/promotion tables are created in v1.
+
+Add a deferred composite FK from
+`diary_file(current_generation_uuid,uuid)` to
+`diary_generation(uuid,file_uuid)` after table creation. Clear the pointer before
+purging descendants. The pointer can reference only a generation of that file.
+It is the publication record: there is no separate “active” flag on passages.
+
+DB checks enforce nonempty ranges and enumerations. The publisher additionally
+validates child ranges against parent/snapshot bytes, UTF-8 boundaries, exact
+materialized text, hash matches and complete parser coverage before any switch.
+`coverage` stores nonoverlapping structural ranges tagged entry/header/separator;
+their union must be `[0,len(raw_bytes))`. Header context may be referenced by
+several entries but has one owner in coverage. Empty files have empty coverage.
+
+Required indexes:
+
+- B-tree on file source/path; generation file; entry generation/date/ordinal;
+  passage entry/part; annotation entry and `(kind,subtype,value)`; embedding passage/epoch;
+  exclusions source/path; cursors expiry. Unique constraints provide overlapping
+  indexes; do not duplicate those.
+- GIN on `diary_passage.search_vector`, populated with
+  `to_tsvector('simple', text)`. Searchable text is the exact passage, not a summary.
+- Optional HNSW on `diary_embedding.embedding` using `vector_cosine_ops`,
+  `m=16`, `ef_construction=64`, created by the CLI after bulk embedding. It is not
+  an automatic startup migration. Exact mode must remain exact even if it exists.
+
+### Migration and rollback
+
+Follow [`init_db`](../../db/__init__.py): add models, then explicit idempotent
+DDL for constraints on existing tables. Update both model declarations and
+bootstrap checks for `eval_case_case_type_check` (`diary_recall`) and
+`ck_retrieval_event_target_type` (`diary_passage`). Existing telemetry stages
+`retrieved` and `injected` suffice; no stage migration is needed.
+
+Change the existing bootstrap membership checks to recognize the complete
+expected target-type set. Otherwise its current “contains skill” check may leave
+an older constraint unchanged. Test fresh creation, upgrading a populated prior
+schema and running bootstrap twice. Do not alter claim/evidence schemas.
+
+Rollback disables `diary.enabled` and all sources before reverting runtime code.
+Retain tables, citations and exclusions; do not run a destructive downgrade or
+narrow enum constraints over existing diary rows. Purging a source is a separate
+CLI operation that disables it, clears file pointers, deletes its imported
+content/cursors and retains source configuration plus exclusions. It does not
+edit originals or erase past chat traces/backups.
+
+## 5. Parser algorithm and byte fidelity
+
+The three synthetic format examples are at the end of this document. Implement
+`parse_file(raw_bytes, relative_path, parser_config) -> ParsedFile` as a pure
+function. It emits entries, passages, annotations, coverage and diagnostics.
+No model participates. All offsets are **half-open UTF-8 byte ranges** into the
+revision; never Python character offsets. Do not normalize stored newlines or
+indentation. Maintain a character-to-byte index for slicing/search matches.
+
+### Precedence
+
+1. Strict decoding and override validation; failure quarantines the file.
+2. Explicit pasted-range and boundary overrides. Forced boundaries must still
+   have a valid header shape; they resolve context ambiguity, not invalid clocks.
+   Suppressed boundaries stay body text. Reject forced boundaries inside explicit
+   pasted ranges.
+3. Fenced regions: an opening run of at least three backticks/tildes, closed by
+   the same character with at least that length. Ignore date/time/bullet syntax
+   inside. An unmatched opener protects through EOF and emits a diagnostic.
+4. Likely terminal regions, then dialect boundary recognition outside them.
+5. Date/author context assignment, coverage validation, passage chunking.
+
+The terminal-start regex is
+`^(?:\$[ \t]|[A-Za-z0-9_.@-]+:[~/][^\r\n]*?[#$](?:[ \t]|$))`.
+It matches a leading `$ ` prompt or a host/path prompt such as
+`www:/srv/skynet/www#`, optionally followed by a command. Pin positive/negative
+fixtures. Once started, the likely terminal region includes successive prompts/output and ends before two
+consecutive empty lines, an explicit override boundary, or EOF. One empty line
+inside it does not end it. A header-shaped line suppressed there produces a
+`possible_boundary_in_terminal` diagnostic. The region is a parsing heuristic,
+not a verified speaker label; the following prose is not automatically quoted.
+
+Two empty lines can also occur in terminal output. V1 makes this choice explicit
+rather than claiming perfect recognition: retain the raw bytes, flag boundary
+candidates immediately after such a region, and use hash-bound overrides when
+inspection shows a false split. No content is discarded to resolve ambiguity.
+
+### Dialect rules
+
+| Dialect | Exact boundary rule | Other text |
+|---|---|---|
+| `timed` | Valid `YYYYMMDD` line at column zero; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
+| `daily` | Filename stem exactly `YYYY_MM_DD`; valid four-digit `HHMM` at column zero at file start or immediately after an empty line | Blank lines within a record remain in it; a candidate inside a protected span is suppressed |
+| `changelog` | Valid `DD-month-YYYY` plus whitespace and one author token; top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
+| `plain` | Nonempty blank-line-separated blocks | No inferred clock; use an unambiguous filename date if present |
+
+For recognition only, remove the line ending and trailing spaces/tabs. An empty
+line contains only spaces/tabs after removing its ending. Never remove those
+bytes from stored text. Validate days/months/leap years and hours `00–23`, minutes
+`00–59`; malformed headers remain text plus a diagnostic. Filename dates accept
+only complete stems `YYYYMMDD`, `YYYY_MM_DD`, or `DD-MM-YYYY`. Month-name headers
+use the configured tables. Do not find dates by scanning arbitrary body prose.
+
+For `timed` and `changelog`, a valid header takes precedence over a filename date;
+a mismatch emits `filename_header_mismatch`. For `daily`, an invalid filename
+falls back to plain undated blocks with `invalid_daily_filename`. Unknown author
+tokens remain literal tokens and never default to operator authorship.
+
+### Clocks, order and chunks
+
+Keep local dates and minute values as written. Time ranges do not prove when the
+author typed a record or when its event occurred. An end earlier than a start is
+`invalid_range`; do not infer midnight rollover. DST gaps/overlaps are
+`ambiguous`; retain local values without inventing a unique UTC instant.
+Date-only entries do not acquire midnight timestamps. The generation records
+its assumed source timezone. V1 filters local calendar dates, not UTC instants.
+
+Source order controls neighbors. Timeline order is
+`(date_local, clock_start NULLS FIRST, source_uuid, relative_path, ordinal,
+part_index)`; newest-first ChangeLogs therefore read chronologically in timelines
+while preserving source order within a date. With differing assumed zones, label
+the timeline as local diary dates, not a single absolute event chronology.
+
+Each entry owns its time/bullet marker and body; date/author headers are separate
+context ranges. Chunk the body, including its entry marker, at the last line end
+within **1,500 Unicode code points**. If none fits, split at the cap on a character
+boundary. No overlap at ingestion. Keep part indexes and map ranges to bytes.
+Attach inherited date/author context to every part. Every short entry is one
+passage. Whitespace-only structural spans are retained in coverage, not embedded.
+
+Diagnostics contain code, file ID/path and byte offset, never copied body text.
+Every diagnostic code has a fixture. Expected free-form body lines are not errors.
+
+## 6. Import, exclusion and publication state machine
+
+`sync_source(source_uuid)` is CLI-only in v1. Acquire a session-level PostgreSQL
+advisory lock on a dedicated connection for that source; another sync returns
+`busy`. Hold it across per-file transactions and release it in `finally`.
+Model/network calls never run under that lock or an open write transaction.
+Policy changes do not take this long-lived lock. Each publisher briefly locks
+the source row, checks the captured policy version and commits its pointer/version
+update atomically; a policy change can therefore invalidate work between files.
+
+1. Enumerate included regular files below the canonical root, excluding symlinks.
+   Use a stable read (file identity/size/mtime checked before and after); retry a
+   changing file twice, then mark it quarantined. Refuse a root/config mismatch.
+2. For each changed file, hash bytes and reuse/insert its immutable revision.
+   Parse using the captured configuration. Identical bytes + fingerprint reuse
+   the existing generation and do not duplicate descendants.
+3. Insert a complete generation with all deterministic search rows in one
+   transaction, validate it, and atomically switch the file pointer to it with
+   `availability=ready`. Failed publication rolls back that file. On a known
+   changed file's failure, set it quarantined in a separate transaction; do not
+   serve old content as current. A source sync may succeed for other files and
+   report partial failure.
+4. Increment `catalog_version` whenever visible generations, availability,
+   embeddings or policy change. Missing files become `missing` only after a
+   complete successful directory enumeration. A root scan failure does not mark
+   everything missing. Re-read source policy/version before each commit.
+5. Embed published passages in a separate resumable command. Before saving a
+   result, recheck source policy, current generation and input/model hash; discard
+   stale work. A failed embedding leaves literal/FTS available.
+
+Register/update preserves source UUID and exclusions, disables the source, and
+requires an explicit enable after sync. Background sync/embedding may operate on
+an initially disabled source; they require unchanged captured policy and current
+input, not assistant visibility. Any subsequent disable/purge/config edit bumps
+the policy version and invalidates in-flight work.
+
+Normal search requires ready files in current generations whose parser
+fingerprint matches current source configuration. Old snapshots remain
+available only through explicit citation inspection and current policy checks.
+An unchanged append preserves byte locators to the old snapshot; new passage IDs
+may differ. Reuse vector work only for identical complete embedding inputs.
+No general occurrence-lineage algorithm is required until belief promotion.
+
+V1 exclusions are **file-level**, keyed by source and relative path, and apply to
+all revisions and all routes. They survive rebuilds and purges. `exclude` takes
+effect immediately; `unexclude` is an explicit local operation. An excluded file
+that disappears while new files appear is a potential rename: disable that source
+pending explicit path reconciliation, carrying the exclusion to both paths.
+Ordinary unexcluded renames are removal plus addition. This conservative rule
+avoids pretending a content-hash match can safely identify every rename.
+
+`enabled=false`, `secret`, exclusions and quarantine filter before candidate text
+leaves the DB layer. Revalidate immediately before returning an observation;
+if versions changed, retry once, then return `source_changed`. Previously sent
+prompts cannot be retracted. Record policy/catalog versions in observation data.
+
+Freshness means “as of the last successful explicit sync.” Queries do not stat
+or reread the filesystem. Editing/deleting an original is reflected after sync;
+disable/exclude is the immediate revocation mechanism. Display the snapshot's
+ingestion time so this limit is visible rather than implying live-file access.
+
+## 7. Read API and assistant integration
+
+Keep existing `memory_query` `{query: ...}` and `{uuid: ...}` behavior unchanged.
+Add one optional top-level key, `diary`, mutually exclusive with both. Validate a
+strict nested object with unknown fields forbidden in `diary/action.py`:
+
+```json
+{"diary":{"mode":"search","query":"undo corruption","source_ids":[]}}
+{"diary":{"mode":"literal","query":"Edit::VSpace#move_left"}}
+{"diary":{"mode":"timeline","date_from":"2027-07-26","date_to":"2027-07-28"}}
+{"diary":{"mode":"read","citation":"diary:REVISION_UUID:120-980"}}
+{"diary":{"mode":"continue","cursor":"CURSOR_UUID"}}
+```
+
+Contract:
+
+- `mode` is required. `search`/`literal` require query length 1–512 Unicode code
+  points. Do not trim literal text. Optional date bounds are ISO dates with an
+  inclusive start and exclusive end; validate start < end. `timeline` requires
+  both. `source_ids` can narrow eligible sources; absent/empty means all eligible.
+- `read` accepts only a typed revision locator with nonnegative integer byte
+  offsets inside the stored snapshot. It never opens an arbitrary filesystem path.
+  `continue` accepts only a cursor; it reuses its stored request and context.
+- Context room/agent UUIDs come solely from `AssistantActionContext`. Require a
+  matching room and, when configured, matching agent; missing context denies
+  access. A source ID/citation/cursor is not permission. Unknown, denied and
+  unavailable citations return the same `not_found` response.
+- Unknown modes/keys, conflicting fields, invalid dates and oversized input return
+  `ok=false,error=invalid_request` before retrieval. Disabled diary returns
+  `ok=false,error=diary_disabled`. Search with no matches is a successful empty
+  result. Partial routes return `ok=true` plus degraded/coverage metadata.
+- No free-form natural-language date parser in v1. The assistant supplies date
+  bounds for clear requests; ambiguous “before the rewrite” uses search first.
+  Speaker/addressee filtering is unsupported and must not silently do nothing.
+
+Internal Python seams:
+
+```python
+parse_file(raw_bytes, relative_path, parser_config) -> ParsedFile
+sync_source(source_uuid) -> SyncReport
+eligible_sources(context, source_ids) -> source_query
+retrieve_diary(request, context, *, embed_query=None) -> DiaryResult
+render_diary(result, context) -> AssistantObservation
+read_citation(locator, context) -> DiaryResult
+```
+
+`DiaryResult` includes items with source/file/entry/passage IDs, citation,
+byte range, exact text, date/time precision, match ranges and retrieval reasons;
+plus `next_cursor`, `degraded_routes`, `catalog_manifest`, and timings. Observation
+`data` records returned and actually injected locators separately. Never count a
+retrieved-but-omitted passage as injected.
+
+For search, literal and timeline items, emit telemetry for every contributing
+stored passage. An arbitrary citation read may cover header bytes with no passage;
+record its locator in observation data and never invent a passage UUID for it.
+
+Coverage uses two fields: `enumeration = complete|partial|not_applicable` and
+`metadata = complete|partial`. Timeline/read can enumerate completely; ranked
+search always uses `not_applicable`. Quarantine, undated material and unresolved
+parsing diagnostics make metadata partial within the requested sources. Report
+counts only for sources the caller may see. “No outcome found” is not proof that
+no outcome exists.
+
+### Retrieval routes
+
+All route SQL applies eligibility and explicit date/source constraints **before
+LIMIT**. Do not fetch global top-K and then filter in Python.
+
+- **Literal:** case-sensitive substring matching over complete eligible entry
+  text, so chunk boundaries cannot hide an error. Map matches to original byte
+  ranges. Explicit literal mode ranks earlier source-order occurrences first,
+  returns exact match windows and skips FTS/vector calls. Multiple hits are not
+  silently declared unique. Return a cursor to enumerate additional matches.
+- **Identifier route in search:** at most eight recognized query tokens; equality
+  first, hash-prefix matches second (minimum seven hex characters). Keep subtype
+  and original spelling. Paths/symbols are case-sensitive; ambiguous hash prefixes
+  remain multiple hits. This is one route with a total 20-passage cap.
+- **FTS:** `simple` configuration, OR distinct query lexemes in a parameterized
+  tsquery, `@@` match required, rank by `ts_rank` descending. Cap at 20.
+- **Vector:** cosine distance over eligible current embeddings with the matching
+  epoch; top 20. A missing model/index/embedding never removes lexical results.
+
+Search unions the three routes by passage UUID. Score with reciprocal-rank
+fusion `sum(1 / (60 + rank))`, where ranks start at one. Tie-break by source UUID,
+relative path, entry ordinal and part index. No mixing raw score scales. Select
+at most five passages, at most two per entry. Expand by at most one adjacent
+passage on either side *within that entry*, subject to the same count/access/
+rendering caps; merge contiguous windows and remove overlap. Stored source slices
+are never concatenated across gaps into one quote.
+
+Timeline bypasses relevance search and the embedding service. Fetch at most 30
+entries per DB page in the specified order; render complete bounded parts until
+the observation budget is full. Its cursor resumes at the first unrendered part,
+including within a long entry. Do not advance past 30 fetched entries when only
+three were actually displayed. Literal/read continuations follow the same rule.
+Ranked search exposes omitted candidate counts and citations, not a claim of
+exhaustive corpus traversal.
+
+Cursors are random DB UUIDs, expire after 30 minutes, bind room/agent/request and
+source catalog/policy versions, and contain only positions/IDs. A changed version
+returns `cursor_stale`; restart the request rather than mix snapshots. Expiry
+returns `cursor_expired`. Repeated cursor reads are idempotent while valid; each
+page generates a cursor for its next position. CLI cleanup deletes expired rows.
+
+### Embeddings and HNSW
+
+Use local `embeddinggemma:300m`, 768 dimensions, batches of 32 for backfill.
+Configure a loopback endpoint for v1 and record its model digest before a job.
+The embedding input is exactly `passage.text`; inherited dates and author labels
+are retrieval metadata, not prose prepended to the vector. Cache by input SHA
+plus epoch (model name/digest, dimension and input-format version).
+
+`embedding_spec` stores the loopback base URL, model name/digest, dimension and
+input-format version. `embed` captures or validates this spec; changing it bumps
+catalog version and sets vector mode off until the new epoch is ready. Old vector
+rows can coexist but never participate in current-epoch queries.
+
+The query adapter checks the served digest against stored configuration and
+keys its cache by epoch + query. A mismatch disables the vector route until an
+explicit re-embed. Do not reuse the seed cache keyed only by mutable model name.
+Use a 2-second query-embedding timeout with zero retries, a 30-second background
+batch timeout and at most two background retries. Do not silently switch provider.
+These are new adapter limits, not the existing seed client's 10-second timeout.
+
+Start with exact distance ordering over a materialized eligible-row set so an
+existing HNSW index cannot change the baseline. In `hnsw` mode, use the same SQL
+eligibility predicates and `SET LOCAL hnsw.ef_search=100`; if fewer than
+`min(20, eligible_embedded_count)` rows survive, fill using exact filtered search.
+Approximate indexes can underfill after filtering; a full result set also does
+not prove exact recall. Measure both before enabling the mode.
+[pgvector documents this filtering behavior](https://github.com/pgvector/pgvector#filtering).
+
+For sources with vectors enabled, exact mode is the default. `set-vector-mode
+--source UUID --mode off|exact|hnsw` controls it independently of source visibility.
+The CLI may enable HNSW for a source only
+when its filtered Recall@20 against exact search is ≥0.95 on the fixed benchmark,
+all exact-lookup cases remain correct, and p95 search latency improves by ≥20%.
+Record extension version and query plan; never assume an index is being used.
+Failure of this optimization gate leaves exact search enabled.
+
+## 8. End-to-end rendering contract
+
+Reuse `fence_recalled_memory` and its structural escaping. Source viewer output
+remains byte-exact; prompt text may contain escaped angle brackets. Each excerpt
+includes source name, path, diary date/time precision, snapshot time, citation and
+“historical diary data” label. No model-written summary or scorer explanation.
+
+| Limit | V1 value and meaning |
+|---|---|
+| Stored passage | 1,500 Unicode code points, no token-equivalence promise |
+| Search candidates | 20 per route; no generative scorer call |
+| Selected passages | ≤5, ≤2 per entry; neighbor expansion counts toward both |
+| Diary observation | **4,800 characters total**, including labels, fence, citations and continuation notice |
+| Timeline DB batch | 30 entries; output may contain fewer, with exact continuation |
+| Literal scan | 2-second DB statement timeout; timeout returns partial/error metadata, never “no matches” |
+| Query embedding | 2 seconds, zero retries; lexical fallback |
+
+Pack in rank order (source order for literal/read, timeline order for timeline).
+Prefer complete passages. If a requested literal/read range is too large, choose
+one contiguous window containing the match/start and a continuation offset.
+Do not truncate a citation, join disconnected fragments or remove the middle of
+a quote. Literal windows are at most 1,500 characters, start up to 256 characters
+before the match, and must contain the entire match. Read windows start at the
+requested offset and advance by at most 1,500 characters. Date/header context is
+labeled metadata and charged to the same cap.
+Clamp displayed path labels to 120 characters without changing their locator.
+Omitted item notices are reserved before packing. An item that cannot fit yields
+a citation/continuation, not an over-budget exception for the first item.
+
+Wire and test the complete assistant path, not only `render_diary`:
+
+1. Add `diary` to the MEMORY_QUERY capability's optional args and description;
+   dispatch it before legacy query/UUID handling. Do not change legacy budgets.
+2. Keep observations below the capability's 12,000-character cap and
+   `MAX_OBSERVATION_PREVIEW_CHARS`, so neither slices diary output.
+3. `_bounded_turn_events` retains the newest observation whole today. It may
+   discard earlier observations as units; retrieval metadata must never claim
+   all earlier quotes remain in the deciding prompt.
+4. `_build_reply_audit_prompt` currently shortens memory observations to 2,000 body
+   characters. For a validated `step.args['diary']` request, pass the complete
+   already-bounded diary observation to `_set_observation_content` without this
+   second shortening. Keep the existing audit limit for other reads. Test an
+   answer-bearing span in the middle and end of a 4,800-character result.
+
+Room/source rules are enforced before producing the observation. Fencing and
+addressee hints are not proof against instruction carryover: test that a diary
+`/goal` does not cause a write, including when no event extraction exists.
+
+Record telemetry with `target_type=diary_passage`, stages `retrieved` and
+`injected`, and source `diary.search`. Put route ranks, generation/policy versions,
+counts, degradation and timings in metadata; do not duplicate passage text there.
+The actual observation remains in the existing assistant trace. CLI reports omit
+queries, identifier values and diary text by default; private report files may
+contain operator-authored evaluation labels, never committed fixtures.
+
+## 9. CLI, pilot and performance evidence
+
+Provide one entry point, `python -m tools.diary`, run from `source/`. All commands
+require `--database-url`; parse and validate it and set `DATABASE_URL` **before
+importing `db`**, without importing `webapp`, starting agents or firing cron.
+The pilot accepts only a database whose parsed name is `rainbox_claude` or starts
+with `rainbox_diary_test_`; a forbidden URL fails before any DB connection.
+Normal production import requires a separate explicit `--production` option;
+there is no production reset command. `reset-pilot` additionally requires the
+source's recorded CLI-created pilot marker, so it cannot purge another sandbox
+source accidentally.
+
+Subcommands:
+
+| Command | Behavior |
+|---|---|
+| `register --manifest PATH` | Validate and create/update one disabled source; print its UUID/config hash |
+| `parse --source UUID --dry-run` | Pure inspection report without DB mutation or model calls |
+| `sync --source UUID` | Publish snapshots/parses/identifiers/FTS; no embedding calls |
+| `embed --source UUID` | Resume missing current vectors; report batches and failures |
+| `index --source UUID` | Build/inspect optional HNSW; does not enable it |
+| `set-vector-mode --source UUID --mode off\|exact\|hnsw` | Set the route mode; exact requires a recorded epoch, HNSW also requires its passing report |
+| `probe --source UUID --cases PATH` | Run fixed private queries; JSON report with ranges/ranks and correctness |
+| `show --citation LOCATOR` | Local operator inspection; print original slice, date basis and snapshot status |
+| `enable`, `disable`, `exclude`, `unexclude` | Explicit source/file policy operations; bump versions atomically |
+| `purge --source UUID` | Disable and remove imported content for that source; retain exclusions/config |
+| `reset-pilot --source UUID` | Sandbox-only purge of that pilot source, never DROP/TRUNCATE or other sources |
+
+`register --pilot` records a pilot marker in source config; it is sandbox-only.
+`probe` accepts `--vectors off|exact|hnsw` as an inspection-only override to compare
+routes without enabling assistant access. Pilot probes use a trusted CLI context
+that permits the selected disabled source and supplies its actual room/agent;
+file exclusions/quarantine still apply. No model-supplied argument can select
+this context. A pilot source must be private, not secret.
+
+`show` is a local operator operation distinct from the assistant's context-limited
+read API. The assistant cannot invoke the operator bypass through action args.
+No purge/reset deletes the input scratch files or any original diary file.
+
+### Pilot order and gate
+
+The pilot runs **after parser/schema/retriever tests pass**, before production
+activation. Copy one calendar month's selected files into a private scratch root;
+use a sandbox source/room. Pin its file hashes and write 20 private queries with
+expected byte ranges before tuning: six literal, eight topical (at least two
+query/source language pairs), four timeline, and two negative queries. Do not
+require addressee extraction in this v1 pilot.
+
+1. Dry-run, inspect every diagnostic, then `sync` and probe literal/FTS baseline A.
+2. `embed`; probe baseline B with vectors. Keep the same queries/gold ranges.
+3. Inspect the ten longest entries and ten fixed-seed randomly selected entries.
+   Record accepted boundaries/date labels and every unresolved ambiguity.
+4. Optionally `index` and compare HNSW to exact; this does not gate lexical recall.
+5. Write a private report: manifest/config/code/model hashes, counts, coverage,
+   gold-range results, p50/p95 latency, cold/warm timings, DB/snapshot/index size,
+   failures and fallback mode. Console diagnostics contain offsets, not snippets.
+
+**The v1 gate is executable:** all synthetic hard-invariant tests pass; every
+pilot literal finds a gold match at rank 1; at least seven of eight topical
+queries inject a gold span; all four timelines enumerate expected entries through
+pagination without skips/duplicates; both negatives produce no false literal/date
+hits; manual inspection finds no unexplained boundary/date errors. Any correction
+updates parser/config and reruns the unchanged query set. Vector mode must also
+preserve all baseline-passing cases. Add a separate held-out query set for later
+optimization rather than repeatedly optimizing only these twenty.
+
+Performance is measured over three warm passes of the fixed queries after one
+warm-up; retain the raw samples. Initial target: p95 literal/FTS/timeline ≤500 ms,
+p95 search including local query embedding ≤3 s on the pilot machine. Record
+cold-start separately. Missing either target blocks enabling the corresponding
+route until fixed or an explicit new budget is recorded; it does not block
+continued development of other routes. A local-model outage must produce a
+bounded lexical result rather than a stalled or empty-success response.
+
+Revision 8 reported 44 ms for one warm embedding, 17 ms/passage in batches of 32,
+about 700 input and 50 output tokens/s for extraction, and a 9.8-second median
+assistant decide step. Preserve these as **reported planning observations**,
+not fresh measurements or release guarantees: no benchmark manifest accompanies
+them here. The pilot supplies reproducible measurements. Its query embedding is
+a model call; “no model call” applies only to literal/FTS/timeline routes.
+
+Do not gate v1 on event extraction or “a weekend of GPU time.” For a later event
+pilot, record a seeded sample of up to 200 passages and measure actual prefix
+cache misses, output lengths and validation failures. The previous 12–15-hour
+full-corpus estimate assumes prefix caching and roughly 50 output tokens per
+passage. Without caching, 40,000 repeated 600-token prefixes alone add 24 million
+input tokens. Extraction remains opt-in, initially one month and then at most
+the latest two years if its own evaluation justifies expansion.
+
+## 10. Acceptance tests and implementation sequence
+
+Fixtures are synthetic Terminator-universe material in English, Danish and
+German. Include all three formats, plain fallback and append/edit/delete versions.
+Gold targets identify file hash and byte range, not unstable generated UUIDs.
+`diary_recall` scoring records candidate recall and injected-range coverage
+separately. Forbidden-source exposure, invalid citations, budget overflow and
+unexpected writes are hard failures; an averaged relevance score cannot mask them.
+Missing/extra case inventories invalidate a comparison.
+
+| Work package | Required acceptance evidence before the next package |
+|---|---|
+| **P1 — Parser and manifest**: `diary/config.py`, `parsing.py`, fixtures | All bytes covered; exact UTF-8/CRLF/BOM ranges; invalid encoding/NUL; every dialect; invalid date/time; filename precedence; terminal ambiguity/override; first command token vs path; chunk boundary continuity; deterministic repeated output |
+| **P2 — Persistence and CLI sync**: models, DB ops, bootstrap, CLI | Fresh/upgrade/repeated bootstrap; interrupted transaction exposes no partial generation; unchanged sync is a no-op; append/edit/quarantine/delete; source scan failure; exclusions survive rebuild/rename/purge; rejected production pilot before import/connect |
+| **P3 — Reads and rendering**: literal/FTS/timeline/read, cursor and renderer | Room/agent/secret/disabled/excluded isolation on every route; literal crossing chunks; SQL wildcard input treated literally; date filter before cap; paging a huge entry without skips; cursor expiry/version change; citations to old bytes; exact 4,800-character boundary and closed fence |
+| **P4 — Optional vectors and pilot**: adapter, exact route, HNSW command | Stubbed vectors, invalid vector rejection, digest change, stale-worker discard, outage fallback; exact search despite HNSW existence; restrictive-filter ANN underfill; fixed pilot report/gates above |
+| **P5 — Assistant and eval integration**: action args, audit, telemetry, case scorer | Legacy memory-query tests unchanged; diary explicit dispatch; actual deciding and audit prompt retain gold span; historical commands cause no writes; telemetry retrieved vs injected is accurate; disabled default; pilot gates pass before enablement |
+
+Tests live with their modules (`diary/test_*.py`, `db/test_diary.py`,
+`agents/test_diary_memory.py`, `evals/test_diary.py`). Cleanup source-scoped rows
+in `finally`; restore settings changed by tests. Unit tests inject fake embedders;
+no live model calls in pytest. Follow the existing [sandbox and test guard](../testing.md).
+
+Planned targeted commands once those files exist, from `source/`:
+
+```sh
+venv/bin/python -m pytest diary/ db/test_diary.py agents/test_diary_memory.py evals/test_diary.py -q
+venv/bin/python -m pytest memory/ agents/test_assistant_actions.py agents/test_reply_audit.py -q
+```
+
+Verify actual deciding/audit prompt construction, not just a renderer snapshot.
+The CLI pilot is a separate live run with a report. No real diary is required
+for CI. Do not claim the pilot was run merely because synthetic tests pass.
+
+Production enablement is explicit and ordered: additive schema deployed; sources
+registered disabled; parse/sync/embedding completed; the fixed report and gates
+pass; source enabled; `diary.enabled=true`. Failure or rollback disables access
+while retaining citations and operator decisions. No automatic source ingestion
+occurs on the first user query.
+
+## 11. Follow-on designs: retain the direction, do not implement yet
+
+These were part of the earlier proposal. Each needs its own implementation
+contract and gate; none is implied by “v1 is ready.”
+
+- **Events:** zero-or-more supported spans per entry, distinct author/speaker/
+  addressee, diary time vs occurred time, uncertain attribution retained. Marker
+  hints never prove a recipient. Versioned extraction jobs distinguish empty
+  success from failure, recheck generation before publishing and use a configured
+  local model. Generated summaries stay in the index/inspector. A generated
+  sensitivity restriction must be durable and survive disabling extraction;
+  source access is already adequate before classification begins.
+- **Belief proposals:** operator-selected assertions through `record_belief`,
+  actor `model_inferred`, existing candidate/tombstone/conflict rules, versioned
+  `source_type=file` evidence. Requests and hypotheticals are not world facts.
+  Add a durable source-observation/promotion ledger before retryable writes;
+  repeated `record_belief` currently increments support. Source restrictions
+  must invalidate dependent claims across every read/profile path. A lone
+  `valid_from` column does not solve temporal conflicts or supersession.
+- **Threads:** topic navigation across years, bounded episodes within topics,
+  multiple memberships, explicit evidence for causal/resolution links. No
+  outcome found is not an open commitment. No generated thread-state sentence
+  in answer context, Datalog engine, graph store or runtime clustering.
+- **Assistant diary:** a separate room-scoped managed export of run records.
+  Today's summarizer stores optional trigger/obstacles/outcome, not verified work
+  history. Render available fields deterministically, link run/step evidence,
+  and never use a copied model digest as independent corroboration. Export needs
+  retry/crash-safe file publication, revision handling, no recursive self-export,
+  and typed run-evidence retrieval before it is useful to answering prompts.
+
+## Appendix — synthetic source examples
 
 The input is plain text the operator has appended to for decades and
 occasionally corrects. The format has changed over the years, and the
 files keep whichever shape they were written in, so the design assumes a
 small set of **dialects**, each with an explicit grammar and an ambiguity
-policy. The current one: a line holding one date, `YYYYMMDD`, then entries each opened
-by a time line — a start time `HHhMM` or a range `HHhMM - HHhMM` — followed
+policy. The current one: a line holding one date, `YYYYMMDD`, then entries
+opened by a time line — a start time `HHhMM` or a range `HHhMM - HHhMM` — followed
 by free text until the next time line or date line. A synthetic day in
 that shape:
 
@@ -147,839 +817,3 @@ or a report of what another person said or asked. Health and body notes
 sit between project notes. Ingestion never edits these files. All examples
 in this document are synthetic; the operator's diary appears nowhere in
 the repository.
-
-These questions require different evidence:
-
-| Question | Required evidence | What must not be inferred |
-|---|---|---|
-| “Find the exact error message I recorded.” | A literal match and its surrounding passage | That token extraction recognizes every possible error |
-| “Why did I change this design three months later?” | The earlier decision, later change, and any stated reason | That chronology or a shared entity proves causation |
-| “What design am I using now?” | An active, applicable confirmed claim, with supporting history if useful | That the latest diary mention is current truth |
-| “What requests have no recorded outcome?” | Requests and explicitly linked outcomes within stated search coverage | That no retrieved outcome means a task is still open |
-| “What did I ask you to do on the 12th?” | Entries addressed to an agent, with their recorded times | That the instruction applies to the current turn |
-
-If only historical evidence exists, answer historically: “The September entry
-says …; I have no confirmed current state.” If no reason is recorded, return the
-sequence and say so. The representation must support that distinction rather
-than forcing every question into a fact lookup.
-
-## Principles
-
-1. **Source text establishes what was recorded.** Operator authorship does not
-   make third-party statements, speculation or pasted logs verified facts.
-   Authorized passages can be read without confirming each quotation; extracted
-   beliefs still require review.
-2. **Historical instructions are data.** A diary request is not authorization
-   to act now. This applies even when the addressee is unknown or incorrectly
-   classified. Current user instructions, not recalled commands, govern action.
-3. **Citations identify immutable snapshots.** A path and byte range alone are
-   insufficient when a file can change. A citation resolves the exact imported
-   bytes or explicitly reports their unavailability.
-4. **Generated structure is an index.** Events, aliases and thread membership
-   locate passages; their summaries are not factual answer context. Assistant
-   diaries are also generated material: quoting a digest cannot turn it into
-   independent evidence of an action.
-5. **Indexes are rebuildable; decisions are durable.** Confirmations,
-   rejections, exclusions, policy restrictions and promotion records survive
-   parser/model upgrades and are not reconstructed from source prose.
-6. **Access and freshness precede ranking.** Enforce the same eligibility on
-   search, model inputs, citations, neighbor/thread expansion and injection.
-7. **Current belief state is separate from history.** Neither import order nor
-   an inferred date changes a confirmed belief. Unknown attribution and dates
-   remain unknown rather than acquiring convenient defaults.
-
-## What exists, and what must change
-
-The implementation references below describe the repository at this revision.
-They take precedence over older design notes when those notes differ.
-
-| Existing component | Reuse | Required diary work |
-|---|---|---|
-| [`MemoryClaim` and `MemoryEvidence`](../../db/models.py) | Claim lifecycle, provenance and supersession links | Link evidence to immutable passages; no claim schema change in the first milestone |
-| [`record_belief`](../../db/memory.py) | `model_inferred` writes, conflict review and rejected-value tombstones | An idempotent promotion adapter; rerunning inference must not add support again |
-| [`retrieve_memories_hybrid`](../../memory/retrieval.py) | Filter-before-rank pattern and embedding client | A separate passage retriever; this function currently retrieves claims |
-| [`MemoryEmbedding`](../../db/models.py), [`memory/embeddings.py`](../../memory/embeddings.py) | Embedding infrastructure; currently 768-dimensional `embeddinggemma:300m` | Passage-owned embedding rows; the existing table has a foreign key to claims |
-| [`_filter_recalled_candidates`](../../agents/assistant.py) | Shared relevance stage, configurable LLM or reranker backend | Typed passage candidates, passage rendering, diagnostics and bounded fallback |
-| [`eval_case`](../../db/models.py), [`evals/runner.py`](../../evals/runner.py) | Cases, run records and comparisons | A `diary_recall` case type, schema constraint migration and scorer; the current memory scorer uses lexical claim retrieval |
-| [`AssistantRun`](../../db/models.py), [`assistant_run_summarizer.py`](../../agents/assistant_run_summarizer.py) | Run identity, timestamps, trace and optional structured digest | An idempotent room-scoped export; the digest contains trigger/obstacles/outcome, not a verified narrative of completed actions |
-
-Two limits matter. `memory_claim` is a governed belief store, not a complete
-valid-time database: `supersedes_uuid` records lineage and `expires_at` controls
-retrieval eligibility. Neither says when a fact became true. Also,
-`diary_passage` is not an accepted evidence source type today: both the database
-constraint and `validate_evidence` restrict it. Initially use `source_type=file`
-with a versioned diary locator in `source_id`, plus an exact excerpt, rather
-than adding an unnecessary source-type migration.
-
-## Layer 0 — versioned source, entries and passages
-
-This is a logical schema, not migration-ready SQL. Its important distinction is
-between source bytes, the parse of those bytes, and bounded retrieval units.
-
-```text
-diary_source
-  id, root_key, author_kind, author_id, encoding, timezone_policy,
-  dialect_override, parser_options, enabled,
-  scope, room_uuid, agent_uuid, sensitivity, policy_version
-
-diary_file
-  id, source_id, relative_path, current_generation_id, availability
-
-diary_revision
-  id, file_id, content_sha256, raw_bytes, ingested_at
-
-diary_parse_generation
-  id, revision_id, parser_fingerprint, parser_config,
-  dialect, parse_status, diagnostics
-
-diary_entry
-  id, generation_id, byte_start, byte_end, source_order,
-  date_local, clock_start, clock_end, time_precision, date_basis,
-  timezone_name, time_status, author_token, context_ranges
-
-diary_passage
-  id, entry_id, byte_start, byte_end, text_hash, part_index, language_hint
-
-diary_pasted_span
-  entry_id, byte_start, byte_end, kind, detection_basis, certainty
-
-diary_embedding
-  passage_id, model_digest, input_hash, dimension, embedding
-```
-
-An entry is a time-stamped record, a ChangeLog bullet or a fallback text block.
-A passage is a bounded contiguous slice of an entry; a short entry needs only
-one. Entry identity retains context and supports reassembly without confusing
-three chunks with three independent observations. All offsets refer to the
-original revision, including context and pasted-span offsets. Date/author
-headers and separators remain addressable even if not independently ranked.
-
-`root_key` resolves a configured root, not a model-supplied path. Resolve files
-and symlinks inside it before reading. Source authorship is configured as
-`operator`, `assistant` or `unknown`; it does not identify every speaker quoted
-inside a file. A ChangeLog author token needs a configured identity mapping,
-otherwise its author remains unknown.
-
-Source scope and sensitivity are the baseline for every derived object. Start
-with explicitly authorized room/agent contexts and private sensitivity; private
-alone is not room isolation. Project scope waits until retrieval can enforce it.
-All proposed policy rows and lineage records below need foreign keys and
-uniqueness constraints in the implementation design.
-
-### Snapshot and citation contract
-
-Preserve raw bytes without newline normalization. UTF-8 is the default; legacy
-encodings require an explicit source/file override and a tested decoded-text to
-original-byte offset map. Undecodable input is quarantined with diagnostics,
-not silently repaired or guessed. Ranges are half-open `[start, end)` and end
-on decoded character boundaries. Search text must match the decoded slice.
-Identical paragraphs on two dates remain distinct occurrences.
-
-A locator such as `diary:<revision_uuid>:<start>-<end>` resolves through the
-source's current policy and exclusions. Display path, date precision and
-revision identity. If the live file differs, show “source has changed” and open
-the saved snapshot; never apply old offsets to new bytes. Old revisions are
-available for explicit provenance inspection, not normal search. A parser
-upgrade can change entry IDs without invalidating these byte-based citations.
-Citation metadata retains the generation and its decoding configuration, so a
-later encoding correction cannot silently change the displayed interpretation
-of an earlier citation. Original bytes remain available alongside the decode.
-
-### Parsing the three dialects
-
-The dialect is configured per directory (revision 8); recognizers validate
-dates, times and the surrounding record structure for the configured
-dialect and report every line that does not fit as a diagnostic. A file
-outside every mapping is `plain`. Record competing matches and ambiguities. Preserve all content, flag metadata as incomplete, and
-retain an unambiguous filename date even in fallback mode.
-
-| Dialect | Entry boundaries | Context retained |
-|---|---|---|
-| `timed` | A valid `YYYYMMDD` date header; `HHhMM` or `HHhMM - HHhMM` time lines outside recognized pasted regions | Text before the first time is date-only; text before any date is undated |
-| `daily` | Date from `YYYY_MM_DD.txt`; a valid bare `HHMM` at file start or after a blank line is a **candidate** time boundary | Blank lines inside entries do not end them; preamble retains the filename date |
-| `changelog` | A validated `<day>-<month>-<year> <author-token>` header; top-level `*` bullets with their continuation text | Date, author token, source order and unassigned inter-entry text |
-| `plain` | Bounded blank-line blocks, without invented entry times | Filename date if unambiguous; otherwise unknown |
-
-Validate calendar days and `00–23` hours / `00–59` minutes; a digit pattern
-alone accepts impossible dates and times. ChangeLog blank lines are not by
-themselves a reason to discard subsequent text: a new bullet/header closes an
-entry, and unmatched text remains a visible fallback block. Indentation is
-preserved, never folded out of the stored quote.
-
-Some ambiguities cannot be solved by regex. A blank line followed by `2026`
-could be 20:26 or a number in command output. A prompt-shaped line in prose does
-not establish where a pasted session ends. Explicit fenced regions have known
-boundaries; shell-prompt patterns produce **likely pasted spans**, not verified
-speaker labels. Do not end a terminal session merely at its next prompt, or
-assume everything after the final prompt is output. Ambiguous boundaries retain
-a larger unsplit block and a diagnostic; do not manufacture a precise time or
-speaker. File-specific overrides can resolve consistent historical conventions.
-
-Keep the logical entry intact when its text is large. Split retrieval passages
-at line boundaries under a versioned cap, with continuation order and entry
-context retained. A single oversized line needs character-boundary-safe slices
-marked as partial. Chunk boundaries never imply a new time, speaker or event;
-extraction may use bounded neighboring context, included in its input hash.
-
-The shared date parser uses anchored header/filename grammars and versioned,
-explicit month-name tables (including configured languages). Do not scan prose
-for dates to invent boundaries. A header/filename mismatch is retained as a
-conflict with both candidates; it needs an explicit policy or remains uncertain.
-Recognizer, month-table, encoding and configuration changes all enter the parser
-fingerprint. A registry change must reconsider previously `plain` or ambiguous
-files, not only files already labeled with the changed dialect.
-
-### Time and order
-
-Keep the written local date and clock values, their precision and basis.
-A day-only entry is not an event at midnight. A written time range may describe
-an activity, not when the author typed it; it is a diary time label, not proof
-of occurrence or file creation time. Unknown timezone remains unknown. Use a
-source/era timezone policy where available; changing today's profile timezone
-must not reinterpret decades of entries. Ambiguous/nonexistent daylight-saving
-times and an end before a start are flagged. Do not infer next-day rollover
-without an explicit convention or supporting date.
-
-Maintain two orders: source order for reading/neighbors and parsed local date/
-time for timelines. Newest-first ChangeLogs are sorted by date for a timeline;
-same-time or date-only ties retain source order. Nonmonotonic times remain
-visible as written. Across sources with unknown zones, do not claim a precise
-absolute ordering. Query-time relative dates use the current query timezone;
-source dates retain their original basis.
-
-### Publishing and incremental work
-
-Build from a stable read and verify its hash. An actual content change creates
-a new immutable revision; a parser/configuration change creates a new generation
-over existing bytes. Publish entry/passage rows and deterministic indexes by an
-atomic switch of `current_generation_id`. Successful parsing must account for
-all source bytes as entry text, context or retained separators/fallback text.
-A changed file whose replacement cannot be parsed is unavailable for normal
-recall until repaired; old content is not silently served as current.
-
-An unchanged `(content hash, parser fingerprint)` is a no-op. Publish lexical
-search without waiting for embeddings; absence or incompatibility of vectors
-disables that signal only. Reuse extraction/embeddings by the complete input
-hash, including context, not passage text alone. One-to-one entry lineage can
-preserve promotion/exclusion decisions through an append. Duplicate or ambiguous
-matches never collapse or become new independent corroboration automatically.
-Old generations become ineligible at the switch, even before vector pruning.
-
-Recheck generation and policy when a background worker publishes, before text
-is sent to a scorer, and at final injection. A stricter policy or exclusion
-invalidates cached selections immediately. Previously sent prompts cannot be
-retracted; log their generation/policy identity. A rename preserves identity
-only when unambiguous; otherwise reconcile as removal plus addition without
-losing applicable exclusions. Missing files are marked unavailable only after a
-successful scan; a failed root scan does not delete the corpus. Content-addressed
-snapshot storage can deduplicate unchanged bytes; measure retained snapshot and
-index size as well as model cost.
-
-### Removal and forgetting
-
-Separate three operations in the operator UI:
-
-- **Reject a belief:** use existing claim tombstones. This does not erase the
-  historical text from which the belief was proposed.
-- **Exclude diary material from recall:** persist an exclusion outside the
-  rebuildable indexes and apply it to all retrieval routes. Carry exclusions
-  across revisions; if occurrence matching is ambiguous, suppress the affected
-  file pending review rather than re-expose the text.
-- **Purge an imported source:** remove stored snapshots, excerpts, vectors and
-  other copied content, including diary evidence excerpts. Keep only permitted
-  non-content audit metadata. Explain that previously recorded chat/trace
-  copies and backups have their own retention; this is not retroactive erasure
-  from every past answer.
-
-Evidence-bearing confirmed claims need separate handling when their source is
-removed or restricted. Do not silently delete a human confirmation. Record the
-source change and require review of affected claims; until resolved, exclude
-claims whose only content-bearing evidence is the unavailable diary source.
-A broader claim scope requires explicit human review and independently
-retained evidence. A diary import must not turn private source material into a
-global claim.
-
-This requires a queryable claim-to-diary evidence dependency, beyond a locator
-string, and a shared eligibility check on every claim read path, including
-direct UUID reads and profile injection. The current claim filters do not
-implement diary-policy invalidation. That integration is a prerequisite for
-Layer 3; a UI label alone cannot enforce it.
-
-## Layer 1 — literal, lexical and semantic retrieval
-
-```text
-diary_identifier
-  passage_id, kind, raw_value, lookup_value, byte_start, byte_end
-```
-
-Index recognizable URLs, hashes, paths, symbols, issue references, model names
-and literal markers. A `/word` token is not intrinsically an agent command:
-`/tmp` may be a path, and `/goal` can appear in quoted documentation. A configured
-command vocabulary at an unquoted entry position supplies a command **hint**;
-`IDEA:` supplies an idea hint, not a recipient. Store hints with their source
-range, rule version and basis. They are useful before Layer 2 exists and do not
-require a model extraction row. Unknown forms remain searchable text.
-
-Keep original spelling. Normalize conservatively by kind: paths, URL paths and
-symbols must not be blindly lowercased. Hash prefixes can match several values;
-return the ambiguity instead of claiming a
-unique hit. Identifier recognition is a retrieval hint, not a validator.
-
-Provide literal substring search over eligible source text as well. Regular
-expressions cannot enumerate every error message, extensionless path or unusual
-symbol. In particular, a punctuation-heavy error must remain findable even if
-FTS tokenization loses the punctuation. Bound literal scans and report incomplete
-coverage when a configured search limit is reached.
-
-FTS starts with a language-neutral configuration for mixed prose and code;
-language-specific indexes are an evaluated improvement. Passage embeddings use
-the existing embedding client but a new passage table. Store model identity,
-dimension and the hash of the actual embedding input, and never compare vectors
-from incompatible models. Cross-language performance must be measured.
-
-Passage embeddings get an HNSW index (revision 8) after the first bulk
-load; the index is rebuilt, not updated row by row, when the embedding
-model changes.
-
-Literal matching must span passage boundaries within an eligible entry; map a
-cross-boundary match back to its original byte range and adjoining passages.
-A splitter change must not make an unchanged error string unfindable.
-
-Exact matches get a reserved place in the candidate budget and retain their
-match span. For an explicit literal lookup, at least one eligible matching
-excerpt survives relevance scoring; ambiguous matches remain labeled. For a
-broader question containing an identifier, the match is a ranking signal, not
-proof the passage answers the question. Lexical and semantic routes still run.
-
-## Layer 2 — optional extracted events
-
-One structured local-model pass per bounded passage can emit **zero or more**
-events. Empty output is a successful result. The initial vocabulary is:
-
-```text
-observation  decision  task  idea  question  instruction
-request      feedback  bug   experiment  result
-```
-
-This vocabulary is a starting hypothesis, not a claim that a small model
-classifies it reliably. An uncertain event can remain unclassified. Layer 1's
-marker hints are input evidence, not mandatory event/addressee assignments.
-One entry can contain a past command, an assertion and a quoted request;
-classify each supported span instead of assigning one meaning to the entry.
-
-```text
-diary_extraction_run
-  id, passage_id, input_hash, extractor_version, model_digest,
-  prompt_schema_hash, sampling_config, status, attempts,
-  input_tokens, output_tokens, error
-
-diary_event
-  id, extraction_run_id, ordinal, kind,
-  evidence_start, evidence_end, summary,
-  speaker_kind, speaker_id, attribution_basis, quotation_status,
-  addressee_kind, addressee_id, addressee_basis,
-  sensitivity_hint,
-  occurred_start, occurred_end, time_basis
-
-diary_event_entity
-  event_id, surface_form, normalized_key, role
-```
-
-Evidence ranges must resolve inside the input passage or its explicitly supplied
-context. Have the model identify an exact supporting quote and locate it in
-code using the decoding offset map; do not rely on it to count source bytes.
-Reject a quote that is absent or cannot be disambiguated. This
-checks grounding of the span, not truth of the interpretation. Keep summaries
-in the passage's language and in the index/inspector only. Extract no belief
-from an event summary without re-reading its source span.
-
-Authorship, speaker and addressee are separate. Source configuration establishes
-who keeps the diary; `speaker_kind` (`operator`, `person`, `agent`, `unknown`)
-identifies whose statement an event represents. Pasted content can have an
-unknown speaker. `quotation_status` (`direct`, `quoted`, `uncertain`) is a
-separate dimension, not a speaker value. A likely terminal span signals
-uncertainty; it does not prove who said a surrounding sentence. Cross-boundary
-claims need enough context to support attribution or remain unclassified.
-
-`addressee_kind` is `operator`, `agent`, `person` or `unknown`, with an optional
-identity and an evidence basis (`source_metadata`, `configured_marker`,
-`explicit_text`, `inferred`, `unknown`). An imperative such as “find the two
-papers” could be a reminder to self or a request to an agent. A slash command
-cannot identify *which* agent unless source context provides that identity.
-“What did I ask you?” therefore cannot match every agent interchangeably.
-
-Represent “a user asked for JSONL output; follow up next week” as two events:
-a reported request and a possible task. Neither proves an accepted commitment.
-Render uncertain attribution as uncertain. No inference, marker, fence or short
-summary guarantees that a model will ignore historical instructions; that
-behavior must be evaluated even with Layer 2 disabled.
-
-### Sensitivity without a dependency on extraction
-
-The entire unclassified source must be suitable for every configured consumer
-of that source, including extraction, embedding and ranking services. Milestone
-2 cannot rely on a model pass that has not run to hide health notes. Where that
-baseline is too broad, split source access or explicitly restrict entries before
-indexing them for those consumers.
-
-A `sensitivity_hint` is a review signal. A configured deterministic policy may
-turn it into a **durable restriction** applying to the whole entry, including
-all chunks, neighbor expansion, cached results and derived claims. Effective
-sensitivity is the stricter of source, explicit entry and retained restrictions;
-allowed scope is their intersection. In RainBox, `private` alone does not
-exclude particular rooms; room restrictions must be expressed as scope/access
-rules. A policy may map a hint to `secret`, which normal retrieval excludes.
-Model absence, failure, re-extraction or disabling Layer 2 must never remove an
-existing restriction. Only an explicit operator policy change can relax it.
-
-Distinguish three clocks:
-
-- **Diary time:** local date/time label parsed under Layer 0, with precision
-  and basis retained; unknown stays null, never file modification time.
-- **Occurrence time:** when the passage says the event happened, possibly a
-  range or unknown. Using the diary date as a fallback is labeled as such and
-  is not an explicit occurrence date.
-- **Ingestion time:** when RainBox observed this revision.
-
-“You mentioned it in April” filters diary time. “It happened in March” uses
-occurrence time, including its uncertainty. Relative dates with an unambiguous
-anchor can be resolved in code; ambiguity remains visible. Entities preserve
-surface forms. Case normalization does not solve aliases across languages or
-distinguish two people with the same name; uncertain aliases stay separate.
-
-### Extraction jobs and cost
-
-Use the existing structured-call machinery with an explicitly configured local
-model and no tool calls. Do not silently route private diary content to a remote
-fallback. Bound input, event count and output, yield to interactive work, and
-support cancellation, progress and bounded retries. Record success-empty,
-success-with-events and failure separately. Persist a completed generation
-atomically and activate it only for the matching source/input/version; an old
-worker cannot publish after its source changes.
-
-A model, prompt, schema or relevant context change invalidates that pass's
-cache. Reuse successful work rather than selecting “passages with no event
-row,” which retries empty results forever. Store the actual model digest and
-sampling configuration with the run, not only a mutable model tag.
-
-### Measured costs (2026-09-21, the operator's machine)
-
-The corpus is about 15 MB of text: roughly 4 M tokens and, depending on how
-long pasted sessions chunk, 35 000–50 000 passages. Measured today:
-
-| What | Measurement |
-|---|---|
-| `embeddinggemma:300m`, one 183-token passage, warm | 44 ms |
-| same, batched 32 per request | 17 ms per passage |
-| `gemma4:e4b` uncached prefill, live run | ≈ 700 tok/s |
-| `gemma4:e4b` decode, live run | ≈ 50 tok/s |
-| existing recall-filter call, production | 0.3–0.5 s |
-| decide step that chooses `memory_query`, production median | 9.8 s |
-
-So, once, for the whole corpus:
-
-| Layer | Cost |
-|---|---|
-| parse, identifiers, full-text index | under a minute |
-| passage embeddings | 10–20 minutes |
-| Layer 2 extraction, every passage | **12–15 GPU-hours**: ~4 M input tokens at 700 tok/s with the instruction prefix cached, plus ~2 M output tokens (40 000 × 50) at 50 tok/s |
-
-The extraction pass is the outlier, reruns on every prompt or model
-change, and shares the GPU with interactive turns — hence the decision to
-run it on the pilot month first and then on at most two years. The pilot
-reports the real per-passage numbers (input and output tokens, validation
-failures, wall time) before anything larger is scheduled.
-
-## Layer 3 — proposals into the existing belief store
-
-A supported assertion, decision or result may be useful as a durable belief.
-Instructions, requests, questions and hypothetical goals are not eligible as
-asserted world facts, regardless of addressee. “Process the queue” must not
-become standing policy. Conversely, an assertion does not become an instruction
-merely because it was addressed to an agent. Keep mixed content in separate
-events and review the assertion's own supporting span. A historical claim that
-a request was made is distinct from accepting or executing it.
-
-Start with operator-selected events and a capped proposal queue. Assistant
-digests are not eligible as independent evidence; follow their run/step lineage
-to underlying observations before proposing a claim.
-
-The promotion adapter re-reads the source and calls `record_belief` with actor
-`model_inferred`, provenance `inferred_by_model`, `source_type=file`, the
-versioned locator and an exact excerpt. Preserve scope/sensitivity and existing
-conflict/tombstone rules. Outcomes can be a candidate, a conflict candidate,
-corroboration of an existing claim, or refusal by a tombstone; the adapter must
-handle each explicitly. It never calls low-level create or activate helpers to
-bypass those outcomes.
-
-**Promotion must be idempotent.** Today, repeating `record_belief` for equivalent
-text increments support and adds evidence. Persist a promotion ledger and the
-belief write in one transaction, using a key tied to the source observation
-and proposed belief, not the extraction-run ID. One-to-one occurrence lineage
-across unchanged revisions identifies the same observation. An ambiguous match
-or a differently phrased re-extraction of already promoted evidence goes to
-review; it must not automatically count as independent corroboration. A retry,
-model upgrade or index rebuild adds neither duplicate proposals nor support.
-Keep that ledger with human decisions, outside disposable extraction tables.
-
-**Do not add `valid_from` and call temporal reasoning solved.** Two dated,
-different values still conflict under today's `record_belief`; dates do not
-prove that the later value replaces the earlier one. Human review continues to
-decide supersession. Historical chronology comes from passages and events.
-
-A later temporal-belief extension would need a separate design for effective
-start/end ranges, uncertainty, overlapping values, future-effective decisions,
-backdated corrections, same-value recurrence, scope and review ordering. It
-would also need to distinguish valid time from when RainBox learned a claim,
-and define migration behavior for undated claims. `expires_at` must retain its
-existing retrieval meaning. None of this blocks useful diary recall.
-
-## Layer 4 — optional threads and relationships
-
-Threads are saved navigation groups over events/passages. They are not a second
-belief store and do not have an authoritative model-written `state` sentence.
-Their answers are assembled from source passages within the same access rules.
-
-Start with topic membership from explicit headings, project identifiers and
-unambiguous entity aliases. Retrieve across the whole history for a topic; a
-short proximity window would miss the design reversal six months later. Within
-a topic, proximity can form bounded episodes such as a debugging session. An
-event may belong to multiple topics. Generic entities such as “Python” must not
-connect every entry into one enormous thread.
-
-Store thread membership with its grouping version and reason. Rebuild membership
-when inputs change. Cross-passage `responds_to`, `resolved_by` or `caused_by`
-relations require supporting source spans and an extraction/review status.
-Shared vocabulary and temporal order are candidate links only. A request with
-no linked result is “no outcome found in this coverage,” not an open commitment.
-Actual task status belongs in an explicitly maintained task system or a reviewed
-claim.
-
-Model-generated titles or summaries may help an inspector navigate, but remain
-labeled derived text and stay out of answer context. One short sentence can
-hallucinate a state just as easily as a long summary.
-
-## The assistant's own diary
-
-Keep this as an independently gated extension after passage retrieval. The
-assistant writes only to its own configured root. Each source is scoped to the
-originating room/agent; a single daily file must not combine rooms and then
-inherit one broad source policy.
-
-The current run summarizer stores an optional `{trigger, obstacles[], outcome}`
-object on `assistant_run.summary`. It can fail or be rerun, and its model-rated
-`resolved` outcome is not proof that all requested side effects occurred. Export
-what actually exists using a deterministic renderer: run UUID, timestamps,
-terminal status, digest origin and available fields. No extra call is needed to
-invent a first-person narrative. Synthetic shape:
-
-```text
-20270312
-12h31 - 12h34
-run: 9f3c28b1-4d2e-4f60-a17b-79ad3e0c6542
-status: finished
-summary_origin: model_inferred
-trigger: Queue processing
-outcome: partial
-obstacles: Missing token
-```
-
-An export ledger keyed by `(run_uuid, export_input_hash, renderer_version)` makes
-retries idempotent. Serialize writes per file and use atomic replacement of the
-managed daily view; reconcile ledger and file after a crash. The hash covers
-all rendered inputs, including status, timestamps and any digest. Re-summarization
-replaces that run's rendered entry, producing a new snapshot, rather than a
-second apparent work session. Preserve prior revisions for provenance under the
-same retention/access rules. Missing digests render `summary unavailable` with
-deterministic status metadata. A run spanning midnight retains full start/end
-timestamps in metadata. Export and summarizer work must not recursively create
-new diary entries about their own exports.
-
-**The file is a readable projection of run records, not a new source of truth.**
-Store run/step links and generated origin outside the prose so copied text cannot
-choose its own authority. Digests can select runs and appear as labeled text in
-the source viewer. To answer “what did you do?”, inject eligible typed run status
-and supporting step observations, not digest prose. If traces are unavailable,
-report the metadata or absence of evidence,
-not a reconstructed success story. Merely counting `finished` runs or quoting
-`outcome: resolved` does not prove task completion.
-
-Retrieval must preserve provenance through later copies and summaries. Reading
-an assistant diary, quoting it in another run and exporting that run again does
-not create independent corroboration. Direct links to a diary request and its
-run may establish “responds to”; a textual resemblance does not. The shared
-retrieval interface therefore needs typed run-evidence candidates as well as
-operator passages before this extension ships.
-
-## Retrieval and context assembly
-
-Integrate first with the assistant's explicit `memory_query` action. Always-on
-chat/profile injection is a separate scope decision; importing a diary should
-not put its contents into every conversation.
-
-```text
-query + authorized context + retrieval mode + captured clock
-  → source/entry access, exclusions and active-generation eligibility
-  → reliable date/source constraints before each candidate route is capped
-  → bounded literal/identifier, FTS and vector routes
-  → merge by entry/passage; preserve match spans and retrieval reasons
-  → soft inferred speaker/addressee/time signals; shared relevance stage
-  → bounded context expansion, with eligibility rechecked for every addition
-  → budgeted cited excerpts or typed run evidence, alongside claims/seeds
-```
-
-Use per-route caps and rank-based fusion rather than adding unrelated similarity
-scales. Deduplicate overlapping windows and diversify by entry so one large log
-cannot occupy every result slot. Track retrieved, filtered, expanded and injected
-IDs, generations, omissions and timings. Namespace claim/seed/diary/run IDs.
-Embedding or relevance-service failure falls back to bounded eligible literal/
-lexical results; it never bypasses access checks.
-
-Queries need more than one mode. **Lookup** ranks relevance; **timeline** scans
-eligible entries in a date interval in stable date/source order with pagination;
-**comparison** seeks both sides of a change and any explicit reason. A diary
-day can have no shared words with “what happened that day?”, so timeline mode
-must not require a keyword or vector match. Return coverage (`complete`,
-`partial`, `unknown`), searched date/source range and continuation metadata.
-Completeness is relative to the declared eligible corpus and known date coverage,
-not a guarantee that every real-world event was recorded. Pagination pins source
-generations and ordering; edits invalidate its cursor rather than mixing views.
-“No outcome found” cannot become “no outcome exists” when extraction, dates or
-pagination are incomplete.
-
-Apply reliable date/source constraints before route limits; filtering a global
-top-K afterward can miss every relevant entry from an older year. Inferred
-speaker, addressee and occurrence dates are soft signals by default. Strict
-filtering is an explicit query option and reports unknown/unclassified coverage;
-an explicit natural-language question alone does not make inferred metadata
-reliable. Resolve “you” against the current agent identity where available.
-Unknown identity can be shown as “an agent; recipient not established.”
-
-Compute unambiguous relative calendar ranges in code using the captured query
-timezone. “Before the rewrite” first needs a supported event anchor; ambiguity
-produces alternatives or a soft hint. Past commands are labeled as historical
-data independently of their classification. No label grants present authority.
-
-For historical comparison, gather both sides of a change and any stated reason,
-then present them chronologically. For current-state queries, diary passages
-remain supporting history alongside the active claim projection. Never silently
-replace that projection with a fresher-looking quotation.
-
-### Source fidelity within a finite budget
-
-The existing assistant renderer shortens long facts and uses a character-based
-admission threshold; it is not already a whole-passage, hard token budget.
-Diary rendering therefore needs its own contract:
-
-- Prefer whole bounded passages. If a relevant block is too large, select a
-  contiguous source window around the literal match or a smaller pre-indexed
-  passage. Mark it as an excerpt with its exact range and parent locator.
-  Do not paraphrase it or join disconnected fragments into a fabricated quote.
-- Include enough adjacent source to preserve attribution and negation. Charge
-  neighbor expansion to the same budget. Report omissions and continuation IDs;
-  do not pretend a partial traceback or code block is complete.
-- Reserve a diary share of the common recall allowance for diary-focused
-  requests; otherwise use the allowance remaining after claim/seed context.
-  Count citations, labels and fence overhead with the answering model's
-  tokenizer. If none fits, return a bounded locator/omission notice rather than
-  exceeding the total context budget. An unavailable tokenizer needs a tested
-  conservative bound, not an assumed characters-to-tokens equivalence.
-- Provide typed direct passage lookup with bounded continuation. Every fetch
-  rechecks source policy, exclusions and revision availability. Do not assume
-  the existing claim/seed UUID-fetch branch implements this contract.
-
-The numbers, fixed for milestones 1–2 and revisited only by the eval:
-
-| Budget | Value |
-|---|---|
-| passage cap | 1 500 characters (≈ 400 tokens); longer entries chunk at line boundaries |
-| candidates per route (literal, FTS, vector) | 20 each, fused by rank |
-| passages injected per query | at most 5, at most 2 from one entry |
-| diary share of the recall fence | 1 200 tokens on a diary-focused request, else the remainder after claims and seeds |
-| neighbor expansion | ±1 passage, charged to the same budget |
-| timeline mode page | 30 entries |
-
-What this costs in a turn: retrieval itself stays under one second (query
-embedding 44 ms, full-text and literal in the tens of milliseconds, the
-recall-filter call 0.3–0.5 s). The cost the operator feels is the extra
-decide step that chooses `memory_query`, a median 9.8 s on the current
-model, so a turn that consults the diary runs about 10 s longer than one
-that does not — roughly 45–50 s against 35–40 s today.
-
-“Verbatim” describes the stored slice and source viewer. Prompt rendering still
-uses the existing recalled-data fence and structural escaping, which may replace
-characters such as angle brackets. Retain the original bytes for exact copying
-and state when displayed text is escaped. Fences reduce structural injection;
-they do not make old instructions authoritative or guarantee model behavior.
-No event summary, thread state or scorer explanation accompanies the quotes as
-a fact.
-
-## Pilot — one month of diary
-
-The first thing to run, before milestone 1 is finished: ingest one calendar
-month of the operator's real diary into the sandbox database and report
-numbers. It exercises Layer 0, Layer 1 and the embeddings on real text
-without touching production or writing anything into a prompt.
-
-Preconditions: the month's files copied under a scratch root the app is
-pointed at (`RAINBOX_DIARY_ROOT`), the directory→dialect mapping for that
-month, `DATABASE_URL` set to `rainbox_claude`, Ollama running with
-`embeddinggemma:300m`.
-
-Steps, each a subcommand of one `tools/diary_pilot.py`:
-
-1. **`parse`** — split the month under the configured dialect; write
-   `diary_revision`, `diary_parse_generation`, `diary_entry`,
-   `diary_passage`, `diary_pasted_span`. Print: files, entries, passages,
-   entries per day, passage length percentiles (p50, p90, max), count of
-   `date_only` and undated entries, pasted spans found, every diagnostic
-   line with its file and offset.
-2. **`identifiers`** — run Layer 1's patterns; print counts per kind and
-   the ten most frequent values per kind (to eyeball false positives such
-   as a path taken for a symbol).
-3. **`embed`** — embed every passage in batches of 32; print passages per
-   second, total wall time, and the p50/p99 of the per-batch latency.
-4. **`index`** — build the FTS index and the HNSW index; print build times.
-5. **`probe`** — run a fixed list of twenty queries the operator writes
-   for that month (exact strings, a topic in each language, a date, a
-   "what did I ask the agent" case) against literal, FTS and vector routes;
-   print the top five passage locators per route with their scores and
-   the fused top five. No model call, no fence, no assistant.
-6. **`extract-sample`** — Layer 2 on 200 randomly chosen passages of the
-   month with the configured local model; print input and output tokens
-   per passage, validation failures (evidence quote not found), wall
-   time, and the kind/addressee/speaker histograms. This is the number
-   that sizes the two-year run.
-
-Everything the pilot writes lives in the sandbox and under the scratch
-root; `tools/diary_pilot.py reset` drops it. No row reaches `memory_claim`.
-
-Pass criteria for going on to milestone 2:
-
-- every byte of the month is addressable from some entry or fallback
-  block (parse invariant), and the diagnostic list is short enough to read
-  in one sitting;
-- no false entry boundary in a manual read of the ten longest entries;
-- the twenty probe queries each place at least one operator-judged correct
-  passage in the fused top five, and every exact-string probe places it
-  first;
-- embedding throughput within a factor of two of the 17 ms per passage
-  measured today;
-- the extraction sample's projected cost for two years is under a weekend
-  of GPU time, and its validation-failure rate is under 10 %.
-
-A failed criterion is a finding, not a blocker: it says which layer to fix
-before the same month is re-run.
-
-## Evaluation before rollout
-
-Build a small, synthetic multilingual diary fixture under `data/` before the
-first retriever ships. Include code, prose, duplicate paragraphs, long entries,
-file revisions and parser generations. Keep operator text out of repository
-fixtures and CI output.
-Each case names the query, mode, access context, fixed clock/timezone, source
-revision manifest, required evidence ranges and forbidden passages. The
-fixture covers all three dialects (date and time lines with ranges;
-ChangeLog headers with bullets; file-per-day with `HHMM` lines and pasted
-terminal output), two languages including a spelled-out month name,
-Terminator-universe content and author tokens, with both an operator diary
-and an assistant diary.
-
-| Family | Cases that distinguish success from a plausible-looking answer |
-|---|---|
-| Literal | Full/prefix hashes, ambiguous prefixes, extensionless paths, punctuation-heavy errors, absent strings |
-| Semantic/language | Paraphrases, Danish/English queries, code mixed with prose, unresolved aliases |
-| Time | Recorded vs occurred dates, uncertain ranges, future plans, backdated entries, ambiguous “before the rewrite” |
-| History/current state | Earlier decision + reversal + stated reason; no reason; confirmed state vs newer unconfirmed mention |
-| Attribution/outcomes | Quoted person vs operator, pasted agent commands, unsupported causal links, incomplete outcome coverage |
-| Addressee | `/tmp` vs configured `/goal`; quoted commands; an imperative with unknown recipient; two agents; mixed request/assertion/task spans; no action authorized solely by recall |
-| Format | All dialects, mixed/ambiguous fallback, overrides, invalid dates/times, filename/header conflict, unknown author token, blank-line `2026` in terminal output, text after the final prompt, multiline bullets, retained unmatched text, configured legacy encoding |
-| Parse invariants | Every byte retained/addressable; literal matches across chunks; new recognizer reconsiders `plain`; parser upgrade preserves citations; interrupted publication exposes no mixed generation |
-| Time precision | Date-only and unknown-zone entries; DST gaps/overlaps; midnight ranges; profile timezone change; chronological vs source order; date-only query retrieves entries without token overlap |
-| Assistant diary | Missing/rerun digest, retry/crash/concurrent export, midnight run, room isolation, `finished` with failed actions, generated claim contradicted by trace, unavailable trace, no recursive self-corroboration |
-| Lifecycle | Append, duplicate text, edits, rename/removal, stale workers/vectors, empty extraction, retries, re-extraction without added support |
-| Context/access | Long-block evidence, budget exhaustion, hidden neighbor, excluded citation, adversarial fence text, restriction survives disabled/rebuilt extraction, policy changes during ranking, private source before classification |
-
-Measure candidate Recall@K separately from **injected evidence coverage**: finding
-a passage does not help if the scorer or budget drops its answer-bearing span.
-For multi-passage questions, require all named evidence spans. Also record
-citation/range correctness, forbidden-source exposure, attribution and
-current-state correctness, duplicate proposal/support counts, context tokens,
-latency, retained storage and extraction cost. Score entry-boundary accuracy,
-metadata coverage and false attribution separately from retrieval: a parser can
-retain text while assigning it to the wrong date or person. Report how often
-unknown/fallback is used so apparent precision cannot hide poor coverage.
-“Injected” is not proof the answer used it; score answer behavior separately.
-
-Compare the same case inventory and source snapshot:
-
-- **A:** literal/identifier + FTS baseline.
-- **B:** A + passage vectors.
-- **C:** B + event metadata.
-- **D:** C + thread/neighbor navigation.
-
-Test relevance-stage and budget policies as explicit variants, including a
-literal lookup that a scorer incorrectly rates irrelevant. Pin splitter,
-embedder, extractor, prompt/schema, retrieval budgets and model versions in each
-run. Deterministic tests use fixed embeddings/extraction outputs to verify
-contracts. Separately run live models on the same cases to measure extraction,
-cross-language recall and answer quality; do not call live inference
-deterministic because its scorer is deterministic.
-
-Release gates require zero forbidden-source exposure, invalid citations,
-duplicate support from retries, unconfirmed belief activation, and
-**instruction carryover** — an action or present commitment authorized solely
-by recalled text. Test the action trace as well as the final answer, including
-with extraction disabled. Quoting a past request in answer to a history question
-is permitted; new explicit user authorization is evaluated separately. An added
-layer must improve its target family on held-out cases, preserve baseline-passing
-regression cases, and stay within latency/token limits fixed before the run.
-Publish per-family counts, failures and repeated live-run variation. Keep a
-layer disabled when the evidence is too small or mixed to justify its cost.
-
-## Order of work and stopping points
-
-0. **Pilot on one month** (above): real text, sandbox only, numbers out.
-   Half a day of work once the parsers exist; it front-loads every surprise
-   the fixture cannot contain.
-1. **Fixture and source contract:** define eligible sources, revision/range
-   semantics, exclusions, the directory→dialect mapping and the `plain`
-   fallback, the splitter cap (1 500 characters), UTF-8-only decoding, the
-   profile timezone, generation publication and evaluation cases.
-   This makes provenance and access testable before retrieval integration.
-   A local dry-run reports dialect/encoding failures, date coverage, ambiguous
-   boundaries and entry-size distributions before publishing indexes; corpus
-   text stays out of repository fixtures and logs.
-2. **Smallest useful retrieval:** Layer 0 + Layer 1, explicit `memory_query`
-   integration, source viewer, bounded rendering and diagnostics. Ship literal
-   and FTS first; add passage embeddings against baseline A. No generative
-   extraction is needed. Include timeline pagination and marker hints. Prove
-   append/edit/removal, parser-upgrade and service-failure behavior.
-3. **Events, if recall needs them:** benchmark a local model, implement the
-   versioned job ledger and evidence validation, then evaluate attribution,
-   addressee and temporal metadata. Keep ordinary passage search independent
-   of this pass. Durable restrictions must also survive its removal.
-4. **Assistant diary, independently optional:** after milestone 2, add the
-   managed export, idempotent reconciliation and typed run-evidence retrieval.
-   It does not depend on event extraction, and generated digests must not bypass
-   the source-first answer contract.
-5. **Belief proposals, if useful:** add selected-event promotion, durable
-   idempotency and source-change review. Preserve existing governance; make no
-   automatic temporal supersession change.
-6. **Threads, if longitudinal questions still fail:** add bounded topic/episode
-   navigation and supported relations. Evaluate full-history comparisons and
-   context cost before adding model-derived navigation aids.
-
-Stop after any milestone if the next layer does not earn its complexity.
-Disabling an optional layer returns to passage retrieval without losing source
-citations, retained restrictions or operator decisions. A full rollback disables
-the diary source; it does not require deleting or modifying the operator's files.
-
-## Deliberately deferred
-
-No Datalog engine, graph database, summary-of-summary hierarchy, canonical
-language, or runtime clustering is needed for the first design. PostgreSQL
-relations and joins are sufficient for the proposed navigation. Offline corpus
-visualization may help evaluate grouping, but does not establish truth. A
-bitemporal belief model, exhaustive task tracking and always-on diary injection
-are separate proposals with their own evidence and review costs.
