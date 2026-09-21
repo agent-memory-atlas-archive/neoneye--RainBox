@@ -1,7 +1,7 @@
 # Representing a Long-Running Diary for AI Memory
 
 **Status:** Proposal. The diary-specific components below are not built.
-**Date:** 2026-09-21 (revision 7)
+**Date:** 2026-09-21 (revision 8)
 **Relates to:** [memory architecture](../memory-architecture.md),
 [Q&A system](../qa-system.md),
 [recall and retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
@@ -15,6 +15,14 @@ reviewable belief proposals, and thread navigation only when they improve
 measured recall. Reuse RainBox's governed belief store; do not turn a diary
 import into automatic belief confirmation.
 
+**Revision 8 — concrete.** Revision 7 is correct and complete as a contract,
+and too open to build from: its hard cases defer to "a policy" or "an
+override". This revision takes those decisions, replaces the illustrative
+cost figures with measurements taken on the operator's machine, fixes the
+retrieval budgets as numbers, names the vector index, and adds a **pilot on
+one month of diary** as the first thing to run — with its steps, the numbers
+it must report, and the criteria for going on to milestone 2.
+
 **Revision 7 — distinguish syntax, interpretation and authority.** Keep the
 three historical diary dialects and the assistant diary introduced in revisions
 4–6. Correct their overconfident parsing and attribution rules: a plausible time,
@@ -23,6 +31,22 @@ addressee. Separate file revisions from parser generations, make restrictive
 policy changes durable, and treat assistant digests as generated navigation to
 run evidence. The original source-first recommendation remains. Earlier
 revision history is in git.
+
+## Decisions taken in revision 8
+
+These replace the "policy" and "override" deferrals below wherever they
+conflict. Each is reversible; none is worth a generic mechanism for one
+operator's files.
+
+| Question | Decision | Why |
+|---|---|---|
+| How is a file's dialect chosen? | **By directory.** A small table maps each diary directory (or glob) to one dialect; the recognizer for that dialect only *validates* and reports diagnostics. Files outside every mapping are `plain`. | The three formats are historically contiguous. A mapping removes recognizer ambiguity and the "most matching lines" heuristic entirely. |
+| Encoding? | **UTF-8 only.** A file that fails to decode is quarantined with its path and byte offset; no offset maps, no per-file encoding override. | Legacy encodings are a one-off conversion job outside the app, not a runtime feature. |
+| Timezone for old entries? | **The profile timezone for every era**, recorded on each generation. | A per-era policy is correct in principle and has no data to feed it. |
+| `/goal`-style commands? | **A configured command vocabulary** (`/goal` plus whatever the operator lists) recognized only as the first token of an entry's first line; everything else with a leading slash is text. | Removes the `/tmp` false positive without a model. |
+| Layer 2 on how much? | **The pilot month first, then at most the latest two years**, extended only if the eval moves. Never the whole corpus by default. | Full extraction is 12–15 GPU-hours (see Measured costs) and reruns on every prompt change. |
+| Vector index? | **HNSW** on the passage embedding table (`vector_cosine_ops`, `m=16`, `ef_construction=64`), created after the first bulk load. | The existing claim table has no vector index; an exact scan is fine at hundreds of rows and 100 ms+ at forty thousand. |
+| Where does the diary enter a turn? | **`memory_query` only** for milestones 1–2; always-on injection is a separate decision after the eval. | As the document already says; now with the cost in seconds below. |
 
 ## The problem and the answer contract
 
@@ -263,11 +287,10 @@ of an earlier citation. Original bytes remain available alongside the decode.
 
 ### Parsing the three dialects
 
-Prefer a configured file/directory dialect override. Otherwise recognizers must
-validate dates, times and the surrounding record structure; selecting whichever
-regex matches the most lines is insufficient. Record competing matches and
-ambiguities. A mixed or inconclusive file falls back to `plain` blocks until
-an override resolves it. Preserve all content, flag metadata as incomplete, and
+The dialect is configured per directory (revision 8); recognizers validate
+dates, times and the surrounding record structure for the configured
+dialect and report every line that does not fit as a diagnostic. A file
+outside every mapping is `plain`. Record competing matches and ambiguities. Preserve all content, flag metadata as incomplete, and
 retain an unambiguous filename date even in fallback mode.
 
 | Dialect | Entry boundaries | Context retained |
@@ -414,6 +437,10 @@ the existing embedding client but a new passage table. Store model identity,
 dimension and the hash of the actual embedding input, and never compare vectors
 from incompatible models. Cross-language performance must be measured.
 
+Passage embeddings get an HNSW index (revision 8) after the first bulk
+load; the index is rebuilt, not updated row by row, when the embedding
+model changes.
+
 Literal matching must span passage boundaries within an eligible entry; map a
 cross-boundary match back to its original byte range and adjoining passages.
 A splitter change must not make an unchanged error string unfindable.
@@ -535,25 +562,33 @@ cache. Reuse successful work rather than selecting “passages with no event
 row,” which retries empty results forever. Store the actual model digest and
 sampling configuration with the run, not only a mutable model tag.
 
-The earlier 75-minute estimate assumed prefix caching without pricing a cold
-run. The examples include short entries and long pasted sessions; their
-frequency across the corpus is unknown. Measure both, without assuming an
-average from the examples. For **illustration only**, 3,000 passages, 300
-passage tokens, a 600-token prefix per call, and 50 output tokens per
-passage give:
+### Measured costs (2026-09-21, the operator's machine)
 
-```text
-uncached input = 3,000 × (600 + 300) = 2.7 million tokens
-output        = 3,000 × 50          = 150,000 tokens
-elapsed ≈ uncached_input / prefill_rate + output / decode_rate + overhead
-```
+The corpus is about 15 MB of text: roughly 4 M tokens and, depending on how
+long pasted sessions chunk, 35 000–50 000 passages. Measured today:
 
-At hypothetical rates of 700 input and 50 output tokens/s, this is about
-64 + 50 = **114 minutes**, before overhead, retries and embeddings. Perfect
-prefix reuse would reduce prefill toward 21 minutes, not guarantee it. Several
-events with evidence quotes may need far more than 50 output tokens. Benchmark
-a representative sample first and record cold/warm throughput, output lengths,
-validation failures, total wall time and interference with interactive turns.
+| What | Measurement |
+|---|---|
+| `embeddinggemma:300m`, one 183-token passage, warm | 44 ms |
+| same, batched 32 per request | 17 ms per passage |
+| `gemma4:e4b` uncached prefill, live run | ≈ 700 tok/s |
+| `gemma4:e4b` decode, live run | ≈ 50 tok/s |
+| existing recall-filter call, production | 0.3–0.5 s |
+| decide step that chooses `memory_query`, production median | 9.8 s |
+
+So, once, for the whole corpus:
+
+| Layer | Cost |
+|---|---|
+| parse, identifiers, full-text index | under a minute |
+| passage embeddings | 10–20 minutes |
+| Layer 2 extraction, every passage | **12–15 GPU-hours**: ~4 M input tokens at 700 tok/s with the instruction prefix cached, plus ~2 M output tokens (40 000 × 50) at 50 tok/s |
+
+The extraction pass is the outlier, reruns on every prompt or model
+change, and shares the GPU with interactive turns — hence the decision to
+run it on the pilot month first and then on at most two years. The pilot
+reports the real per-passage numbers (input and output tokens, validation
+failures, wall time) before anything larger is scheduled.
 
 ## Layer 3 — proposals into the existing belief store
 
@@ -753,6 +788,24 @@ Diary rendering therefore needs its own contract:
   rechecks source policy, exclusions and revision availability. Do not assume
   the existing claim/seed UUID-fetch branch implements this contract.
 
+The numbers, fixed for milestones 1–2 and revisited only by the eval:
+
+| Budget | Value |
+|---|---|
+| passage cap | 1 500 characters (≈ 400 tokens); longer entries chunk at line boundaries |
+| candidates per route (literal, FTS, vector) | 20 each, fused by rank |
+| passages injected per query | at most 5, at most 2 from one entry |
+| diary share of the recall fence | 1 200 tokens on a diary-focused request, else the remainder after claims and seeds |
+| neighbor expansion | ±1 passage, charged to the same budget |
+| timeline mode page | 30 entries |
+
+What this costs in a turn: retrieval itself stays under one second (query
+embedding 44 ms, full-text and literal in the tens of milliseconds, the
+recall-filter call 0.3–0.5 s). The cost the operator feels is the extra
+decide step that chooses `memory_query`, a median 9.8 s on the current
+model, so a turn that consults the diary runs about 10 s longer than one
+that does not — roughly 45–50 s against 35–40 s today.
+
 “Verbatim” describes the stored slice and source viewer. Prompt rendering still
 uses the existing recalled-data fence and structural escaping, which may replace
 characters such as angle brackets. Retain the original bytes for exact copying
@@ -760,6 +813,63 @@ and state when displayed text is escaped. Fences reduce structural injection;
 they do not make old instructions authoritative or guarantee model behavior.
 No event summary, thread state or scorer explanation accompanies the quotes as
 a fact.
+
+## Pilot — one month of diary
+
+The first thing to run, before milestone 1 is finished: ingest one calendar
+month of the operator's real diary into the sandbox database and report
+numbers. It exercises Layer 0, Layer 1 and the embeddings on real text
+without touching production or writing anything into a prompt.
+
+Preconditions: the month's files copied under a scratch root the app is
+pointed at (`RAINBOX_DIARY_ROOT`), the directory→dialect mapping for that
+month, `DATABASE_URL` set to `rainbox_claude`, Ollama running with
+`embeddinggemma:300m`.
+
+Steps, each a subcommand of one `tools/diary_pilot.py`:
+
+1. **`parse`** — split the month under the configured dialect; write
+   `diary_revision`, `diary_parse_generation`, `diary_entry`,
+   `diary_passage`, `diary_pasted_span`. Print: files, entries, passages,
+   entries per day, passage length percentiles (p50, p90, max), count of
+   `date_only` and undated entries, pasted spans found, every diagnostic
+   line with its file and offset.
+2. **`identifiers`** — run Layer 1's patterns; print counts per kind and
+   the ten most frequent values per kind (to eyeball false positives such
+   as a path taken for a symbol).
+3. **`embed`** — embed every passage in batches of 32; print passages per
+   second, total wall time, and the p50/p99 of the per-batch latency.
+4. **`index`** — build the FTS index and the HNSW index; print build times.
+5. **`probe`** — run a fixed list of twenty queries the operator writes
+   for that month (exact strings, a topic in each language, a date, a
+   "what did I ask the agent" case) against literal, FTS and vector routes;
+   print the top five passage locators per route with their scores and
+   the fused top five. No model call, no fence, no assistant.
+6. **`extract-sample`** — Layer 2 on 200 randomly chosen passages of the
+   month with the configured local model; print input and output tokens
+   per passage, validation failures (evidence quote not found), wall
+   time, and the kind/addressee/speaker histograms. This is the number
+   that sizes the two-year run.
+
+Everything the pilot writes lives in the sandbox and under the scratch
+root; `tools/diary_pilot.py reset` drops it. No row reaches `memory_claim`.
+
+Pass criteria for going on to milestone 2:
+
+- every byte of the month is addressable from some entry or fallback
+  block (parse invariant), and the diagnostic list is short enough to read
+  in one sitting;
+- no false entry boundary in a manual read of the ten longest entries;
+- the twenty probe queries each place at least one operator-judged correct
+  passage in the fused top five, and every exact-string probe places it
+  first;
+- embedding throughput within a factor of two of the 17 ms per passage
+  measured today;
+- the extraction sample's projected cost for two years is under a weekend
+  of GPU time, and its validation-failure rate is under 10 %.
+
+A failed criterion is a finding, not a blocker: it says which layer to fix
+before the same month is re-run.
 
 ## Evaluation before rollout
 
@@ -829,9 +939,13 @@ layer disabled when the evidence is too small or mixed to justify its cost.
 
 ## Order of work and stopping points
 
+0. **Pilot on one month** (above): real text, sandbox only, numbers out.
+   Half a day of work once the parsers exist; it front-loads every surprise
+   the fixture cannot contain.
 1. **Fixture and source contract:** define eligible sources, revision/range
-   semantics, exclusions, the dialect registry and its fallback, splitter
-   caps, encoding/time policy, generation publication and evaluation cases.
+   semantics, exclusions, the directory→dialect mapping and the `plain`
+   fallback, the splitter cap (1 500 characters), UTF-8-only decoding, the
+   profile timezone, generation publication and evaluation cases.
    This makes provenance and access testable before retrieval integration.
    A local dry-run reports dialect/encoding failures, date coverage, ambiguous
    boundaries and entry-size distributions before publishing indexes; corpus
