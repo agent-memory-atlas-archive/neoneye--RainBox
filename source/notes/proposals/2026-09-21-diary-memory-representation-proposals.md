@@ -46,9 +46,18 @@ Decisions are code defaults unless marked as configuration:
   optimization with a defined fallback; it is not needed to run the pilot.
 - **Reranking:** deterministic rank fusion, with no generative recall
   filter. Preserve the existing claim/Q&A branch and its configured backend.
+- **Units:** a *character* is a Unicode code point (Python `len`) everywhere
+  in this document. Stored locators are UTF-8 byte offsets; every length,
+  cap and window is in characters.
 - **Budget:** use explicit character limits compatible with today's assistant.
   A token budget is not enforceable by the current character-based prompt
-  pipeline; do not describe a character count as a token guarantee.
+  pipeline; do not describe a character count as a token guarantee. The diary
+  observation budget is derived from the assistant's scratchpad (§8), so a
+  search and its follow-up read fit the deciding prompt together.
+- **Model locality:** diary text reaches only prompts whose models run on a
+  loopback provider. A turn whose decide or reply-audit model resolves to a
+  remote provider (OpenRouter today) gets `error=remote_model` from the diary
+  branch unless the source opts in with `allow_remote_models`.
 - **Human control:** source files are never edited. Import, embedding and
   source-policy changes run outside the request path. The first release writes
   no claims.
@@ -71,7 +80,8 @@ Paths below are relative to `source/`; names marked **new** are proposed files.
 | Reconciliation | `diary/ingest.py` **new** | Stable reads, generation publication, filesystem reconciliation |
 | Retrieval/embeddings | `diary/retrieval.py`, `diary/embeddings.py` **new** | Injectable embedding client and deterministic candidate selection |
 | Rendering/action adapter | `diary/render.py`, `diary/action.py` **new** | Schema validation, bounded original excerpts, observation metadata |
-| Assistant integration | [`agents/assistant.py`](../../agents/assistant.py) | Capability args/description, diary dispatch, audit preservation |
+| Assistant integration | [`agents/assistant.py`](../../agents/assistant.py) | Capability args/description, diary dispatch, audit preservation, `AssistantActionContext.models_local` |
+| Fence | [`memory/retrieval.py`](../../memory/retrieval.py) | A second code-owned fence constant for diary passages; `split_recalled_fence` recognizes both |
 | CLI | `tools/diary.py` **new** | Import/inspect/pilot; explicit database selection before importing `db` |
 | Settings | [`db/settings.py`](../../db/settings.py) | `diary.enabled`, boolean, default false, env `RAINBOX_DIARY_ENABLED` |
 | Evaluation | `evals/diary.py` **new**, [`evals/runner.py`](../../evals/runner.py) | `diary_recall` cases with deterministic scoring and hard failures |
@@ -99,6 +109,7 @@ This is a synthetic example, not an existing installation:
   "agent_uuid": null,
   "timezone": "Europe/Copenhagen",
   "sensitivity": "private",
+  "allow_remote_models": false,
   "include_suffixes": [".txt"],
   "dialect_rules": [
     {"prefix": "current/", "dialect": "timed"},
@@ -118,6 +129,8 @@ Validation and defaults:
   identity when supplied. Canonical roots are unique and may not overlap.
   Sources start disabled. `sensitivity` is `private` or `secret`; secret sources
   can be inspected locally but are never available to the assistant.
+  `allow_remote_models` defaults to false and is a policy field: changing it
+  bumps `policy_version`. A secret source rejects `true`.
 - Prefixes are normalized relative POSIX directory paths, including a trailing
   slash; `""` is the root prefix. Reject `..`, absolute prefixes, duplicates and
   unknown dialects/languages. Suffix comparison is case-sensitive; `""` explicitly
@@ -132,16 +145,20 @@ Validation and defaults:
   language is a manifest edit; the fixture pins English, Danish and German.
 - `file_overrides` keys are relative file paths. Each value contains
   `content_sha256`, `force_boundary_offsets: []`, `suppress_boundary_offsets: []`
-  and `pasted_ranges: []`. Offsets refer to UTF-8 bytes at line starts; pasted
-  ranges are `[start,end)`. Validate bounds, overlap and conflicting overrides.
-  A hash mismatch does **not** quarantine the file: the override is skipped,
+  and `pasted_ranges: []`. Offsets are revision byte offsets (BOM included,
+  as `show` prints them) at line starts; pasted ranges are `[start,end)`.
+  `register` validates shape, sorting and overlap. Bounds and line-start
+  positions can only be checked against the bytes, so the parser converts
+  each offset to a character position at its input edge; an offset past EOF
+  or off a line start skips the whole override with `override_invalid`.
+  A hash mismatch does **not** quarantine the file either: the override is skipped,
   the file is parsed without it, and `override_stale` is emitted with the
   expected and actual hashes — the text stays searchable with a possibly
   imperfect boundary, which is strictly better than a file the assistant
   cannot see because a typo was fixed on line five. `parse --dry-run` lists
   stale overrides so they can be re-anchored. This is the sole file-level
   escape hatch for genuinely ambiguous syntax, and it is expected to be
-  rare: the fence and terminal rules above are meant to make most files
+  rare: the fence and terminal rules in §5 are meant to make most files
   need none.
 - `command_tokens` supply hints only when the first body token exactly matches
   and is outside pasted text. `/tmp` is not a command unless configured. `IDEA:`
@@ -249,7 +266,9 @@ normalize stored newlines or indentation.
 
 ### Precedence
 
-1. Strict decoding and override validation; failure quarantines the file.
+1. Strict decoding; failure quarantines the file. This is the only parse
+   failure that hides a file. An override that is stale or invalid is
+   skipped with its diagnostic and the file parses without it.
 2. Explicit pasted-range and boundary overrides. Forced boundaries must still
    have a valid header shape; they resolve context ambiguity, not invalid clocks.
    Suppressed boundaries stay body text. Reject forced boundaries inside explicit
@@ -261,7 +280,7 @@ normalize stored newlines or indentation.
    It closes at the first of: a matching closer; the next valid **date**
    header of the file's dialect (a date line, a ChangeLog header — time lines
    and bullets do not close it, since fenced output legitimately contains
-   four-digit lines); or 16 384 bytes after the opener. The forced close
+   four-digit lines); or 16,384 characters after the opener. The forced close
    emits `fence_unterminated` with both offsets, and the region is still
    annotated as pasted. Every one of the three closes has a fixture.
 4. Likely terminal regions, then dialect boundary recognition outside them.
@@ -285,7 +304,9 @@ match     host:/path#                                   (KNOWN FALSE POSITIVE: a
 The last case is the one shape prose can produce that the regex cannot
 tell from a prompt; it is rare, it only affects boundary suppression inside
 the region that follows, and a `pasted_ranges` override on that file
-resolves it. Add it to the fixture as a documented limitation, not a bug. Once started, the likely terminal region includes successive prompts/output and ends before two
+resolves it. Add it to the fixture as a documented limitation, not a bug.
+
+Once started, the likely terminal region includes successive prompts/output and ends before two
 consecutive empty lines, an explicit override boundary, or EOF. One empty line
 inside it does not end it. A header-shaped line suppressed there produces a
 `possible_boundary_in_terminal` diagnostic. The region is a parsing heuristic,
@@ -317,6 +338,19 @@ a mismatch emits `filename_header_mismatch`. For `daily`, an invalid filename
 falls back to plain undated blocks with `invalid_daily_filename`. Unknown author
 tokens remain literal tokens and never default to operator authorship.
 
+Order is the parser's cheapest ambiguity signal. A four-digit prose line
+such as a year (`2027` is a valid `20h27`) or an eight-digit order number
+can pass the header grammar, but it rarely also fits the file's sequence.
+The parser therefore checks each accepted header against its predecessor in
+the same file: in `timed` and `daily`, a clock earlier than the previous
+entry's start on the same date emits `clock_regression`; in `timed`, a date
+earlier than the previous date emits `date_regression`, and in `changelog`
+(newest first) a date *later* than the previous one does. The boundary is
+still accepted, because diaries are occasionally written out of order, and
+the diagnostic carries both offsets so `parse --dry-run` lists exactly the
+places worth inspecting. A regression inside a likely terminal or fenced
+region cannot occur, since those headers are already suppressed.
+
 ### Clocks, order and chunks
 
 Keep local dates and minute values as written. Time ranges do not prove when the
@@ -335,8 +369,10 @@ the timeline as local diary dates, not a single absolute event chronology.
 
 Each entry owns its time/bullet marker and body; date/author headers are separate
 context ranges. Chunk the body, including its entry marker, at the last line end
-within **1,500 Unicode code points**. If none fits, split at the cap on a character
-boundary. No overlap at ingestion. Keep part indexes and map ranges to bytes.
+within **700 characters**. If none fits, split at the cap on a character
+boundary. The cap is set by the observation budget (§8): two whole passages
+plus their labels must fit one observation, or ranked search could never
+show a passage next to its neighbor. No overlap at ingestion. Keep part indexes and map ranges to bytes.
 Attach inherited date/author context to every part. Every short entry is one
 passage. Whitespace-only structural spans are retained in coverage, not embedded.
 
@@ -388,11 +424,25 @@ No general occurrence-lineage algorithm is required until belief promotion.
 
 Exclusions are **file-level**, keyed by source and relative path, and apply to
 all revisions and all routes. They survive rebuilds and purges. `exclude` takes
-effect immediately; `unexclude` is an explicit local operation. An excluded file
-that disappears while new files appear is a potential rename: disable that source
-pending explicit path reconciliation, carrying the exclusion to both paths.
-Ordinary unexcluded renames are removal plus addition. This conservative rule
-avoids pretending a content-hash match can safely identify every rename.
+effect immediately; `unexclude` is an explicit local operation.
+
+An excluded file that disappears in the same sync in which new files appear
+may have been renamed, and publishing the new path would undo the exclusion.
+The response is scoped to the files at risk, not the whole source, because
+the `daily` dialect adds a new file nearly every day and disabling the source
+would turn every such deletion into an outage:
+
+- A new file whose bytes hash to any stored revision of the vanished excluded
+  file is an exact move. The exclusion is copied to the new path, the file is
+  never published, and `exclusion_carried` names both paths.
+- Every other file that appeared in that sync is held with
+  `availability=pending` and diagnostic `held_for_reconcile`, unsearchable,
+  until `reconcile --source UUID` either excludes it or releases it. The rest
+  of the source stays enabled and current.
+
+Ordinary unexcluded renames are removal plus addition. The hold rule does not
+pretend a content hash identifies every rename (a renamed and edited file
+has a new hash); it only refuses to guess on the files that could be one.
 
 `enabled=false`, `secret`, exclusions and quarantine filter before candidate text
 leaves the DB layer. Revalidate immediately before returning an observation;
@@ -425,12 +475,23 @@ Contract:
   inclusive start and exclusive end; validate start < end. `timeline` requires
   both. `source_ids` can narrow eligible sources; absent/empty means all eligible.
 - `read` accepts only a typed revision locator with nonnegative integer byte
-  offsets inside the stored snapshot. It never opens an arbitrary filesystem path.
+  offsets. It never opens an arbitrary filesystem path. Syntax is checked
+  before access (`invalid_request`); everything that needs the snapshot —
+  offsets past its end or inside a multi-byte character — is checked after
+  access and fails as `not_found`, so a caller outside the room cannot probe a
+  revision's length. A start inside a BOM moves to byte 3.
   `continue` accepts only a cursor; it reuses its stored request and context.
 - Context room/agent UUIDs come solely from `AssistantActionContext`. Require a
   matching room and, when configured, matching agent; missing context denies
   access. A source ID/citation/cursor is not permission. Unknown, denied and
-  unavailable citations return the same `not_found` response.
+  unavailable citations, and a cursor bound to another room or agent, return
+  the same `not_found` response.
+- `AssistantActionContext.models_local` is set by the loop: true only when the
+  turn's decide and reply-audit models both resolve to a loopback provider.
+  When false, sources without `allow_remote_models` are ineligible; if that
+  leaves none, the branch returns `ok=false,error=remote_model` rather than
+  an empty success, so the assistant can say why. Missing context counts as
+  remote.
 - Unknown modes/keys, conflicting fields, invalid dates and oversized input return
   `ok=false,error=invalid_request` before retrieval. Disabled diary returns
   `ok=false,error=diary_disabled`. Search with no matches is a successful empty
@@ -479,12 +540,27 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   ranges. Explicit literal mode ranks earlier source-order occurrences first,
   returns exact match windows and skips FTS/vector calls. Multiple hits are not
   silently declared unique. Return a cursor to enumerate additional matches.
-  The scan is a sequential `strpos` over eligible entry text, well inside the
-  2-second statement timeout at this corpus's 15 MB. A `pg_trgm` GIN index
-  on `diary_entry.text` does not change a `LIKE` result, so unlike HNSW it
-  needs no recall gate: `sync` creates it automatically once a source's
-  entry text exceeds 25 MB, and `index --trgm` creates it on demand below
-  that. The route stays exact either way; the statement timeout stays.
+  The SQL predicate is `text LIKE :pattern ESCAPE '\'`, where the pattern is
+  `%` + the query with `\`, `%` and `_` escaped + `%`. That is the same
+  exact, case-sensitive substring test as `strpos`, and unlike `strpos` a
+  `pg_trgm` GIN index can serve it. Without the index it is a sequential
+  scan, well inside the 2-second statement timeout at this corpus's 15 MB.
+  An index does not change a `LIKE` result, so unlike HNSW it needs no
+  recall gate: `sync` creates it automatically once a source's entry text
+  exceeds 25 MB, and `index --trgm` creates it on demand below that. (A
+  query under three characters has no trigram and scans either way.) Match
+  positions come from a Python `str.find` loop over each fetched entry, so
+  every occurrence in an entry is found, not only the first.
+- **Prompt spelling of a literal:** the prompt fence replaces `<` and `>` with
+  `‹` and `›` (§8), so an assistant copying a string it was shown would
+  search for a spelling the diary never contained. A literal query containing
+  `‹` or `›` is therefore tried as written and with those two characters
+  reverted, and the hits are merged. Neither spelling is preferred; both are
+  exact matches of real bytes.
+- **Headers are not entry text:** a literal on a date or author header (a
+  ChangeLog `27-juli-2027 kreese` line) finds nothing, because headers are
+  context ranges, not entry text. Dates are reached through `timeline`;
+  author tokens are rare enough to leave to `read`.
 - **Identifier route in search:** at most eight recognized query tokens; equality
   first, hash-prefix matches second (minimum seven hex characters). Keep subtype
   and original spelling. Paths/symbols are case-sensitive; ambiguous hash prefixes
@@ -497,10 +573,11 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
 Search unions the three routes by passage UUID. Score with reciprocal-rank
 fusion `sum(1 / (60 + rank))`, where ranks start at one. Tie-break by source UUID,
 relative path, entry ordinal and part index. No mixing raw score scales. Select
-at most five passages, at most two per entry. Expand by at most one adjacent
+at most four passages, at most two per entry; the observation budget usually
+admits fewer, and the rest become citations. Expand by at most one adjacent
 passage on either side *within that entry*, subject to the same count/access/
 rendering caps. Two windows that touch or overlap are merged only when the
-merged range fits the 1,500-code-point window cap; otherwise they stay
+merged range fits the 700-character window cap; otherwise they stay
 separate windows, each charged to the budget, each containing its own
 whole match — a merge never truncates and never drops the later match.
 Stored source slices are never concatenated across gaps into one quote.
@@ -517,7 +594,10 @@ Cursors are random DB UUIDs, expire after 30 minutes, bind room/agent/request an
 source catalog/policy versions, and contain only positions/IDs. A changed version
 returns `cursor_stale`; restart the request rather than mix snapshots. Expiry
 returns `cursor_expired`. Repeated cursor reads are idempotent while valid; each
-page generates a cursor for its next position. CLI cleanup deletes expired rows.
+page generates a cursor for its next position. Each cursor insert deletes
+expired rows in the same transaction (the expiry index makes that cheap), so
+the table stays small without a scheduled job; the CLI cleanup remains for
+an idle installation.
 
 ### Embeddings and HNSW
 
@@ -539,10 +619,22 @@ Use a 2-second query-embedding timeout with zero retries, a 30-second background
 batch timeout and at most two background retries. Do not silently switch provider.
 These are new adapter limits, not the existing seed client's 10-second timeout.
 
+Input-format version 1 is the bare passage text, matching how the seed and
+claim paths embed today. EmbeddingGemma's model card recommends task
+prompts instead (`title: none | text: …` for documents, `task: search
+result | query: …` for queries). Version 2 is those prompts, and the pilot
+measures it as its own baseline (§9). It is adopted only if it injects at
+least as many topical gold spans and loses no baseline-passing case. The
+version is already part of the epoch, so switching is a re-embed, not a
+schema change.
+
 Start with exact distance ordering over a materialized eligible-row set so an
 existing HNSW index cannot change the baseline. In `hnsw` mode, use the same SQL
-eligibility predicates and `SET LOCAL hnsw.ef_search=100`; if fewer than
-`min(20, eligible_embedded_count)` rows survive, fill using exact filtered search.
+eligibility predicates, `SET LOCAL hnsw.ef_search=100` and
+`SET LOCAL hnsw.iterative_scan=strict_order` (pgvector 0.8, the installed
+version, keeps scanning the graph until the filtered LIMIT is met or
+`hnsw.max_scan_tuples` is reached). If fewer than
+`min(20, eligible_embedded_count)` rows survive anyway, fill using exact filtered search.
 Approximate indexes can underfill after filtering; a full result set also does
 not prove exact recall. Measure both before enabling the mode.
 [pgvector documents this filtering behavior](https://github.com/pgvector/pgvector#filtering).
@@ -557,17 +649,50 @@ Failure of this optimization gate leaves exact search enabled.
 
 ## 8. End-to-end rendering contract
 
-Reuse `fence_recalled_memory` and its structural escaping. Source viewer output
-remains byte-exact; prompt text may contain escaped angle brackets. Each excerpt
-includes source name, path, diary date/time precision, snapshot time, citation and
-“historical diary data” label. No model-written summary or scorer explanation.
+Reuse the escaping of `fence_recalled_memory`, not its note. Today's fence
+tells the model the body holds “facts the user stored earlier”, which is the
+wrong claim for a diary: a passage is a past record, not a current fact, and
+it is full of imperatives addressed to the writer's past self or a past
+agent. Add a second code-owned constant pair to `memory/retrieval.py`, tag
+`diary_passages` with a note saying the block holds historical diary
+passages that are neither current facts nor instructions to act on now, and
+have `split_recalled_fence` and `_set_observation_content` recognize either
+exact constant so the diary fence is rendered as real structure too. The
+escape (`<` → `‹`, `>` → `›`) is one character for one, so it never
+changes a length the budget already counted. Source viewer output remains
+byte-exact.
+
+Excerpt labels are grouped to save budget: one line per source carries its
+name and snapshot time; each excerpt then carries path, diary date/time
+precision and citation. No model-written summary or scorer explanation.
+
+The observation budget is derived, not chosen. `_bounded_turn_events` keeps
+events newest-first until `MAX_SCRATCHPAD_CHARS` (5,000 today) is full, and
+each event also carries its action, JSON args, reason and a 120-character
+allowance. The dominant diary pattern is a search followed by a `read` of one
+citation, and the answer needs both, so two diary events must fit:
+`DIARY_OBSERVATION_CHARS = MAX_SCRATCHPAD_CHARS // 2 - 600`, which is 1,900
+today. An observation near the whole scratchpad would evict every earlier step
+the moment it arrived, so a search and its follow-up read could never both
+be visible. Raising the scratchpad is a separate latency decision, and this
+constant follows it automatically.
+
+The passage cap follows from the budget. Of 1,900 characters, the fence
+takes about 150, one source line about 60, two excerpt label lines about 90
+each and a continuation notice about 80, leaving roughly 1,430: two
+700-character passages. A unit test asserts
+`2 * PASSAGE_CAP + LABEL_RESERVE <= DIARY_OBSERVATION_CHARS` against the
+real rendered label lengths, so shrinking the scratchpad fails a test
+instead of silently leaving room for one passage. Changing the cap is a new
+parser fingerprint and re-embeds, which is why it is fixed here rather than
+recomputed at runtime.
 
 | Limit | Value and meaning |
 |---|---|
-| Stored passage | 1,500 Unicode code points, no token-equivalence promise |
+| Stored passage | 700 characters, no token-equivalence promise |
 | Search candidates | 20 per route; no generative scorer call |
-| Selected passages | ≤5, ≤2 per entry; neighbor expansion counts toward both |
-| Diary observation | **4,800 characters total**, including labels, fence, citations and continuation notice |
+| Selected passages | ≤4, ≤2 per entry; neighbor expansion counts toward both |
+| Diary observation | **`DIARY_OBSERVATION_CHARS` total** (1,900 today), including labels, fence, citations and continuation notice |
 | Timeline DB batch | 30 entries; output may contain fewer, with exact continuation |
 | Literal scan | 2-second DB statement timeout; timeout returns partial/error metadata, never “no matches” |
 | Query embedding | 2 seconds, zero retries; lexical fallback |
@@ -576,9 +701,10 @@ Pack in rank order (source order for literal/read, timeline order for timeline).
 Prefer complete passages. If a requested literal/read range is too large, choose
 one contiguous window containing the match/start and a continuation offset.
 Do not truncate a citation, join disconnected fragments or remove the middle of
-a quote. Literal windows are at most 1,500 characters, start up to 256 characters
-before the match, and must contain the entire match. Read windows start at the
-requested offset and advance by at most 1,500 characters. Date/header context is
+a quote. Literal windows are at most 700 characters, start up to 200 characters
+before the match, and must contain the entire match; a match longer than
+700 characters is shown from its start with a continuation. Read windows start at the
+requested offset and advance by at most 700 characters. Date/header context is
 labeled metadata and charged to the same cap.
 Clamp displayed path labels to 120 characters without changing their locator.
 Omitted item notices are reserved before packing. An item that cannot fit yields
@@ -590,21 +716,29 @@ Wire and test the complete assistant path, not only `render_diary`:
    dispatch it before legacy query/UUID handling. Do not change legacy budgets.
 2. Keep observations below the capability's 12,000-character cap and
    `MAX_OBSERVATION_PREVIEW_CHARS`, so neither slices diary output.
-3. `_bounded_turn_events` retains the newest observation whole today. It may
-   discard earlier observations as units; retrieval metadata must never claim
-   all earlier quotes remain in the deciding prompt.
-4. `_build_reply_audit_prompt` currently shortens memory observations to 2,000 body
-   characters. For a validated `step.args['diary']` request, pass the complete
-   already-bounded diary observation to `_set_observation_content` without this
-   second shortening. Keep the existing audit limit for other reads. Test an
-   answer-bearing span in the middle and end of a 4,800-character result.
+3. `_bounded_turn_events` retains the newest observation whole and discards
+   earlier ones as units. The derived budget keeps two diary events; a third
+   read evicts the oldest. Retrieval metadata must never claim all earlier
+   quotes remain in the deciding prompt. Test a search, a `read` and a final
+   decide: both diary observations are in the deciding prompt.
+4. `_build_reply_audit_prompt` shortens every observation body to
+   `REPLY_AUDIT_MAX_OBSERVATION_CHARS` (2,000). For a validated
+   `step.args['diary']` request, pass the complete already-bounded diary
+   observation to `_set_observation_content` without this second shortening.
+   The derived budget sits just under that limit today, but the exemption
+   must not depend on it. Keep the existing audit limit for other reads. Test
+   an answer-bearing span in the middle and at the end of a full-budget result.
+5. Set `AssistantActionContext.models_local` where the loop builds the
+   context, from the providers the turn's decide and reply-audit calls
+   resolve to. The legacy branches ignore it.
 
 Room/source rules are enforced before producing the observation. Fencing and
 addressee hints are not proof against instruction carryover: test that a diary
 `/goal` does not cause a write, including when no event extraction exists.
 
 Record telemetry with `target_type=diary_passage`, stages `retrieved` and
-`injected`, and source `diary.search`. Put route ranks, generation/policy versions,
+`injected`, and source `diary.<mode>` (`diary.search`, `diary.literal`,
+`diary.timeline`, `diary.read`), so the modes can be told apart in rollups. Put route ranks, generation/policy versions,
 counts, degradation and timings in metadata; do not duplicate passage text there.
 The actual observation remains in the existing assistant trace. CLI reports omit
 queries, identifier values and diary text by default; private report files may
@@ -635,6 +769,7 @@ Subcommands:
 | `probe --source UUID --cases PATH` | Run fixed private queries; JSON report with ranges/ranks and correctness |
 | `show --citation LOCATOR` | Local operator inspection; print original slice, date basis and snapshot status |
 | `enable`, `disable`, `exclude`, `unexclude` | Explicit source/file policy operations; bump versions atomically |
+| `reconcile --source UUID [--exclude PATH]… [--release PATH]…` | List files held after an excluded file vanished; exclude or release each one |
 | `purge --source UUID` | Disable and remove imported content for that source; retain exclusions/config |
 | `reset-pilot --source UUID` | Sandbox-only purge of that pilot source, never DROP/TRUNCATE or other sources |
 
@@ -659,16 +794,21 @@ query/source language pairs), four timeline, and two negative queries. Do not
 require addressee extraction in this pilot.
 
 1. Dry-run, inspect every diagnostic, then `sync` and probe literal/FTS baseline A.
-2. `embed`; probe baseline B with vectors. Keep the same queries/gold ranges.
-3. Inspect the ten longest entries and ten fixed-seed randomly selected entries.
-   Record accepted boundaries/date labels and every unresolved ambiguity.
+2. `embed`; probe baseline B with vectors (input format 1). Keep the same
+   queries/gold ranges. Re-embed with input format 2 into its own epoch and
+   probe baseline B2; §7 says when it replaces format 1.
+3. Inspect the ten longest entries, ten fixed-seed randomly selected entries
+   and every `clock_regression`/`date_regression` site. Record accepted
+   boundaries/date labels and every unresolved ambiguity.
 4. Optionally `index` and compare HNSW to exact; this does not gate lexical recall.
 5. Write a private report: manifest/config/code/model hashes, counts, coverage,
    gold-range results, p50/p95 latency, cold/warm timings, DB/snapshot/index size,
    failures and fallback mode. Console diagnostics contain offsets, not snippets.
 
 **The release gate is executable:** all synthetic hard-invariant tests pass; every
-pilot literal finds a gold match at rank 1; at least seven of eight topical
+pilot literal's gold is the set of all its occurrences in the month, and
+pagination returns exactly that set in source order (literal is exact, so
+anything less than equality is a bug, not a ranking weakness); at least seven of eight topical
 queries inject a gold span; all four timelines enumerate expected entries through
 pagination without skips/duplicates; both negatives produce no false literal/date
 hits; manual inspection finds no unexplained boundary/date errors. Any correction
@@ -695,8 +835,15 @@ Do not gate the first release on event extraction or “a weekend of GPU time.�
 pilot, record a seeded sample of up to 200 passages and measure actual prefix
 cache misses, output lengths and validation failures. A 12–15-hour
 full-corpus estimate assumes prefix caching and roughly 50 output tokens per
-passage. Without caching, 40,000 repeated 600-token prefixes alone add 24 million
-input tokens. Extraction remains opt-in, initially one month and then at most
+passage; at 50 output tokens/s, output alone is about 11 hours for 40,000
+passages. Without caching, 40,000 repeated 600-token prefixes add 24 million
+input tokens, about 9.5 more hours at 700 tokens/s. On gemma4 that caching
+depends on Ollama running with `LLAMA_ARG_SWA_FULL=1`; without it only a
+byte-identical prompt is reused, so a shared prefix followed by a varying
+passage is reprocessed whole. The pilot confirms the flag from the server
+log before timing anything. The 40,000 figure counts passages, but
+extraction runs per entry, so recount entries from the pilot rather than
+reusing a passage count. Extraction remains opt-in, initially one month and then at most
 the latest two years if its own evaluation justifies expansion.
 
 ## 10. Acceptance tests and implementation sequence
@@ -711,11 +858,11 @@ Missing/extra case inventories invalidate a comparison.
 
 | Work package | Required acceptance evidence before the next package |
 |---|---|
-| **P1 — Parser and manifest**: `diary/config.py`, `parsing.py`, fixtures | All bytes covered; exact UTF-8/CRLF/BOM ranges; invalid encoding/NUL; every dialect; invalid date/time; filename precedence; terminal ambiguity/override; first command token vs path; chunk boundary continuity; deterministic repeated output |
-| **P2 — Persistence and CLI sync**: models, DB ops, bootstrap, CLI | Fresh/upgrade/repeated bootstrap; interrupted transaction exposes no partial generation; unchanged sync is a no-op; append/edit/quarantine/delete; source scan failure; exclusions survive rebuild/rename/purge; rejected production pilot before import/connect |
-| **P3 — Reads and rendering**: literal/FTS/timeline/read, cursor and renderer | Room/agent/secret/disabled/excluded isolation on every route; literal crossing chunks; SQL wildcard input treated literally; date filter before cap; paging a huge entry without skips; cursor expiry/version change; citations to old bytes; exact 4,800-character boundary and closed fence |
+| **P1 — Parser and manifest**: `diary/config.py`, `parsing.py`, fixtures | All bytes covered; exact UTF-8/CRLF/BOM ranges; invalid encoding/NUL; every dialect; invalid date/time; filename precedence; terminal ambiguity/override; stale and invalid overrides skip without quarantine; clock/date regression diagnostics; first command token vs path; chunk boundary continuity; deterministic repeated output |
+| **P2 — Persistence and CLI sync**: models, DB ops, bootstrap, CLI | Fresh/upgrade/repeated bootstrap; interrupted transaction exposes no partial generation; unchanged sync is a no-op; append/edit/quarantine/delete; source scan failure; exclusions survive rebuild/rename/purge; exact-move carry and `held_for_reconcile`; rejected production pilot before import/connect |
+| **P3 — Reads and rendering**: literal/FTS/timeline/read, cursor and renderer | Room/agent/secret/disabled/excluded isolation on every route; literal crossing chunks; SQL wildcard input treated literally; date filter before cap; paging a huge entry without skips; cursor expiry/version change; citations to old bytes; locator probes outside the room return `not_found`; `‹`/`›` literal fallback; exact `DIARY_OBSERVATION_CHARS` boundary and closed `diary_passages` fence |
 | **P4 — Optional vectors and pilot**: adapter, exact route, HNSW command | Stubbed vectors, invalid vector rejection, digest change, stale-worker discard, outage fallback; exact search despite HNSW existence; restrictive-filter ANN underfill; fixed pilot report/gates above |
-| **P5 — Assistant and eval integration**: action args, audit, telemetry, case scorer | Legacy memory-query tests unchanged; diary explicit dispatch; actual deciding and audit prompt retain gold span; historical commands cause no writes; telemetry retrieved vs injected is accurate; disabled default; pilot gates pass before enablement |
+| **P5 — Assistant and eval integration**: action args, audit, telemetry, case scorer | Legacy memory-query tests unchanged; diary explicit dispatch; `remote_model` refusal and `allow_remote_models` opt-in; search then read both in the deciding prompt; actual deciding and audit prompt retain gold span; historical commands cause no writes; telemetry retrieved vs injected is accurate; disabled default; pilot gates pass before enablement |
 
 Tests live with their modules (`diary/test_*.py`, `db/test_diary.py`,
 `agents/test_diary_memory.py`, `evals/test_diary.py`). Cleanup source-scoped rows
