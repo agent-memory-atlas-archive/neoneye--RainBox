@@ -3272,6 +3272,15 @@ function typingGoesToAnotherField(el){
   return el.tagName === 'INPUT' || el.tagName === 'TEXTAREA'
       || el.tagName === 'SELECT';
 }
+// Whether input aimed at `target` belongs in the composer instead.
+function composerTakesStrayInput(target){
+  if (typingGoesToAnotherField(target)) return false;
+  // An open modal owns the keyboard even when its own field lost focus, and the
+  // folder view hides the composer — in both cases there is nothing to type in.
+  if (!document.getElementById('ui-modal-backdrop').hidden) return false;
+  if (form.hidden) return false;
+  return true;
+}
 document.addEventListener('keydown', (e) => {
   // A modifier means a command (Ctrl+1, Cmd+R); Shift alone is just a capital.
   if (e.ctrlKey || e.metaKey || e.altKey) return;
@@ -3279,12 +3288,34 @@ document.addEventListener('keydown', (e) => {
   // One character wide: letters, digits, punctuation, space. Escape, Tab,
   // Enter, Backspace and the arrows report longer names and stay with the page.
   if (e.key.length !== 1) return;
-  if (typingGoesToAnotherField(e.target)) return;
-  // An open modal owns the keyboard even when its own field lost focus, and the
-  // folder view hides the composer — in both cases there is nothing to type in.
-  if (!document.getElementById('ui-modal-backdrop').hidden) return;
-  if (form.hidden) return;
+  if (!composerTakesStrayInput(e.target)) return;
   input.focus();
+});
+
+// Paste anywhere on the page and the composer takes it too. Cmd+V / Ctrl+V
+// works like a typed key: focus moves on keydown and the browser's own paste
+// then lands in the textarea, with its undo history intact. Some pastes arrive
+// without that keystroke — the Edit menu, the context menu, a layout where V
+// sits elsewhere — so the paste event itself is the fallback: text aimed at
+// the page rather than a field is inserted into the composer at its caret.
+document.addEventListener('keydown', (e) => {
+  if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+  if (e.key.toLowerCase() !== 'v') return;
+  if (!composerTakesStrayInput(e.target)) return;
+  input.focus();
+});
+document.addEventListener('paste', (e) => {
+  if (!composerTakesStrayInput(e.target)) return;
+  const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+  if (!text) return;
+  e.preventDefault();
+  input.focus();
+  // insertText goes through the editor, so undo and the input event (autoGrow)
+  // behave as for a real paste; setRangeText is the fallback where it is gone.
+  if (!document.execCommand('insertText', false, text)){
+    input.setRangeText(text, input.selectionStart, input.selectionEnd, 'end');
+    input.dispatchEvent(new Event('input', {bubbles: true}));
+  }
 });
 
 async function loadAgents(){

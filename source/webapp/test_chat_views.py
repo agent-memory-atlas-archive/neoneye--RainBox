@@ -374,10 +374,10 @@ def test_typing_anywhere_focuses_the_composer():
     assert "if (e.ctrlKey || e.metaKey || e.altKey) return;" in body
     assert "if (e.isComposing) return;" in body
     assert "if (e.key.length !== 1) return;" in body
-    assert "if (typingGoesToAnotherField(e.target)) return;" in body
+    assert "if (!composerTakesStrayInput(e.target)) return;" in body
     # No hand-replay of the keystroke anywhere in the handler.
-    handler = body.split("function typingGoesToAnotherField(el)")[1].split(
-        "});")[1]
+    handler = body.split("function composerTakesStrayInput(target)")[1].split(
+        "});")[0]
     assert "preventDefault" not in handler
     assert "input.value +=" not in body
 
@@ -387,8 +387,26 @@ def test_typing_redirect_yields_to_modals_and_the_folder_view():
     keyboard even once its own field has lost focus, and the folder view hides
     the compose form outright."""
     body = _body()
-    assert "if (!document.getElementById('ui-modal-backdrop').hidden) return;" in body
-    assert "if (form.hidden) return;" in body
+    guard = body.split("function composerTakesStrayInput(target)")[1].split(
+        "\n}\n")[0]
+    assert "if (typingGoesToAnotherField(target)) return false;" in guard
+    assert "if (!document.getElementById('ui-modal-backdrop').hidden) return false;" in guard
+    assert "if (form.hidden) return false;" in guard
+
+
+def test_pasting_anywhere_goes_to_the_composer():
+    """Pasting needed the textarea clicked first. Cmd/Ctrl+V now moves focus
+    on keydown so the browser's own paste lands in the composer, and a paste
+    event aimed at the page (Edit menu, context menu) is inserted there via
+    insertText — both behind the same guard as typing, so a focused field, an
+    open modal or the folder view keep their pastes."""
+    body = _body()
+    paste = body.split("// Paste anywhere on the page")[1].split(
+        "async function loadAgents")[0]
+    assert "if (e.key.toLowerCase() !== 'v') return;" in paste
+    assert "document.addEventListener('paste', (e) => {" in paste
+    assert paste.count("if (!composerTakesStrayInput(e.target)) return;") == 2
+    assert "document.execCommand('insertText', false, text)" in paste
 
 
 def test_overlong_messages_are_clamped_to_their_opening():
