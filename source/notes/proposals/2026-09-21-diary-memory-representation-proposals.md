@@ -1,9 +1,12 @@
 # Diary Memory: First-Release Implementation Specification
 
 **Status:** P1–P5 implemented on branch `diary-memory` (`diary/`, `db/diary.py`,
-`tools/diary.py`, the `diary_query` capability, `evals/diary.py`), tested on
-synthetic fixtures. The one-month pilot (§9) has not run; no source is
-registered against a real diary.
+`tools/diary.py`, the `diary_query` capability, `evals/diary.py`), not yet
+merged. The pilot (§9) ran in the sandbox against three real files (one
+month of `timed`, one `daily` day, one month of `changelog`): 25 private
+probe cases — 7 literal, 4 timeline, 3 negative, 11 topical/typo, three in
+Danish — all pass the release gate, p95 search 34 ms. No source is
+registered on the production database. Open work is in §12.
 **Date:** 2026-09-21
 **Related:** [memory architecture](../memory-architecture.md),
 [Q&A](../qa-system.md), [retrieval granularity](2026-08-17-recall-filter-and-retrieval-granularity.md),
@@ -1074,6 +1077,7 @@ Subcommands:
 | `set-vector-mode --source UUID --mode off\|exact\|hnsw` | Set the route mode; exact requires a recorded epoch, HNSW also requires its passing report |
 | `probe --source UUID --cases PATH` | Run fixed private queries; JSON report with ranges/ranks and correctness |
 | `show --citation LOCATOR` | Local operator inspection; print original slice, date basis and snapshot status |
+| `query --source UUID MODE [TEXT] [--from DATE] [--to DATE]` | Run one `diary_query` through the trusted context and print exactly the observation the assistant would see |
 | `enable`, `disable`, `exclude`, `unexclude` | Explicit source/file policy operations; bump versions atomically |
 | `reconcile --source UUID [--exclude PATH]… [--release PATH]…` | List files held after an excluded file vanished; exclude or release each one |
 | `prune --source UUID --path PATH` | Drop one file's non-current revisions; citations into them become `not_found` |
@@ -1232,6 +1236,48 @@ first release being ready.
   and never use a copied model digest as independent corroboration. Export needs
   retry/crash-safe file publication, revision handling, no recursive self-export,
   and typed run-evidence retrieval before it is useful to answering prompts.
+
+## 12. Open work
+
+Gaps the pilot found or left open, in the order they are worth doing. Each is
+small next to §11 and none blocks the first release.
+
+- **Case-insensitive literal.** Literal matching is case-sensitive by
+  contract (it exists for errors and identifiers), but a diary writes the
+  same name in several capitalizations: on the pilot, one project name
+  occurred six times in three spellings, and a literal lookup of one
+  spelling found two. "When was X first mentioned" can then return the
+  wrong date. Keep literal exact and do what the variants note already does
+  for typos: when other capitalizations of a matched query occur in
+  eligible passages, name them ("also written as …") so the caller can look
+  them up. The probe's literal gold should then cover every capitalization,
+  so the case is measured rather than hidden.
+- **Choosing the diary.** The assistant does not always reach for
+  `diary_query`: a question about the operator's own past, phrased without
+  the word "diary", went to `memory_query`, and a follow-up about
+  something discussed earlier in the conversation was answered from the
+  conversation without searching. The capability descriptions should say
+  where each kind of question belongs — the diary for what the operator did,
+  wrote or noted on past dates; memory for stored facts — and the decide
+  prompt's evidence should show whether a diary search already ran this
+  turn. Measure with assistant-level eval cases, not the retrieval probe:
+  the probe calls `diary_query` directly and cannot see this failure.
+- **Scheduled sync.** A diary edit reaches search only after a manual
+  `sync` (and `embed` for its vectors). A cron job running both for enabled
+  sources, off the request path, would keep freshness at "as of last night"
+  without the operator remembering. The advisory lock already makes a
+  concurrent manual sync safe (`busy`).
+- **Production rollout.** Register the full diary against the production
+  database with `--production`: `register`, `parse --dry-run` and a review of
+  every diagnostic (the pilot's three files alone surfaced four format
+  gaps, each fixed in the parser), `sync`, `embed`, `set-vector-mode exact`,
+  `enable` in the operator's real room. Extend the probe cases beyond one
+  month before trusting ranks across decades; topical answers at rank 4 on a
+  month could fall to page 2 on the whole diary.
+- **Ranking depth for topical questions.** Topical probe cases pass when
+  one gold passage reaches the first page; two of eleven sit at rank 4.
+  Scoring should also track how many gold passages a first page carries, so
+  that ranking changes are judged on more than the best hit.
 
 ## Appendix — synthetic source examples
 
