@@ -733,6 +733,11 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   `‹` or `›` is therefore tried as written and with those two characters
   reverted, and the hits are merged. Neither spelling is preferred; both are
   exact matches of real bytes.
+- **Close spellings, not guesses:** literal stays exact. When it finds
+  nothing, the result names close spellings that do occur — the query with
+  spaces and hyphens removed, then fuzzy vocabulary words — each in the
+  diary's own spelling and each verified against an eligible passage, so a
+  suggestion never reveals a word only an excluded file contains.
 - **Headers are not entry text:** a literal on a date or author header (a
   ChangeLog `27-juli-2027 kreese` line) finds nothing, because headers are
   context ranges, not entry text. Dates are reached through `timeline`;
@@ -743,6 +748,20 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   remain multiple hits. This is one route with a total 20-passage cap.
 - **FTS:** `simple` configuration, OR distinct query lexemes in a parameterized
   tsquery, `@@` match required, rank by `ts_rank` descending. Cap at 20.
+  Adjacent query words are also tried glued together ("ruby forge" →
+  `rubyforge`, "ruby-forge" → `rubyforge`).
+- **Joined:** those glued words alone, as a route of their own, so a passage
+  that wrote the two words as one outranks passages matching one part.
+- **Fuzzy:** a query word of at least four characters that the source's
+  vocabulary (`diary_word`: every lexeme of its current, ready, non-excluded
+  passages with its passage count, rebuilt at the end of each sync) does not
+  contain is matched to vocabulary words of at least four characters by
+  pg_trgm similarity ≥ 0.4, three per word; those words run as a lexeme
+  route. The threshold admits transpositions (`rubyfroge` → `rubyforge`,
+  0.43) and rejects part-words (`ruby` → `rubyforge`, 0.36). Words the
+  diary contains are never fuzzed, nor are the parts of a joined word it
+  contains. Without pg_trgm (installed by bootstrap where the server offers
+  it) this route is simply absent.
 - **Vector:** cosine distance over the source's current-epoch vectors, joined
   to eligible passages on `text_hash`; top 20 distinct texts. A missing
   model/index/embedding never removes lexical results.

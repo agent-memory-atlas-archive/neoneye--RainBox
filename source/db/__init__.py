@@ -359,6 +359,25 @@ def _ensure_diary_schema() -> None:
     """The diary pieces create_all cannot express: the deferred composite FK
     that lets a file's current pointer name only a generation of that same
     file. Guarded, so a migrated database starts without taking a lock."""
+    # pg_trgm backs close-spelling search (diary.fuzzy) and the optional
+    # literal accelerator. Installed only where the server offers it; without
+    # it diary search simply has no typo tolerance.
+    if db.session.execute(sa.text(
+            "SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")).first() is None:
+        available = db.session.execute(sa.text(
+            "SELECT 1 FROM pg_available_extensions WHERE name = 'pg_trgm'")).first()
+        if available is not None:
+            try:
+                db.session.execute(sa.text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+                db.session.commit()
+            except Exception:   # noqa: BLE001 — no privilege: degrade, don't fail startup
+                db.session.rollback()
+    if db.session.execute(sa.text(
+            "SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'")).first() is not None:
+        db.session.execute(sa.text(
+            "CREATE INDEX IF NOT EXISTS ix_diary_word_trgm ON diary_word "
+            "USING gin (word gin_trgm_ops)"))
+        db.session.commit()
     if _constraint_def("fk_diary_file_current_generation") is None:
         db.session.execute(sa.text(
             "ALTER TABLE diary_file ADD CONSTRAINT fk_diary_file_current_generation "

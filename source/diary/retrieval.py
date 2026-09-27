@@ -122,6 +122,8 @@ class DiaryResult:
     catalog_manifest: dict[str, list[int]] = field(default_factory=dict)
     timings_ms: dict[str, int] = field(default_factory=dict)
     total_candidates: int = 0
+    # Literal found nothing: close spellings that do occur (diary.fuzzy).
+    suggestions: list[str] = field(default_factory=list)
 
 
 # --- eligibility -------------------------------------------------------------------
@@ -371,8 +373,13 @@ def _literal(req: DiaryRequest, sources: list[Any], position: dict | None) -> Di
         nxt = rows[-1]
         after = {"source": str(nxt["source_uuid"]), "path": nxt["path"],
                  "ordinal": nxt["ordinal"] + 1, "offset": 0}
+    suggestions: list[str] = []
+    if not items and position is None:
+        from diary.fuzzy import literal_suggestions
+        suggestions = literal_suggestions(req.query, sources, _ELIGIBLE + _date_sql(req),
+                                          _params(sources, req))
     return DiaryResult(ok=True, mode="literal", items=items, after_last=after,
-                       enumeration="partial" if more else "complete")
+                       enumeration="partial" if more else "complete", suggestions=suggestions)
 
 
 def _literal_window(text: str, a: int, b: int) -> tuple[int, int]:
@@ -498,7 +505,8 @@ def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
     result = DiaryResult(ok=True, mode="search")
     if frozen is None:
         ranks: dict[str, dict[str, int]] = {}
-        for name, route in (("identifier", _identifier_route), ("fts", _fts_route)):
+        for name, route in (("identifier", _identifier_route), ("fts", _fts_route),
+                            ("joined", _joined_route), ("fuzzy", _fuzzy_route)):
             t0 = _time.monotonic()
             ranks[name] = {str(pid): i + 1 for i, pid in enumerate(route(req, sources))}
             result.timings_ms[name] = int((_time.monotonic() - t0) * 1000)
@@ -563,9 +571,34 @@ def _identifier_route(req: DiaryRequest, sources: list[Any]) -> list[UUID]:
 
 
 def _fts_route(req: DiaryRequest, sources: list[Any]) -> list[UUID]:
+    from diary.fuzzy import joined_lexemes
+
     lexemes = [r[0] for r in db.session.execute(sa.text(
         "SELECT unnest(tsvector_to_array(to_tsvector('simple', :q)))"), {"q": req.query}).all()]
-    lexemes = lexemes[:MAX_FTS_LEXEMES]
+    # "ruby forge" also matches the diary's "rubyforge".
+    lexemes += [j for j in joined_lexemes(req.query or "") if j not in lexemes]
+    return _lexeme_route(req, sources, lexemes[:MAX_FTS_LEXEMES])
+
+
+def _joined_route(req: DiaryRequest, sources: list[Any]) -> list[UUID]:
+    """Passages holding adjacent query words written as one word. A route of
+    its own so such a passage outranks ones matching a single part."""
+    from diary.fuzzy import joined_lexemes
+
+    return _lexeme_route(req, sources, joined_lexemes(req.query or "")[:MAX_FTS_LEXEMES])
+
+
+def _fuzzy_route(req: DiaryRequest, sources: list[Any]) -> list[UUID]:
+    """Passages holding a close spelling of a query word the diary does not
+    contain (pg_trgm over the source vocabulary)."""
+    from diary.fuzzy import close_words, joined_lexemes
+
+    words = close_words(req.query or "", [s.uuid for s in sources])
+    words = [w for w in words if w not in joined_lexemes(req.query or "")]
+    return _lexeme_route(req, sources, words[:MAX_FTS_LEXEMES])
+
+
+def _lexeme_route(req: DiaryRequest, sources: list[Any], lexemes: list[str]) -> list[UUID]:
     if not lexemes:
         return []
     params = _params(sources, req)

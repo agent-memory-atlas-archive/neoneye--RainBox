@@ -220,6 +220,7 @@ def diary_purge(source_uuid: UUID) -> int:
     db.session.execute(sa.update(DiaryFile).where(DiaryFile.source_uuid == source_uuid)
                        .values(current_generation_uuid=None))
     db.session.execute(sa.delete(DiaryEmbedding).where(DiaryEmbedding.source_uuid == source_uuid))
+    db.session.execute(sa.text("DELETE FROM diary_word WHERE source_uuid = :s"), {"s": source_uuid})
     n = db.session.execute(sa.delete(DiaryFile).where(DiaryFile.source_uuid == source_uuid)).rowcount
     db.session.execute(sa.text(
         "DELETE FROM diary_cursor WHERE jsonb_exists(catalog_manifest, :s)"), {"s": str(source_uuid)})

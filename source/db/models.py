@@ -2174,6 +2174,18 @@ class DiaryEmbedding(db.Model):
     )
 
 
+class DiaryWord(db.Model):
+    """A source's vocabulary: every lexeme of its current, ready,
+    non-excluded passages with the number of passages holding it. Rebuilt by
+    sync; used for joined-word and close-spelling lookups (diary.fuzzy)."""
+
+    __tablename__ = "diary_word"
+    source_uuid: Mapped[UUID] = mapped_column(
+        ForeignKey("diary_source.uuid", ondelete="CASCADE"), primary_key=True)
+    word: Mapped[str] = mapped_column(Text, primary_key=True)
+    passages: Mapped[int] = mapped_column()
+
+
 class DiaryExclusion(db.Model):
     """A file-level exclusion: all revisions, all routes. Survives rebuilds
     and purges."""

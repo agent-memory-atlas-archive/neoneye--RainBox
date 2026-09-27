@@ -186,12 +186,14 @@ def _vectors_on(live):
     emb.set_vector_mode(live.src.uuid, "exact")
 
 
-def test_vector_route_finds_paraphrase_lexical_misses(live):
+def test_vector_route_finds_paraphrase_lexical_misses(live, monkeypatch):
+    import diary.fuzzy
+    monkeypatch.setattr(diary.fuzzy, "SIMILARITY", 1.1)    # vectors alone, no typo route
     _vectors_on(live)
     ctx = live.ctx()
-    lexical = diary_query({"mode": "search", "query": "physiotherapie"}, ctx, budget=BUDGET)
+    lexical = diary_query({"mode": "search", "query": "physio"}, ctx, budget=BUDGET)
     assert "Physiotherapy" not in lexical.text                      # no vectors passed
-    fused = diary_query({"mode": "search", "query": "physiotherapie"}, ctx, budget=BUDGET,
+    fused = diary_query({"mode": "search", "query": "physio"}, ctx, budget=BUDGET,
                         embed_query=fake_query())
     assert "Physiotherapy" in fused.text
 

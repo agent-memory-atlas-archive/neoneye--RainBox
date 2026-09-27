@@ -461,3 +461,58 @@ def test_literal_window_snaps_to_line_boundaries(live):
     block = obs.text.split("--- current/2028.txt", 1)[1].split("\n", 1)[1]
     assert block.startswith("line ") and "needle here" in block
     assert block.split("</diary_passages>")[0].rstrip("\n").endswith("words")
+
+
+# --- spelling tolerance ------------------------------------------------------------------
+
+
+def _rubyforge(live):
+    live.write("current/2028.txt", "20280801\n09h00\nuploaded the gem to RubyForge today\n\n"
+                                   "10h00\nunrelated ruby notes\n")
+    live.resync()
+
+
+def test_search_joins_split_words(live):
+    _rubyforge(live)
+    obs = live.q(mode="search", query="ruby forge")
+    first = obs.text.split("--- ", 2)[1]
+    assert "RubyForge" in first                      # the joined word ranks first
+
+
+@pytest.mark.parametrize("typo", ["rubyfroge", "rubyforg"])
+def test_search_tolerates_typos(live, typo):
+    _rubyforge(live)
+    obs = live.q(mode="search", query=typo)
+    assert "RubyForge" in obs.text
+
+
+def test_correct_words_are_not_fuzzed(live):
+    _rubyforge(live)
+    from diary.fuzzy import close_words
+    assert close_words("ruby notes", [live.src.uuid]) == []
+
+
+def test_literal_stays_exact_and_suggests_spellings(live):
+    _rubyforge(live)
+    miss = live.q(mode="literal", query="ruby forge")
+    assert "no occurrences" in miss.text and '"RubyForge"' in miss.text
+    assert miss.data["suggestions"] == ["RubyForge"]
+    typo = live.q(mode="literal", query="RubyFroge")
+    assert typo.data["suggestions"] == ["RubyForge"]
+
+
+def test_suggestions_never_reveal_excluded_files(live):
+    _rubyforge(live)
+    db.diary_exclude(live.src.uuid, "current/2028.txt")
+    miss = live.q(mode="literal", query="ruby forge")
+    assert miss.data["suggestions"] == [] and "RubyForge" not in miss.text
+
+
+def test_vocabulary_is_rebuilt_by_sync_and_cleared_by_purge(live):
+    _rubyforge(live)
+    words = {r[0] for r in db.session.execute(sa.text(
+        "SELECT word FROM diary_word WHERE source_uuid = :s"), {"s": live.src.uuid})}
+    assert "rubyforge" in words and "physiotherapy" in words
+    db.diary_purge(live.src.uuid)
+    assert db.session.execute(sa.text(
+        "SELECT count(*) FROM diary_word WHERE source_uuid = :s"), {"s": live.src.uuid}).scalar() == 0

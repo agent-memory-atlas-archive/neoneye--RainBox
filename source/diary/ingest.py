@@ -207,7 +207,9 @@ def _sync(source_uuid: UUID, report: SyncReport) -> None:
             report.missing += 1
 
     from diary.embeddings import maybe_build_trgm_index
+    from diary.fuzzy import rebuild_vocabulary
     maybe_build_trgm_index(source_uuid)
+    rebuild_vocabulary(source_uuid)
 
 
 def _unchanged(f: Any, sha: str, fingerprint: str) -> bool:

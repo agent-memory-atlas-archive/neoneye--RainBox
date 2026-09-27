@@ -94,6 +94,10 @@ def _status(result: DiaryResult, n: int, has_more: bool) -> str:
         line = f"diary_query {mode}: {empty}"
         if mode in ("search", "literal"):
             line += " (not proof that none exist)"
+        if result.suggestions:
+            quoted = ", ".join(f'"{s}"' for s in result.suggestions)
+            line += (f". Close spellings that do occur: {quoted} — try literal "
+                     "with one of them")
     else:
         line = f"diary_query {mode}: {n} excerpt{'s' if n != 1 else ''}"
         if has_more:
