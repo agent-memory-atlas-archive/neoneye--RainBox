@@ -378,6 +378,20 @@ def _ensure_diary_schema() -> None:
             "CREATE INDEX IF NOT EXISTS ix_diary_word_trgm ON diary_word "
             "USING gin (word gin_trgm_ops)"))
         db.session.commit()
+    # search_vector's expression blanks typographic quotes. A column created
+    # before that is rebuilt once (a generated column cannot be altered).
+    gen = db.session.execute(sa.text(
+        "SELECT generation_expression FROM information_schema.columns "
+        "WHERE table_name = 'diary_passage' AND column_name = 'search_vector'")).scalar()
+    if gen is not None and "translate" not in gen:
+        db.session.execute(sa.text("DROP INDEX IF EXISTS ix_diary_passage_search"))
+        db.session.execute(sa.text("ALTER TABLE diary_passage DROP COLUMN search_vector"))
+        db.session.execute(sa.text(
+            "ALTER TABLE diary_passage ADD COLUMN search_vector tsvector "
+            f"GENERATED ALWAYS AS ({DIARY_SEARCH_VECTOR_SQL}) STORED"))
+        db.session.execute(sa.text(
+            "CREATE INDEX ix_diary_passage_search ON diary_passage USING gin (search_vector)"))
+        db.session.commit()
     if _constraint_def("fk_diary_file_current_generation") is None:
         db.session.execute(sa.text(
             "ALTER TABLE diary_file ADD CONSTRAINT fk_diary_file_current_generation "

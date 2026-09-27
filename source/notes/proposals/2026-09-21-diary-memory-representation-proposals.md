@@ -319,8 +319,11 @@ Required indexes:
   revision `bytes_in_revision_uuid`; exclusions source/path; cursors expiry.
   Unique constraints provide overlapping indexes (the embedding key among
   them); do not duplicate those.
-- GIN on `diary_passage.search_vector`, populated with
-  `to_tsvector('simple', text)`. Searchable text is the exact passage, not a summary.
+- GIN on `diary_passage.search_vector`, generated as
+  `to_tsvector('simple', translate(text, <typographic quotes>, <spaces>))`:
+  the `simple` parser would otherwise glue “ ” ‘ ’ « » „ onto words, making
+  `“production”` a different word from `production`. Queries go through the
+  same translate. Searchable text is the exact passage, not a summary.
 - Optional HNSW on `diary_embedding.embedding` using `vector_cosine_ops`,
   `m=16`, `ef_construction=64`, created by the CLI after bulk embedding. It is not
   an automatic startup migration. Exact mode must remain exact even if it exists.
@@ -741,6 +744,17 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   `‹` or `›` is therefore tried as written and with those two characters
   reverted, and the hits are merged. Neither spelling is preferred; both are
   exact matches of real bytes.
+- **The diary's own typos:** for a keyword search (at most three words of
+  five or more letters), each query word the diary spells right is also
+  expanded to its rare near-spellings in the vocabulary: within one edit
+  (two for words of eight or more letters, a transposition counting as one)
+  and occurring in at most two passages, or 10% of the word's passages for a
+  common word. They run as a **variants** route at half weight in fusion, so
+  the diary's misspellings surface after the exact hits rather than among
+  them — edit distance cannot tell a typo from a rare real word one letter
+  away, and half weight bounds the cost of that. A literal query that
+  matches names these spellings too ("the diary also writes it as …"), so
+  the caller can look them up; literal itself stays exact.
 - **Close spellings, not guesses:** literal stays exact. When it finds
   nothing, the result names close spellings that do occur — the query with
   spaces and hyphens removed, then fuzzy vocabulary words — each in the
@@ -765,7 +779,8 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   passages with its passage count, rebuilt at the end of each sync) does not
   contain, and each glued pair of adjacent query words it does not contain
   (so a typo inside a split word, "rby forge", still finds `rubyforge`; a
-  pair that matches exempts its parts), is matched to vocabulary words of at
+  pair that matches exempts its parts; a pair of two words the diary knows,
+  "did i", is not a typo and is skipped), is matched to vocabulary words of at
   least four characters by
   pg_trgm similarity ≥ 0.4 whose length differs by at most one character
   (two for words of eight or more), three per word; those words run as a

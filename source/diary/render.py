@@ -102,6 +102,10 @@ def _status(result: DiaryResult, n: int, has_more: bool) -> str:
         line = f"diary_query {mode}: {n} excerpt{'s' if n != 1 else ''}"
         if has_more:
             line += ", more available"
+    if result.variants:
+        quoted = ", ".join(f'"{v}"' for v in result.variants)
+        line += (f"; the diary also writes it as {quoted} — look those up too if "
+                 "every mention matters")
     notes = []
     if result.degraded_routes:
         notes.append("degraded: " + ", ".join(result.degraded_routes))

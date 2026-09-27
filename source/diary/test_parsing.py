@@ -416,3 +416,12 @@ def test_fence_breaker_closes_before_next_date_header():
 def test_changelog_date_regression_is_newest_first():
     raw = b"26-juli-2027 kreese\n*\ta\n27-juli-2027 kreese\n*\tb\n"
     assert "date_regression" in codes(parse_file(raw, "archive/ChangeLog.txt", CFG))
+
+
+@pytest.mark.parametrize("a, b, d", [
+    ("rubyforge", "rubyfroge", 1), ("having", "havign", 1), ("remove", "remote", 1),
+    ("operation", "operator", 2), ("string", "strip", 2), ("", "abc", 3), ("same", "same", 0),
+])
+def test_edit_distance(a, b, d):
+    from diary.fuzzy import edit_distance
+    assert edit_distance(a, b) == d

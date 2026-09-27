@@ -1962,6 +1962,12 @@ class BenchmarkResult(db.Model):
 DIARY_AVAILABILITY = ("pending", "ready", "quarantined", "missing")
 DIARY_DIALECTS = ("timed", "daily", "changelog", "plain")
 DIARY_VECTOR_MODES = ("off", "exact", "hnsw")
+# Typographic quotes the `simple` parser would glue onto words ("“production”"
+# is otherwise a different word from production). Blanked before indexing;
+# queries go through the same translate (diary.retrieval.SEARCH_TEXT_SQL).
+DIARY_SEARCH_QUOTES = "“”‘’«»„‚‹›"
+DIARY_SEARCH_VECTOR_SQL = (
+    "to_tsvector('simple'::regconfig, translate(text, '“”‘’«»„‚‹›', '          '))")
 
 
 class DiarySource(db.Model):
@@ -2123,9 +2129,10 @@ class DiaryPassage(db.Model):
         ForeignKey("diary_revision.uuid", deferrable=True, initially="DEFERRED"))
     text: Mapped[str] = mapped_column(Text)
     text_hash: Mapped[str] = mapped_column(Text, index=True)
-    # Exact passage text, `simple` configuration: language-neutral lexemes.
+    # Exact passage text, `simple` configuration: language-neutral lexemes,
+    # typographic quotes blanked first.
     search_vector = mapped_column(
-        TSVECTOR, sa.Computed("to_tsvector('simple'::regconfig, text)", persisted=True))
+        TSVECTOR, sa.Computed(DIARY_SEARCH_VECTOR_SQL, persisted=True))
     __table_args__ = (
         UniqueConstraint("entry_uuid", "part_index", name="uq_diary_passage_part"),
         CheckConstraint("byte_start >= 0 AND byte_end > byte_start", name="ck_diary_passage_range"),

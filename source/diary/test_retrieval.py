@@ -486,6 +486,13 @@ def test_search_tolerates_typos(live, typo):
     assert "RubyForge" in obs.text
 
 
+def test_known_word_pairs_are_not_glued_into_typos(live):
+    from diary.fuzzy import close_words
+    live.write("current/2028.txt", "20281230\n09h00\ndidn't finish, doing it tomorrow; did i do in time\n")
+    live.resync()
+    assert close_words("what did i do in the evening", [live.src.uuid]) == []
+
+
 def test_correct_words_are_not_fuzzed(live):
     _rubyforge(live)
     from diary.fuzzy import close_words
@@ -536,3 +543,57 @@ def test_typos_keep_length_but_not_other_words(live):
     live.write("current/2028.txt", "20281001\n09h00\nan event related to nothing even\n")
     live.resync()
     assert close_words("evening relax", [live.src.uuid]) == []
+
+
+def _diary_with_its_own_typo(live):
+    body = "".join(f"2028110{d}\n09h00\nuploaded to RubyForge again {d}\n\n" for d in range(1, 6))
+    body += "20281106\n09h00\nthe RubyFroge mirror was down\n\n"
+    body += "".join(f"2028111{d}\n09h00\neven more notes {d}\n\n" for d in range(0, 6))
+    body += "20281116\n09h00\nthe event started\n"
+    live.write("current/2028.txt", body)
+    live.resync()
+
+
+def test_correct_spelling_finds_the_diarys_typos(live):
+    _diary_with_its_own_typo(live)
+    obs = live.q(mode="search", query="rubyforge")
+    assert "RubyFroge mirror" in obs.text
+    # Exact spellings rank first; the typo follows them.
+    assert obs.text.index("uploaded to RubyForge") < obs.text.index("RubyFroge mirror")
+
+
+def test_common_neighbors_are_not_typos(live):
+    from diary.fuzzy import rare_variants, variant_words
+    _diary_with_its_own_typo(live)
+    assert rare_variants("rubyforge", [live.src.uuid]) == ["rubyfroge"]
+    assert variant_words("rubyforge", [live.src.uuid]) == ["rubyfroge"]
+    assert "even" not in rare_variants("event", [live.src.uuid])
+
+
+def test_literal_names_the_diarys_other_spellings(live):
+    _diary_with_its_own_typo(live)
+    obs = live.q(mode="literal", query="RubyForge")
+    assert obs.data["variants"] == ["RubyFroge"]
+    assert 'also writes it as "RubyFroge"' in obs.text
+    assert "RubyFroge mirror" not in obs.text          # literal itself stays exact
+
+
+def test_typographic_quotes_do_not_hide_words(live):
+    live.write("current/2028.txt", "20281201\n09h00\nmoved the \u201cstaging\u201d box\n")
+    live.resync()
+    assert "staging" in live.q(mode="search", query="staging").text
+    words = {r[0] for r in db.session.execute(sa.text(
+        "SELECT word FROM diary_word WHERE source_uuid = :s"), {"s": live.src.uuid})}
+    assert "staging" in words and not any("\u201c" in w for w in words)
+
+
+def test_rare_neighbor_words_are_not_typos(live):
+    from diary.fuzzy import rare_variants
+    live.write("current/2028.txt", "".join(
+        f"2028121{d}\n09h00\nremove the old file {d}\n\n" for d in range(0, 6))
+        + "20281216\n09h00\nthe remote host\n")
+    live.resync()
+    # One edit apart but a word of its own that occurs once: still offered,
+    # because frequency and distance cannot tell a rare word from a typo.
+    # What the rule does exclude is words two or more edits away.
+    assert "strip" not in rare_variants("string", [live.src.uuid])
