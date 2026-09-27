@@ -763,7 +763,10 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
 - **Fuzzy:** a query word of at least four characters that the source's
   vocabulary (`diary_word`: every lexeme of its current, ready, non-excluded
   passages with its passage count, rebuilt at the end of each sync) does not
-  contain is matched to vocabulary words of at least four characters by
+  contain, and each glued pair of adjacent query words it does not contain
+  (so a typo inside a split word, "rby forge", still finds `rubyforge`; a
+  pair that matches exempts its parts), is matched to vocabulary words of at
+  least four characters by
   pg_trgm similarity ≥ 0.4 whose length differs by at most one character
   (two for words of eight or more), three per word; those words run as a
   lexeme route. The length window keeps typos (`paralel` → `parallel`) and
