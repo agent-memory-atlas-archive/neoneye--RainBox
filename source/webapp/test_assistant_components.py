@@ -467,6 +467,18 @@ def test_the_log_reads_before_the_prompts():
     assert html.index("system prompt (") < html.index("user prompt (")
 
 
+def test_the_reasoning_reads_before_the_response():
+    """A model reasons first and answers second, so the pane reads in that
+    order — in the inspector, the live pane and the markdown export alike."""
+    event = _event("llm", "reply",
+                   payload={"model_response": "ANSWER", "reasoning": "THOUGHT"})
+
+    html = render_event_detail(event)
+    assert html.index("THOUGHT") < html.index("ANSWER")
+    md = "\n".join(event_markdown(event))
+    assert md.index("THOUGHT") < md.index("ANSWER")
+
+
 def test_an_llm_pane_shows_the_model_link_and_throughput():
     html = render_event_detail(_event(
         "llm", "reply",

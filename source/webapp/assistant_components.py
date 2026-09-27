@@ -516,9 +516,11 @@ def _llm(event: dict) -> list[dict]:
                collapsed=True, key=f"{key}-system", cache=cache.get("system")),
         _block("user prompt", payload.get("user_prompt"),
                collapsed=True, key=f"{key}-user", cache=cache.get("user")),
-        _block("response", payload.get("model_response")),
+        # Reasoning before the response: the model produces them in that
+        # order. Folded, so the response stays the first open block.
         _block("reasoning", payload.get("reasoning"),
                collapsed=True, key=f"{key}-reasoning"),
+        _block("response", payload.get("model_response")),
         _block("error", payload.get("error")),
         _block(f"rejected attempts ({len(rejected)})", rejected or None),
         # What was appended to a retried call's prompt: its own refused answer
