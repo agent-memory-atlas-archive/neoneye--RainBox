@@ -32,6 +32,13 @@ MAX_SUGGESTIONS = 5
 _WORD = re.compile(r"[^\W_]+(?:[-_][^\W_]+)*", re.UNICODE)
 
 
+def length_slack(word: str) -> int:
+    """A typo changes a word's length by a character or two, not more:
+    "rubyforg"/"rubyforge", "paralel"/"parallel" pass; "evening"/"even" and
+    "relax"/"related" do not."""
+    return 1 if len(word) < 8 else 2
+
+
 def trgm_available() -> bool:
     try:
         row = db.session.execute(sa.text(
@@ -111,10 +118,11 @@ def close_words(query: str, source_ids: list[UUID]) -> list[str]:
         for w in unknown:
             rows = db.session.execute(sa.text(
                 "SELECT word FROM diary_word WHERE source_uuid = ANY(:s) AND word % :w "
-                "AND length(word) >= :m AND similarity(word, :w) >= :t GROUP BY word "
+                "AND length(word) >= :m AND abs(length(word) - length(:w)) <= :d "
+                "AND similarity(word, :w) >= :t GROUP BY word "
                 "ORDER BY max(similarity(word, :w)) DESC, word LIMIT :n"),
-                {"s": source_ids, "w": w, "m": MIN_WORD, "t": SIMILARITY,
-                 "n": CANDIDATES_PER_WORD}).all()
+                {"s": source_ids, "w": w, "m": MIN_WORD, "d": length_slack(w),
+                 "t": SIMILARITY, "n": CANDIDATES_PER_WORD}).all()
             out += [r[0] for r in rows if r[0] not in out]
     return out
 

@@ -48,7 +48,10 @@ def assert_well_formed(raw: bytes, parsed) -> None:
         assert (e.byte_start, e.byte_end, "entry") in cov
         parts = e.passages
         assert parts[0].byte_start == e.byte_start and parts[-1].byte_end == e.byte_end
-        assert all(a.byte_end == b.byte_start for a, b in zip(parts, parts[1:]))
+        assert all(a.byte_end <= b.byte_start for a, b in zip(parts, parts[1:]))
+        # Only blank separator lines fall between passages.
+        for a, b in zip(parts, parts[1:]):
+            assert raw[a.byte_end:b.byte_start].strip() == b""
         for p in parts:
             assert raw[p.byte_start:p.byte_end].decode("utf-8") == p.text
             assert len(p.text) <= CFG["passage_cap"]
@@ -181,6 +184,16 @@ def test_long_entries_chunk_at_line_ends_then_at_the_cap():
     assert [len(p.text) for p in single.passages] == [600, 600, 407]
 
 
+def test_paragraphs_are_passages_and_pasted_blank_lines_are_not_breaks():
+    raw = (b"20270312\n20h33\nset the env vars\nsecond line\n\n"
+           b"Found a neat proof of the handshake lemma.\n\n\nPlayed chess. Slept at ten.\n\n"
+           b"$ ls\nout1\n\nout2\n")
+    entry = parse_file(raw, "current/x.txt", CFG).entries[0]
+    assert [p.text for p in entry.passages] == [
+        "20h33\nset the env vars\nsecond line\n", "Found a neat proof of the handshake lemma.\n",
+        "Played chess. Slept at ten.\n", "$ ls\nout1\n\nout2\n"]
+
+
 def test_short_entry_is_one_passage():
     raw = b"20270312\n09h00\nshort\n"
     entry = parse_file(raw, "current/x.txt", CFG).entries[0]
@@ -216,6 +229,12 @@ def test_writing_past_midnight_is_not_a_regression():
 def test_starting_before_the_previous_range_ends_is_an_overlap_not_a_regression():
     raw = b"20270312\n13h05 - 14h25\na\n\n14h23\nb\n"
     assert codes(parse_file(raw, "current/x.txt", CFG)) == []
+
+
+def test_bare_late_night_range_is_a_range():
+    parsed = parse_file(b"20270312\n18h00 - 02h00\nlong night\n\n09h00 - 08h00\ntypo\n",
+                        "current/x.txt", CFG)
+    assert [e.time_status for e in parsed.entries] == ["range", "invalid_range"]
 
 
 def test_real_regression_in_the_afternoon_still_flags():

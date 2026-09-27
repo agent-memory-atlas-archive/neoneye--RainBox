@@ -108,7 +108,8 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--source", required=True)
     e.add_argument("--base-url", default=None, help="loopback embedding endpoint (default OLLAMA_BASE_URL)")
     e.add_argument("--model", default="embeddinggemma:300m")
-    e.add_argument("--input-format", type=int, choices=(1, 2), default=1)
+    e.add_argument("--input-format", type=int, choices=(1, 2), default=2,
+                   help="2: EmbeddingGemma task prompts (default); 1: bare passage text")
 
     ix = sub.add_parser("index", help="build optional indexes; never enables a mode")
     ix.add_argument("--source", required=True)

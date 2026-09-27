@@ -236,9 +236,13 @@ def test_hnsw_fills_under_restrictive_filter(live):
     req = DiaryRequest(mode="search", query="undo", date_from=date(2027, 7, 26), date_to=date(2027, 7, 26))
     ids = emb.vector_route(req, sources, fake_query(), _params(sources, req), _date_sql(req),
                            mode_override="hnsw")
-    # Every eligible passage that day (one ChangeLog bullet, two daily
-    # entries), although the index alone could stop short after filtering.
-    assert len(ids) == 3
+    # Every eligible passage that day, although the index alone could stop
+    # short after filtering.
+    eligible = db.session.execute(sa.text(
+        "SELECT count(*) FROM diary_passage p JOIN diary_entry e ON e.uuid = p.entry_uuid "
+        "JOIN diary_file f ON f.current_generation_uuid = e.generation_uuid "
+        "WHERE f.source_uuid = :s AND e.date_local = '2027-07-26'"), {"s": live.src.uuid}).scalar()
+    assert 1 < eligible <= 20 and len(ids) == eligible
 
 
 # --- probe --------------------------------------------------------------------------------------
@@ -259,7 +263,8 @@ def test_probe_scores_and_gates(live):
         {"id": "tl-1", "kind": "timeline",
          "args": {"mode": "timeline", "date_from": "2027-07-26", "date_to": "2027-07-26"},
          "gold": [_gold(live, "archive/ChangeLog.txt", "*\tre-enabled Buffer#test_exception_xxx.\n"),
-                  _gold(live, "daily/2027_07_26.txt", "0830"), _gold(live, "daily/2027_07_26.txt", "0910")]},
+                  _gold(live, "daily/2027_07_26.txt",
+                        (live.root / "daily" / "2027_07_26.txt").read_text())]},
         {"id": "neg-1", "kind": "negative", "args": {"mode": "literal", "query": "zeppelin-xyz"}, "gold": []},
     ]
     db.diary_set_enabled(live.src.uuid, False)          # the probe reads disabled sources

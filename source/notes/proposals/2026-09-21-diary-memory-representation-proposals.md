@@ -464,7 +464,8 @@ Keep local dates and minute values as written. Time ranges do not prove when the
 author typed a record or when its event occurred. Hour 24 is the writer's own
 past-midnight notation: `24h00` and `23h30 - 24h15` are valid, stored as
 `00:MM` under the date as written, and a range ending in hour 24 is a
-`range`. Otherwise an end earlier than a start is `invalid_range`; do not
+`range`, as is a bare range from the evening into the small hours
+(`18h00 - 02h00`: start at or after 18:00, end before 06:00). Otherwise an end earlier than a start is `invalid_range`; do not
 infer midnight rollover from bare clocks. DST gaps/overlaps are
 `ambiguous`; retain local values without inventing a unique UTC instant.
 Date-only entries do not acquire midnight timestamps. The generation records
@@ -480,8 +481,15 @@ evening. Newest-first ChangeLogs still read chronologically across dates. With d
 the timeline as local diary dates, not a single absolute event chronology.
 
 Each entry owns its time/bullet marker and body; date/author headers are separate
-context ranges. Chunk the body, including its entry marker, at the last line end
-within **600 characters**. If none fits, split at the cap on a character
+context ranges. A passage is a **paragraph**: lines separated by empty lines
+outside pasted and fenced regions (pasted output keeps its blank lines inside
+one paragraph); the entry marker stays with the first. Blank lines between
+paragraphs belong to no passage, so the same paragraph written on two days
+has one hash, one vector and one group. Diary entries often string unrelated
+notes together, and a vector averaged over three topics finds none of them:
+on the pilot, a topical question ranked its answer 16th while that answer
+shared a passage with two unrelated notes, and 1st as its own paragraph. A paragraph longer than
+the cap is chunked at the last line end within **600 characters**. If none fits, split at the cap on a character
 boundary; a line that must be split this way carries the pending text
 (usually just the entry marker) with it rather than leaving a marker-only
 passage. Two things set the cap. Four whole passages plus their labels must
@@ -756,8 +764,10 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   vocabulary (`diary_word`: every lexeme of its current, ready, non-excluded
   passages with its passage count, rebuilt at the end of each sync) does not
   contain is matched to vocabulary words of at least four characters by
-  pg_trgm similarity ≥ 0.4, three per word; those words run as a lexeme
-  route. The threshold admits transpositions (`rubyfroge` → `rubyforge`,
+  pg_trgm similarity ≥ 0.4 whose length differs by at most one character
+  (two for words of eight or more), three per word; those words run as a
+  lexeme route. The length window keeps typos (`paralel` → `parallel`) and
+  drops different words (`evening` → `even`, `relax` → `related`). The threshold admits transpositions (`rubyfroge` → `rubyforge`,
   0.43) and rejects part-words (`ruby` → `rubyforge`, 0.36). Words the
   diary contains are never fuzzed, nor are the parts of a joined word it
   contains. Without pg_trgm (installed by bootstrap where the server offers
@@ -766,8 +776,19 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   to eligible passages on `text_hash`; top 20 distinct texts. A missing
   model/index/embedding never removes lexical results.
 
-Search unions the three routes by passage UUID. Score with reciprocal-rank
-fusion `sum(1 / (60 + rank))`, where ranks start at one. Tie-break by source UUID,
+Before FTS, query lexemes found in more than 5% of the sources' passages (and
+at least 20) are dropped: "the", "i", "og", "der" carry no topic, and the cutoff
+comes from each source's own vocabulary counts, so no per-language stopword
+table is needed. If every lexeme is common, the rarest is kept.
+
+Search unions the routes by passage UUID. Score with weighted reciprocal-rank
+fusion `sum(w / (60 + rank))`, where ranks start at one and every route has
+weight 1 except FTS. Its weight is the share of the query's information the
+route can express: the IDF-weighted fraction of the query's non-common words
+that occur in the diary. "What did I do to unwind after dinner?" keeps
+did/unwind/dinner; if only "did" occurs, keyword matches on it count for a
+small fraction and the vector route leads. A query whose words all occur gets full
+weight. Tie-break by source UUID,
 relative path, entry ordinal and part index. No mixing raw score scales.
 
 A diary repeats itself. A routine line recurs on hundreds of days, and
@@ -832,12 +853,12 @@ Use a 2-second query-embedding timeout with zero retries, a 30-second background
 batch timeout and at most two background retries. Do not silently switch provider.
 These are new adapter limits, not the existing seed client's 10-second timeout.
 
-Input-format version 1 is the bare passage text, matching how the seed and
-claim paths embed today. EmbeddingGemma's model card recommends task
-prompts instead (`title: none | text: …` for documents, `task: search
-result | query: …` for queries). Version 2 is those prompts, and the pilot
-measures it as its own baseline (§9). It is adopted only if it injects at
-least as many topical gold spans and loses no baseline-passing case. The
+Input-format version 2, the default, is EmbeddingGemma's task prompts
+(`title: none | text: …` for documents, `task: search result | query: …` for
+queries). Version 1, the bare passage text, is how the seed and claim paths
+embed. On the pilot, version 2 moved the gold passage of three topical
+questions from ranks 36, 16 and 4 to 12, 4 and 1 over the same passages. The
+probe keeps both as baselines. The
 version is already part of the epoch, so switching is a re-embed, not a
 schema change.
 

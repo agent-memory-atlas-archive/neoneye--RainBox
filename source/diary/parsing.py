@@ -652,11 +652,18 @@ class _Parser:
             latest = max(latest, offset + end)
         return (d, offset + start, latest, byte, offset)
 
+    def _crosses_midnight(self, marker: _Marker) -> bool:
+        """`18h00 - 02h00`: an evening start and a small-hours end is a late
+        night written without hour 24, not a mistake."""
+        start = marker.clock_start.hour * 60 + marker.clock_start.minute
+        end = marker.clock_end.hour * 60 + marker.clock_end.minute
+        return start >= self.MIDNIGHT_LATE and end < self.MIDNIGHT_EARLY
+
     def _time_status(self, d: date | None, marker: _Marker | None) -> str:
         if marker is None or marker.clock_start is None:
             return "date_only" if d is not None else "unknown"
         if marker.clock_end is not None and marker.clock_end < marker.clock_start \
-                and not marker.end_wraps:
+                and not marker.end_wraps and not self._crosses_midnight(marker):
             return "invalid_range"
         if d is not None and self.tz is not None:
             for clock in (marker.clock_start, marker.clock_end):
@@ -694,11 +701,48 @@ class _Parser:
             entries.append(entry)
         return entries
 
+    def _paragraphs(self, first: int, last: int) -> list[tuple[int, int]]:
+        """(first_line, last_line) of each paragraph: runs of lines separated
+        by empty lines outside pasted/fenced regions. Pasted output keeps its
+        blank lines inside one paragraph."""
+        out: list[tuple[int, int]] = []
+        cur: int | None = None
+        end = first
+        for li in range(first, last + 1):
+            ln = self.lines[li]
+            if ln.empty and self.protect[li] is None:
+                if cur is not None:
+                    out.append((cur, end))
+                    cur = None
+                continue
+            if cur is None:
+                cur = li
+            if not ln.empty:
+                end = li
+        if cur is not None:
+            out.append((cur, end))
+        return out
+
     def _chunk(self, start: int, first: int, last: int) -> list[ParsedPassage]:
+        """Passages: one per paragraph (the entry marker stays with the first),
+        each split at line ends within the cap. Blank lines between
+        paragraphs belong to no passage, so the same paragraph written on two
+        days has one hash and one vector, and a vector holds one topic."""
+        spans: list[tuple[int, int]] = []
+        for pf, pl in self._paragraphs(first, last):
+            spans += self._cap_spans(pf, pl)
+        out = []
+        for k, (a, b) in enumerate(spans):
+            piece = self.t.text[a:b]
+            out.append(ParsedPassage(k, self.t.byte_at(a), self.t.byte_at(b), piece,
+                                     sha256_hex(piece.encode("utf-8"))))
+        return out
+
+    def _cap_spans(self, first: int, last: int) -> list[tuple[int, int]]:
         cap = self.cap
         spans: list[tuple[int, int]] = []
-        s = start
-        acc = start
+        s = self.lines[first].char_start
+        acc = s
         for li in range(first, last + 1):
             line_end = self.lines[li].char_end
             if line_end - s <= cap:
@@ -716,12 +760,7 @@ class _Parser:
             acc = line_end
         if acc > s:
             spans.append((s, acc))
-        out = []
-        for k, (a, b) in enumerate(spans):
-            piece = self.t.text[a:b]
-            out.append(ParsedPassage(k, self.t.byte_at(a), self.t.byte_at(b), piece,
-                                     sha256_hex(piece.encode("utf-8"))))
-        return out
+        return spans
 
     def _annotate(self, entry: ParsedEntry, g: dict[str, Any], base: int) -> list[ParsedAnnotation]:
         text = entry.text

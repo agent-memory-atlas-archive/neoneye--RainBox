@@ -516,3 +516,21 @@ def test_vocabulary_is_rebuilt_by_sync_and_cleared_by_purge(live):
     db.diary_purge(live.src.uuid)
     assert db.session.execute(sa.text(
         "SELECT count(*) FROM diary_word WHERE source_uuid = :s"), {"s": live.src.uuid}).scalar() == 0
+
+
+def test_common_words_do_not_rank(live):
+    body = "".join(f"2028090{d}\n09h00\nthe the the note {d}\n\n" for d in range(1, 10))
+    body += "".join(f"2028091{d}\n09h00\nthe usual the day {d}\n\n" for d in range(0, 10))
+    body += "20280920\n09h00\nthe zeppelin arrived\n"
+    live.write("current/2028.txt", body)
+    live.resync()
+    obs = live.q(mode="search", query="the the zeppelin")
+    first = obs.text.split("--- ", 2)[1]
+    assert "zeppelin" in first
+
+
+def test_typos_keep_length_but_not_other_words(live):
+    from diary.fuzzy import close_words
+    live.write("current/2028.txt", "20281001\n09h00\nan event related to nothing even\n")
+    live.resync()
+    assert close_words("evening relax", [live.src.uuid]) == []

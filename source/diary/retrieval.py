@@ -528,7 +528,8 @@ def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
                     db.session.rollback()
                     result.degraded_routes.append("vector_failed")
             result.timings_ms["vector"] = int((_time.monotonic() - t0) * 1000)
-        frozen = _fuse(ranks, sources)
+        weights = {"fts": _lexical_coverage(req.query, sources)}
+        frozen = _fuse(ranks, sources, weights)
         result.route_ranks = ranks
     result.candidates = frozen
     start = (position or {}).get("index", 0)
@@ -575,9 +576,36 @@ def _fts_route(req: DiaryRequest, sources: list[Any]) -> list[UUID]:
 
     lexemes = [r[0] for r in db.session.execute(sa.text(
         "SELECT unnest(tsvector_to_array(to_tsvector('simple', :q)))"), {"q": req.query}).all()]
+    lexemes = _drop_common(lexemes, sources)
     # "ruby forge" also matches the diary's "rubyforge".
     lexemes += [j for j in joined_lexemes(req.query or "") if j not in lexemes]
     return _lexeme_route(req, sources, lexemes[:MAX_FTS_LEXEMES])
+
+
+COMMON_SHARE = 0.05       # a word in more than 5% of passages carries no topic
+COMMON_FLOOR = 20         # ... but never cut below 20 passages (small diaries)
+
+
+def _drop_common(lexemes: list[str], sources: list[Any]) -> list[str]:
+    """Drop lexemes too common to rank by ("the", "i", "og", "der"),
+    judged from each source's own vocabulary counts, so it needs no
+    per-language stopword table. If every lexeme is common, keep the
+    rarest one."""
+    if not lexemes:
+        return lexemes
+    ids = [s.uuid for s in sources]
+    total = db.session.execute(sa.text(
+        "SELECT count(*) FROM diary_passage p JOIN diary_entry e ON e.uuid = p.entry_uuid "
+        "JOIN diary_file f ON f.current_generation_uuid = e.generation_uuid "
+        "WHERE f.source_uuid = ANY(:s) AND f.availability = 'ready'"), {"s": ids}).scalar() or 0
+    counts = dict(db.session.execute(sa.text(
+        "SELECT word, sum(passages) FROM diary_word WHERE source_uuid = ANY(:s) "
+        "AND word = ANY(:w) GROUP BY word"), {"s": ids, "w": lexemes}).all())
+    cutoff = max(COMMON_SHARE * total, COMMON_FLOOR)
+    kept = [lx for lx in lexemes if (counts.get(lx) or 0) <= cutoff]
+    if not kept:
+        kept = [min(lexemes, key=lambda lx: counts.get(lx) or 0)]
+    return kept
 
 
 def _joined_route(req: DiaryRequest, sources: list[Any]) -> list[UUID]:
@@ -613,13 +641,48 @@ def _lexeme_route(req: DiaryRequest, sources: list[Any], lexemes: list[str]) -> 
     return [r[0] for r in db.session.execute(sa.text(sql), params).all()]
 
 
-def _fuse(ranks: dict[str, dict[str, int]], sources: list[Any]) -> list[str]:
-    """Reciprocal-rank fusion over passage IDs, deterministic tie-break by
-    source order. Returns up to SEARCH_CANDIDATES passage IDs."""
+def _lexical_coverage(query: str | None, sources: list[Any]) -> float:
+    """How much of the query the FTS route can express, in [0, 1]: the
+    rarity-weighted (IDF) share of the query's non-common words that occur
+    in the diary. "what did I do to unwind after dinner?" keeps did,
+    unwind, dinner; if only "did" occurs, keyword matches on "did" count for
+    a small fraction of a full match and the vector route leads. A query whose
+    words all occur gets full weight."""
+    import math
+
+    ids = [s.uuid for s in sources]
+    words = [r[0] for r in db.session.execute(sa.text(
+        "SELECT unnest(tsvector_to_array(to_tsvector('simple', :q)))"), {"q": query or ""}).all()]
+    words = _drop_common(words, sources)
+    if not words:
+        return 1.0
+    total = db.session.execute(sa.text(
+        "SELECT count(*) FROM diary_passage p JOIN diary_entry e ON e.uuid = p.entry_uuid "
+        "JOIN diary_file f ON f.current_generation_uuid = e.generation_uuid "
+        "WHERE f.source_uuid = ANY(:s) AND f.availability = 'ready'"), {"s": ids}).scalar() or 1
+    counts = dict(db.session.execute(sa.text(
+        "SELECT word, sum(passages) FROM diary_word WHERE source_uuid = ANY(:s) "
+        "AND word = ANY(:w) GROUP BY word"), {"s": ids, "w": words}).all())
+
+    def idf(df: float) -> float:
+        return math.log((total + 1) / (df + 0.5))
+
+    full = sum(idf(counts.get(w) or 0) for w in words)
+    known = sum(idf(counts[w]) for w in words if counts.get(w))
+    return known / full if full > 0 else 1.0
+
+
+def _fuse(ranks: dict[str, dict[str, int]], sources: list[Any],
+          weights: dict[str, float] | None = None) -> list[str]:
+    """Weighted reciprocal-rank fusion over passage IDs (a route's weight
+    defaults to 1), deterministic tie-break by source order. Returns up to
+    SEARCH_CANDIDATES passage IDs."""
+    weights = weights or {}
     scores: dict[str, float] = {}
-    for route in ranks.values():
+    for name, route in ranks.items():
+        w = weights.get(name, 1.0)
         for pid, rank in route.items():
-            scores[pid] = scores.get(pid, 0.0) + 1.0 / (RRF_K + rank)
+            scores[pid] = scores.get(pid, 0.0) + w / (RRF_K + rank)
     if not scores:
         return []
     order = {str(r[0]): (str(r[1]), r[2], r[3], r[4]) for r in db.session.execute(sa.text(
