@@ -102,28 +102,45 @@ def _known(words: list[str], source_ids: list[UUID]) -> set[str]:
     return {r[0] for r in rows}
 
 
+def _similar(w: str, source_ids: list[UUID]) -> list[str]:
+    rows = db.session.execute(sa.text(
+        "SELECT word FROM diary_word WHERE source_uuid = ANY(:s) AND word % :w "
+        "AND length(word) >= :m AND abs(length(word) - length(:w)) <= :d "
+        "AND similarity(word, :w) >= :t GROUP BY word "
+        "ORDER BY max(similarity(word, :w)) DESC, word LIMIT :n"),
+        {"s": source_ids, "w": w, "m": MIN_WORD, "d": length_slack(w),
+         "t": SIMILARITY, "n": CANDIDATES_PER_WORD}).all()
+    return [r[0] for r in rows]
+
+
 def close_words(query: str, source_ids: list[UUID]) -> list[str]:
     """Vocabulary words for query words the diary does not contain: joined
-    variants that exist, then spellings with pg_trgm similarity >=
-    SIMILARITY. Empty when pg_trgm is not installed."""
+    variants that exist; then close spellings (pg_trgm similarity >=
+    SIMILARITY, similar length) of joined variants, so a typo in a split
+    word still finds it ("rby forge" -> "rubyforge"); then close spellings of
+    single words. Parts of a joined word that matched, exactly or closely,
+    are not fuzzed on their own. Empty of spellings when pg_trgm is not
+    installed."""
     all_words = query_words(query)
     words = [w for w in all_words if len(w) >= MIN_WORD]
+    pairs = [(a, b, a + b) for a, b in zip(all_words, all_words[1:])]
     joined = joined_lexemes(query)
     known = _known(words + joined, source_ids)
     out = [j for j in joined if j in known]
-    # The parts of a joined word the diary contains are not typos of anything.
-    covered = {w for a, b in zip(all_words, all_words[1:]) if a + b in known for w in (a, b)}
-    unknown = [w for w in words if w not in known and w not in covered]
-    if unknown and trgm_available():
-        for w in unknown:
-            rows = db.session.execute(sa.text(
-                "SELECT word FROM diary_word WHERE source_uuid = ANY(:s) AND word % :w "
-                "AND length(word) >= :m AND abs(length(word) - length(:w)) <= :d "
-                "AND similarity(word, :w) >= :t GROUP BY word "
-                "ORDER BY max(similarity(word, :w)) DESC, word LIMIT :n"),
-                {"s": source_ids, "w": w, "m": MIN_WORD, "d": length_slack(w),
-                 "t": SIMILARITY, "n": CANDIDATES_PER_WORD}).all()
-            out += [r[0] for r in rows if r[0] not in out]
+    covered = {w for a, b, ab in pairs if ab in known for w in (a, b)}
+    if not trgm_available():
+        return out
+    for a, b, ab in pairs:
+        if ab in known or len(ab) < MIN_WORD:
+            continue
+        found = [w for w in _similar(ab, source_ids) if w not in out]
+        if found:
+            out += found
+            covered |= {a, b}
+    for w in words:
+        if w in known or w in covered:
+            continue
+        out += [x for x in _similar(w, source_ids) if x not in out]
     return out
 
 

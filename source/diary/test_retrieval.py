@@ -479,7 +479,7 @@ def test_search_joins_split_words(live):
     assert "RubyForge" in first                      # the joined word ranks first
 
 
-@pytest.mark.parametrize("typo", ["rubyfroge", "rubyforg"])
+@pytest.mark.parametrize("typo", ["rubyfroge", "rubyforg", "rby forge", "rubi forge", "ruby froge"])
 def test_search_tolerates_typos(live, typo):
     _rubyforge(live)
     obs = live.q(mode="search", query=typo)
@@ -499,6 +499,8 @@ def test_literal_stays_exact_and_suggests_spellings(live):
     assert miss.data["suggestions"] == ["RubyForge"]
     typo = live.q(mode="literal", query="RubyFroge")
     assert typo.data["suggestions"] == ["RubyForge"]
+    split_typo = live.q(mode="literal", query="rby forge")
+    assert split_typo.data["suggestions"] == ["RubyForge"]
 
 
 def test_suggestions_never_reveal_excluded_files(live):
