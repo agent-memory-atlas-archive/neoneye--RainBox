@@ -419,7 +419,7 @@ def test_changelog_date_regression_is_newest_first():
 
 
 @pytest.mark.parametrize("a, b, d", [
-    ("rubyforge", "rubyfroge", 1), ("having", "havign", 1), ("remove", "remote", 1),
+    ("rubyforge", "rubyfroge", 1), ("letter", "lettre", 2), ("remove", "remote", 1),
     ("operation", "operator", 2), ("string", "strip", 2), ("", "abc", 3), ("same", "same", 0),
 ])
 def test_edit_distance(a, b, d):
