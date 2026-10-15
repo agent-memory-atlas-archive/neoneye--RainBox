@@ -270,6 +270,20 @@ def test_timeline_one_inclusive_day(live):
     assert "2027-03-13" not in obs.text
 
 
+def test_month_preamble_overlaps_any_date_filter_in_its_month(live):
+    live.write("current/202802xx.txt", "month focus: the harbour survey\n\n"
+                                      "20280215\n09h00\nsurvey day one\n")
+    live.resync()
+    obs = live.q(mode="timeline", date_from="2028-02-15", date_to="2028-02-15")
+    t = obs.text
+    assert "2028-02 (month from filename)" in t
+    assert t.index("month focus") < t.index("survey day one")
+    obs = live.q(mode="literal", query="harbour survey", date_from="2028-02-20", date_to="2028-03-05")
+    assert "month focus" in obs.text
+    obs = live.q(mode="literal", query="harbour survey", date_from="2028-03-01", date_to="2028-03-05")
+    assert "month focus" not in obs.text
+
+
 def test_timeline_reads_newest_first_changelog_chronologically(live):
     obs = live.q(mode="timeline", date_from="2027-07-25", date_to="2027-07-27")
     t = obs.text

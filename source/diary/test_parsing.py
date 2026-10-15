@@ -364,14 +364,51 @@ def test_plain_dialect_blocks():
     assert all(e.date_local == date(2027, 3, 12) and e.clock_start is None for e in parsed.entries)
 
 
+def dates(parsed) -> list[tuple[date | None, str]]:
+    return [(e.date_local, e.date_basis) for e in parsed.entries]
+
+
+def test_month_file_dates_its_preamble_to_the_month():
+    raw = b"focus this month: ship the parser\n\n20270901;all day\nwent hiking\n"
+    parsed = parse_file(raw, "current/202709xx.md", CFG)
+    assert dates(parsed) == [(date(2027, 9, 1), "filename_month"), (date(2027, 9, 1), "header")]
+    assert parsed.diagnostics == []
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("notes/202709xx.md", (date(2027, 9, 1), "filename_month")),
+    ("notes/202709XX.md", (date(2027, 9, 1), "filename_month")),
+    ("notes/202709xx_work.md", (date(2027, 9, 1), "filename_month")),
+    ("notes/202709xx-travel.md", (date(2027, 9, 1), "filename_month")),
+    ("notes/2027_09_xx.txt", (date(2027, 9, 1), "filename_month")),
+    ("notes/202713xx.md", (None, "unknown")),
+    ("notes/2027xx.md", (None, "unknown")),
+    ("notes/202709xxwork.md", (None, "unknown")),
+])
+def test_month_filename_stems(path, expected):
+    parsed = parse_file(b"first block\n\nsecond block\n", path, CFG)
+    assert dates(parsed) == [expected, expected]
+
+
+def test_month_file_header_outside_the_month_is_a_mismatch():
+    parsed = parse_file(b"20271001\n09h00\nwent hiking\n", "current/202709xx.md", CFG)
+    assert codes(parsed) == ["filename_header_mismatch"]
+
+
+def test_daily_dialect_month_file_falls_back_to_month_dated_blocks():
+    parsed = parse_file(b"summary of the month\n", "daily/2027_08_xx.txt", CFG)
+    assert codes(parsed) == ["invalid_daily_filename"]
+    assert dates(parsed) == [(date(2027, 8, 1), "filename_month")]
+
+
 BOOK_CFG = config(
     dialect_rules=BASE["dialect_rules"] + [{"prefix": "book/", "dialect": "daybook"}],
     clock_prefixes=["Kl", "kl"],
 )
 
 
-def book(raw: bytes):
-    parsed = parse_file(raw, "book/202704xx.md", BOOK_CFG)
+def book(raw: bytes, path: str = "book/notes.md"):
+    parsed = parse_file(raw, path, BOOK_CFG)
     assert parsed.dialect == "daybook"
     assert_well_formed(raw, parsed)
     return parsed
@@ -381,9 +418,9 @@ def test_daybook_timesheet_line_is_a_dated_range_entry():
     raw = (b"week 14 - total 08:30 hours\n\n"
            b"1apr2027;1000;1530;05:30;release prep\nfixed the build\n\n"
            b"2apr2027;0900;1200;03:00;\n")
-    parsed = book(raw)
+    parsed = book(raw, "book/202704xx.md")
     assert [(e.date_local, e.clock_start, e.clock_end, e.time_status) for e in parsed.entries] == [
-        (None, None, None, "unknown"),
+        (date(2027, 4, 1), None, None, "date_only"),     # the month file's preamble
         (date(2027, 4, 1), time(10, 0), time(15, 30), "range"),
         (date(2027, 4, 2), time(9, 0), time(12, 0), "range")]
     assert parsed.entries[1].text == "1apr2027;1000;1530;05:30;release prep\nfixed the build\n"

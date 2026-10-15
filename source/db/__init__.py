@@ -401,6 +401,8 @@ def _ensure_diary_schema() -> None:
         db.session.commit()
     _ensure_membership_check("diary_generation", "ck_diary_generation_dialect", "dialect",
                              DIARY_DIALECTS)
+    _ensure_membership_check("diary_entry", "ck_diary_entry_basis", "date_basis",
+                             DIARY_DATE_BASES)
     db.session.commit()
 
 

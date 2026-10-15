@@ -1961,6 +1961,7 @@ class BenchmarkResult(db.Model):
 
 DIARY_AVAILABILITY = ("pending", "ready", "quarantined", "missing")
 DIARY_DIALECTS = ("timed", "daily", "changelog", "daybook", "plain")
+DIARY_DATE_BASES = ("header", "filename", "filename_month", "unknown")
 DIARY_VECTOR_MODES = ("off", "exact", "hnsw")
 # Typographic quotes the `simple` parser would glue onto words ("“production”"
 # is otherwise a different word from production). Blanked before indexing;
@@ -2108,7 +2109,8 @@ class DiaryEntry(db.Model):
         UniqueConstraint("generation_uuid", "ordinal", name="uq_diary_entry_ordinal"),
         CheckConstraint("byte_start >= 0 AND byte_end > byte_start", name="ck_diary_entry_range"),
         CheckConstraint("ordinal >= 0", name="ck_diary_entry_ordinal"),
-        CheckConstraint("date_basis IN ('header','filename','unknown')", name="ck_diary_entry_basis"),
+        CheckConstraint("date_basis IN (" + ",".join(f"'{b}'" for b in DIARY_DATE_BASES) + ")",
+                        name="ck_diary_entry_basis"),
         CheckConstraint("time_status IN ('date_only','minute','range','unknown','ambiguous',"
                         "'invalid_range')", name="ck_diary_entry_time_status"),
         Index("ix_diary_entry_date", "date_local", "clock_start"),

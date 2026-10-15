@@ -67,6 +67,8 @@ FILENAME_DATE = (
     re.compile(r"^(\d{4})_(\d{2})_(\d{2})$"),
 )
 FILENAME_DATE_DMY = re.compile(r"^(\d{2})-(\d{2})-(\d{4})$")
+# A month file: `YYYYMMxx` or `YYYY_MM_xx`, optionally `_topic` / `-topic`.
+FILENAME_MONTH = re.compile(r"^(\d{4})_?(\d{2})_?[xX]{2}(?:[_-].*)?$")
 DAILY_FILENAME = re.compile(r"^(\d{4})_(\d{2})_(\d{2})$")
 
 # Identifier rules (IDENTIFIER_VERSION 1). Conservative; unusual identifiers
@@ -210,6 +212,13 @@ def filename_date(relative_path: str) -> date | None:
     return None
 
 
+def filename_month(relative_path: str) -> date | None:
+    """The first day of a month file's month (`202709xx.md` -> 2027-09-01)."""
+    stem = posixpath.basename(relative_path).split(".", 1)[0]
+    m = FILENAME_MONTH.match(stem)
+    return _valid_date(int(m[1]), int(m[2]), 1) if m else None
+
+
 
 def find_identifiers(text: str) -> list[tuple[str, str, int, int]]:
     """(subtype, value, start, end) character spans of every identifier in
@@ -320,6 +329,7 @@ class _Parser:
         self.tz = ZoneInfo(config["timezone"]) if config.get("timezone") else None
         self.cap: int = config.get("passage_cap", 600)
         self.file_date = filename_date(path)
+        self.file_month = None if self.file_date else filename_month(path)
         n = len(self.lines)
         self.forced: set[int] = set()
         self.suppressed: set[int] = set()
@@ -631,6 +641,11 @@ class _Parser:
     def _initial_ctx(self) -> dict[str, Any]:
         if self.file_date is not None:
             return {"date": self.file_date, "basis": "filename", "header": None, "author": None}
+        # Text before a month file's first date line is about the month as a
+        # whole: dated to its first day, with a basis that says so.
+        if self.file_month is not None:
+            return {"date": self.file_month, "basis": "filename_month", "header": None,
+                    "author": None}
         return {"date": None, "basis": "unknown", "header": None, "author": None}
 
     def _marker_groups(self, markers: list[_Marker | None]) -> list[dict[str, Any]]:
@@ -648,8 +663,10 @@ class _Parser:
             marker = markers[i]
             if marker is not None and marker.date is not None:
                 cur = None
-                if (self.file_date is not None and marker.date != self.file_date
-                        and not mismatch_reported):
+                outside = (marker.date != self.file_date if self.file_date is not None
+                           else self.file_month is not None
+                           and marker.date.replace(day=1) != self.file_month)
+                if outside and not mismatch_reported:
                     self.diags.append(Diagnostic("filename_header_mismatch", ln.byte_start))
                     mismatch_reported = True
                 if prev_header_date is not None and marker.date is not None:

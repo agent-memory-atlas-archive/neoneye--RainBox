@@ -227,7 +227,7 @@ fails. A source record is retained on purge.
 | `diary_exclusion` | `source_uuid FK`, `relative_path text`, `created_at` | Unique `(source_uuid,relative_path)`; excludes the entire file, all revisions |
 | `diary_cursor` | `room_uuid uuid`, `agent_uuid uuid?`, `request jsonb`, `catalog_manifest jsonb`, `position jsonb`, `expires_at` | Opaque UUID; expires after 30 minutes; never contains copied source text |
 
-`date_basis` is `header`, `filename` or `unknown`.
+`date_basis` is `header`, `filename`, `filename_month` or `unknown`.
 `time_status` is `date_only`, `minute`, `range`, `unknown`, `ambiguous` or
 `invalid_range`. For identifier annotations, subtype is `url`, `hash`, `path`,
 `symbol`, `issue` or `model`; other kinds use `none`. `value` is the original
@@ -446,8 +446,14 @@ For recognition only, remove the line ending and trailing spaces/tabs. An empty
 line contains only spaces/tabs after removing its ending. Never remove those
 bytes from stored text. Validate days/months/leap years and hours `00–23`, minutes
 `00–59`; malformed headers remain text plus a diagnostic. Filename dates accept
-only complete stems `YYYYMMDD`, `YYYY_MM_DD`, or `DD-MM-YYYY`. Month-name headers
-use the configured tables. Do not find dates by scanning arbitrary body prose.
+only complete stems `YYYYMMDD`, `YYYY_MM_DD`, or `DD-MM-YYYY`. A **month file**
+is a stem `YYYYMMxx` or `YYYY_MM_xx` (either case), optionally followed by
+`_` or `-` and a topic (`202709xx_work`): text before its first date line —
+typically what the month is about — is dated to the month's first day with
+basis `filename_month`, labelled `2027-09 (month from filename)`, and
+in a plain file every block is. A header outside that month emits
+`filename_header_mismatch`. Month-name headers use the configured tables.
+Do not find dates by scanning arbitrary body prose.
 
 For `timed`, `changelog` and `daybook`, a valid header takes precedence over a filename date;
 a mismatch emits `filename_header_mismatch`. For `daily`, an invalid filename
@@ -635,6 +641,8 @@ Contract:
   are inclusive**; `date_from == date_to` is one day. A model asked about
   “the 26th” writes the 26th twice, which is less error-prone than working out
   an exclusive end. Internally the bounds become `[date_from, date_to + 1 day)`.
+  A `filename_month` entry matches when that range overlaps its month, so a
+  question about one day still sees what that month was about.
   `search`/`literal` accept optional bounds; `timeline` requires both and
   spans at most 366 days. Optional `source` narrows the query to one source
   *name*, as the observation labels print it. Names are unique, and a model

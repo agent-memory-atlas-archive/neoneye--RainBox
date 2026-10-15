@@ -207,7 +207,10 @@ _ELIGIBLE = """
 _ELIGIBLE_ENTRIES = _ELIGIBLE.replace(
     "FROM diary_passage p\n    JOIN diary_entry e ON e.uuid = p.entry_uuid",
     "FROM diary_entry e")
-_DATE_FILTER = " AND e.date_local >= :date_from AND e.date_local < :date_until"
+# A month-dated entry (the preamble of a month file, dated to the 1st)
+# matches any range that overlaps its month.
+_DATE_FILTER = (" AND e.date_local >= :month_from AND e.date_local < :date_until"
+                " AND (e.date_local >= :date_from OR e.date_basis = 'filename_month')")
 
 _ITEM_COLUMNS = """
     s.uuid AS source_uuid, s.name AS source_name, f.relative_path AS path,
@@ -222,6 +225,7 @@ def _params(sources: list[Any], req: DiaryRequest) -> dict[str, Any]:
     p: dict[str, Any] = {"sources": [s.uuid for s in sources]}
     if req.date_from is not None:
         p["date_from"] = req.date_from
+        p["month_from"] = req.date_from.replace(day=1)
         p["date_until"] = (req.date_to or req.date_from) + timedelta(days=1)
     return p
 
