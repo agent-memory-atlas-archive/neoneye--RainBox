@@ -413,6 +413,34 @@ def test_fence_breaker_closes_before_next_date_header():
     assert parsed.entries[-1].date_local == date(2027, 3, 13)
 
 
+@pytest.mark.parametrize("header, expected", [
+    (b"27-juli-2027 kreese <kreese@example.org>", date(2027, 7, 27)),
+    (b"27-juli-2027 kreese\t<kreese@example.org>  ", date(2027, 7, 27)),
+    (b"13-04-2027 kreese <kreese@example.org>", date(2027, 4, 13)),
+    (b"3-4-2027 kreese", date(2027, 4, 3)),
+])
+def test_changelog_header_contact_and_numeric_month(header, expected):
+    parsed = parse_file(header + b"\n*\ta\n", "archive/ChangeLog.txt", CFG)
+    assert [(e.date_local, e.author_token) for e in parsed.entries] == [(expected, "kreese")]
+    assert parsed.diagnostics == []
+
+
+@pytest.mark.parametrize("header", [
+    b"27-juli-2027 kreese someone",          # a second bare token is not a contact
+    b"27-juli-2027 kreese <kreese at example.org>",
+    b"27-juli-2027 <kreese@example.org>",    # a contact is not an author token
+])
+def test_changelog_header_rejects_other_trailers(header):
+    parsed = parse_file(header + b"\n*\ta\n", "archive/ChangeLog.txt", CFG)
+    assert parsed.entries and all(e.date_local is None for e in parsed.entries)
+
+
+def test_changelog_numeric_month_out_of_range_is_invalid_date():
+    parsed = parse_file(b"13-13-2027 kreese\n*\ta\n", "archive/ChangeLog.txt", CFG)
+    assert codes(parsed) == ["invalid_date"]
+    assert parsed.entries and all(e.date_local is None for e in parsed.entries)
+
+
 def test_changelog_date_regression_is_newest_first():
     raw = b"26-juli-2027 kreese\n*\ta\n27-juli-2027 kreese\n*\tb\n"
     assert "date_regression" in codes(parse_file(raw, "archive/ChangeLog.txt", CFG))

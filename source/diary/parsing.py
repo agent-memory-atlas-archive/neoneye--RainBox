@@ -50,7 +50,10 @@ TIMED_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
 TIMED_TIME = re.compile(r"^(\d{2})h(\d{2})(?:[ \t]*-[ \t]*(\d{2})h(\d{2}))?$")
 # `0830`, or with a colon: `08:30`, `8:30`.
 DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$|^(\d{1,2}):(\d{2})$")
-CHANGELOG_HEADER = re.compile(r"^(\d{1,2})-([^\s\d-]+)-(\d{4})[ \t]+(\S+)$")
+# `27-juli-2027 kreese` or `27-07-2027 kreese`, optionally followed by an
+# angle-bracketed contact, as in `27-07-2027 kreese <kreese@example.org>`.
+CHANGELOG_HEADER = re.compile(
+    r"^(\d{1,2})-(\d{1,2}|[^\s\d-]+)-(\d{4})[ \t]+([^\s<]\S*)(?:[ \t]+<[^\s<>]+>)?$")
 CHANGELOG_BULLET = re.compile(r"^\*[ \t]")
 FILENAME_DATE = (
     re.compile(r"^(\d{4})(\d{2})(\d{2})$"),
@@ -386,7 +389,10 @@ class _Parser:
             m = CHANGELOG_HEADER.match(rec)
             if not m:
                 return None
-            month = self.months.get(m[2].rstrip(".").casefold())
+            if m[2].isdigit():
+                month = int(m[2])
+            else:
+                month = self.months.get(m[2].rstrip(".").casefold())
             if month is None:
                 if report:
                     self.diags.append(Diagnostic("unknown_month", line.byte_start))

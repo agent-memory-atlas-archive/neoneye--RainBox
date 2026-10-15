@@ -434,7 +434,7 @@ inspection shows a false split. No content is discarded to resolve ambiguity.
 |---|---|---|
 | `timed` | Valid `YYYYMMDD` line at column zero; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
 | `daily` | Filename stem exactly `YYYY_MM_DD`; valid `HHMM`, `HH:MM` or `H:MM` at column zero at file start or immediately after an empty line | Blank lines within a record remain in it; a candidate inside a protected span is suppressed |
-| `changelog` | Valid `DD-month-YYYY` plus whitespace and one author token; top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
+| `changelog` | Valid `DD-month-YYYY` or `DD-MM-YYYY` plus whitespace and one author token, optionally followed by whitespace and an angle-bracketed contact (`<kreese@example.org>`); top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
 | `plain` | Nonempty blank-line-separated blocks | No inferred clock; use an unambiguous filename date if present |
 
 For recognition only, remove the line ending and trailing spaces/tabs. An empty
@@ -1321,9 +1321,10 @@ Mein Rücken fühlt sich wieder normal an.
 ```
 
 An older dialect is a ChangeLog: a header line of a day-month-year date
-with the month spelled out, followed by an author token, then one `*`
-bullet per entry with continuation lines indented, no times, and the
-newest day first in the file. Synthetic:
+with the month spelled out or numeric, followed by an author token and
+optionally an angle-bracketed contact, then one `*` bullet per entry with
+continuation lines indented, no times, and the newest day first in the
+file. Synthetic:
 
 ```text
 27-juli-2027 kreese
