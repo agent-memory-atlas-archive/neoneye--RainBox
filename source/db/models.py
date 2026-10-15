@@ -1960,7 +1960,7 @@ class BenchmarkResult(db.Model):
 # only for each file's current generation; vectors are keyed by content.
 
 DIARY_AVAILABILITY = ("pending", "ready", "quarantined", "missing")
-DIARY_DIALECTS = ("timed", "daily", "changelog", "plain")
+DIARY_DIALECTS = ("timed", "daily", "changelog", "daybook", "plain")
 DIARY_VECTOR_MODES = ("off", "exact", "hnsw")
 # Typographic quotes the `simple` parser would glue onto words ("“production”"
 # is otherwise a different word from production). Blanked before indexing;
@@ -2079,7 +2079,7 @@ class DiaryGeneration(db.Model):
     __table_args__ = (
         UniqueConstraint("revision_uuid", "parser_fingerprint", name="uq_diary_generation_parse"),
         UniqueConstraint("uuid", "file_uuid", name="uq_diary_generation_file"),
-        CheckConstraint("dialect IN ('timed','daily','changelog','plain')",
+        CheckConstraint("dialect IN (" + ",".join(f"'{d}'" for d in DIARY_DIALECTS) + ")",
                         name="ck_diary_generation_dialect"),
     )
 

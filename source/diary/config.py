@@ -24,21 +24,22 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Bump when parse_file's output for the same bytes and config changes. Part
 # of the fingerprint, so every generation parsed by older code goes stale.
-PARSER_VERSION = 7
+PARSER_VERSION = 8
 # Bump when the identifier annotation rules change (same effect).
 IDENTIFIER_VERSION = 1
 # Passage cap in characters (code points). §5/§8 of the proposal: four whole
 # passages plus their labels fit one observation (pinned by a render test).
 PASSAGE_CAP = 600
 
-DIALECTS = ("timed", "daily", "changelog", "plain")
+DIALECTS = ("timed", "daily", "changelog", "daybook", "plain")
 SENSITIVITIES = ("private", "secret")
 MANIFEST_SCHEMA_VERSION = 1
 
 _MANIFEST_KEYS = {
     "schema_version", "name", "root", "room_uuid", "agent_uuid", "timezone",
     "sensitivity", "allow_remote_models", "include_suffixes", "dialect_rules",
-    "month_languages", "command_tokens", "author_tokens", "file_overrides",
+    "month_languages", "command_tokens", "author_tokens", "clock_prefixes",
+    "file_overrides",
 }
 _OVERRIDE_KEYS = {
     "content_sha256", "force_boundary_offsets", "suppress_boundary_offsets",
@@ -80,6 +81,7 @@ class Manifest:
     month_languages: tuple[str, ...]
     command_tokens: tuple[str, ...]
     author_tokens: dict[str, str] = field(default_factory=dict)
+    clock_prefixes: tuple[str, ...] = ()
     file_overrides: dict[str, FileOverride] = field(default_factory=dict)
 
 
@@ -226,6 +228,12 @@ def load_manifest(raw: Any, *, check_root: bool = True) -> Manifest:
     _require(isinstance(authors, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in authors.items()),
              "author_tokens must map token to label")
 
+    clock_prefixes = raw.get("clock_prefixes", [])
+    _require(isinstance(clock_prefixes, list)
+             and all(isinstance(c, str) and c.isalpha() for c in clock_prefixes),
+             "clock_prefixes must be non-empty words of letters")
+    _require(len(set(clock_prefixes)) == len(clock_prefixes), "clock_prefixes has duplicates")
+
     overrides_raw = raw.get("file_overrides", {})
     _require(isinstance(overrides_raw, dict), "file_overrides must be an object")
     overrides: dict[str, FileOverride] = {}
@@ -239,7 +247,8 @@ def load_manifest(raw: Any, *, check_root: bool = True) -> Manifest:
         timezone=tz, sensitivity=sensitivity, allow_remote_models=allow_remote,
         include_suffixes=tuple(suffixes), dialect_rules=tuple(rules),
         month_languages=tuple(languages), command_tokens=tuple(commands),
-        author_tokens=dict(authors), file_overrides=overrides,
+        author_tokens=dict(authors), clock_prefixes=tuple(clock_prefixes),
+        file_overrides=overrides,
     )
 
 
@@ -301,6 +310,7 @@ def build_parser_config(manifest: Manifest) -> dict[str, Any]:
         "month_table": month_tables(manifest.month_languages),
         "command_tokens": sorted(manifest.command_tokens),
         "author_tokens": dict(sorted(manifest.author_tokens.items())),
+        "clock_prefixes": sorted(manifest.clock_prefixes),
         "file_overrides": {
             path: {
                 "content_sha256": ov.content_sha256,
@@ -349,6 +359,7 @@ def manifest_to_json(manifest: Manifest) -> dict[str, Any]:
         "month_languages": list(manifest.month_languages),
         "command_tokens": list(manifest.command_tokens),
         "author_tokens": dict(manifest.author_tokens),
+        "clock_prefixes": list(manifest.clock_prefixes),
         "file_overrides": {
             path: {
                 "content_sha256": ov.content_sha256,

@@ -364,6 +364,73 @@ def test_plain_dialect_blocks():
     assert all(e.date_local == date(2027, 3, 12) and e.clock_start is None for e in parsed.entries)
 
 
+BOOK_CFG = config(
+    dialect_rules=BASE["dialect_rules"] + [{"prefix": "book/", "dialect": "daybook"}],
+    clock_prefixes=["Kl", "kl"],
+)
+
+
+def book(raw: bytes):
+    parsed = parse_file(raw, "book/202704xx.md", BOOK_CFG)
+    assert parsed.dialect == "daybook"
+    assert_well_formed(raw, parsed)
+    return parsed
+
+
+def test_daybook_timesheet_line_is_a_dated_range_entry():
+    raw = (b"week 14 - total 08:30 hours\n\n"
+           b"1apr2027;1000;1530;05:30;release prep\nfixed the build\n\n"
+           b"2apr2027;0900;1200;03:00;\n")
+    parsed = book(raw)
+    assert [(e.date_local, e.clock_start, e.clock_end, e.time_status) for e in parsed.entries] == [
+        (None, None, None, "unknown"),
+        (date(2027, 4, 1), time(10, 0), time(15, 30), "range"),
+        (date(2027, 4, 2), time(9, 0), time(12, 0), "range")]
+    assert parsed.entries[1].text == "1apr2027;1000;1530;05:30;release prep\nfixed the build\n"
+    assert parsed.entries[1].context_ranges == []   # the date line is the entry's own text
+    assert parsed.diagnostics == []
+
+
+def test_daybook_day_line_then_prefixed_clock_lines():
+    raw = (b"03apr2027 saturday\n"
+           b"Kl0930: standup\n"
+           b"kl1100: lunch with the team\nmore about lunch\n\n"
+           b"04apr2027\nKl10:15 call\n")
+    parsed = book(raw)
+    assert [(e.date_local, e.clock_start, e.time_status) for e in parsed.entries] == [
+        (date(2027, 4, 3), None, "date_only"),
+        (date(2027, 4, 3), time(9, 30), "minute"),
+        (date(2027, 4, 3), time(11, 0), "minute"),
+        (date(2027, 4, 4), None, "date_only"),
+        (date(2027, 4, 4), time(10, 15), "minute")]
+    assert parsed.entries[2].text == "kl1100: lunch with the team\nmore about lunch\n"
+    assert parsed.diagnostics == []
+
+
+@pytest.mark.parametrize("line", [
+    b"1apr2027 was a long day",      # a day line carries at most one word after the date
+    b"Ab0930: not a configured prefix",
+    b"Kl0930 standup",               # four digits need the colon
+])
+def test_daybook_prose_stays_undated(line):
+    parsed = book(line + b"\n")
+    assert [(e.date_local, e.clock_start) for e in parsed.entries] == [(None, None)]
+
+
+def test_daybook_clock_prefix_needs_configuration():
+    parsed = parse_file(b"1apr2027\nKl0930: standup\n", "book/x.md", config(
+        dialect_rules=[{"prefix": "book/", "dialect": "daybook"}]))
+    assert [e.clock_start for e in parsed.entries] == [None]
+
+
+def test_daybook_order_diagnostics():
+    assert codes(book(b"2apr2027\n\n1apr2027\n")) == ["date_regression"]
+    assert codes(book(b"1apr2027\nKl1100: b\nKl0930: a\n")) == ["clock_regression"]
+    assert codes(book(b"1foo2027\n")) == ["unknown_month"]
+    assert codes(book(b"31apr2027\n")) == ["invalid_date"]
+    assert codes(book(b"1apr2027\nKl2575: late\n")) == ["invalid_time"]
+
+
 # --- one fixture per diagnostic code ------------------------------------------------------
 
 

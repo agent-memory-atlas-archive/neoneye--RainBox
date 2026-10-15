@@ -22,7 +22,7 @@ capability. Test it on synthetic data, then pilot one real month in the sandbox.
 
 | In scope | Deferred |
 |---|---|
-| Directory-selected `timed`, `daily`, `changelog`, `plain` parsers | Automatic dialect classification, non-UTF-8 conversion |
+| Directory-selected `timed`, `daily`, `changelog`, `daybook`, `plain` parsers | Automatic dialect classification, non-UTF-8 conversion |
 | Immutable bytes, versioned parses, bounded passages and citations | Cross-file entity resolution and causal relationships |
 | Literal/identifier search, FTS, optional local passage embeddings | Event/addressee extraction and generated sensitivity classification |
 | Search, literal lookup, dated timeline and citation read | A dedicated comparison planner; use a timeline or successive reads meanwhile |
@@ -188,6 +188,10 @@ Validation and defaults:
 - `command_tokens` supply hints only when the first body token exactly matches
   and is outside pasted text. `/tmp` is not a command unless configured. `IDEA:`
   is an idea marker, not proof of an addressee. Neither hint activates behavior.
+- `clock_prefixes` lists the words (letters only, case-sensitive) that open a
+  `daybook` clock line such as `Kl0930:`. The default is none, so a daybook
+  has no clock lines until the manifest names its prefix; the word is the
+  writer's language, not the parser's.
 
 Keep immutable parser configuration on each generation. Its SHA-256 fingerprint
 covers canonical JSON, parser/identifier versions, chunk cap and the
@@ -435,6 +439,7 @@ inspection shows a false split. No content is discarded to resolve ambiguity.
 | `timed` | Valid `YYYYMMDD` line at column zero, optionally followed by `;` and a trailer about the day (`20270901;all day`), which stays in the header's context range; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
 | `daily` | Filename stem exactly `YYYY_MM_DD`; valid `HHMM`, `HH:MM` or `H:MM` at column zero at file start or immediately after an empty line | Blank lines within a record remain in it; a candidate inside a protected span is suppressed |
 | `changelog` | Valid `DD-month-YYYY` or `DD-MM-YYYY` plus whitespace and one author token, optionally followed by whitespace and an angle-bracketed contact (`<kreese@example.org>`); top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
+| `daybook` | Valid `DDmonthYYYY` at column zero (month name glued, from the configured tables), alone, followed by one word (`03apr2027 saturday`), or by `;` fields where a leading `;HHMM;HHMM` is the entry's start and stop (`1apr2027;1000;1530;05:30;note`); a configured clock prefix followed by `HHMM:` or `H:MM` at column zero | The day line opens an entry and stays its text, so a weekday or a timesheet note is searchable; it has no separate header range |
 | `plain` | Nonempty blank-line-separated blocks | No inferred clock; use an unambiguous filename date if present |
 
 For recognition only, remove the line ending and trailing spaces/tabs. An empty
@@ -444,7 +449,7 @@ bytes from stored text. Validate days/months/leap years and hours `00–23`, min
 only complete stems `YYYYMMDD`, `YYYY_MM_DD`, or `DD-MM-YYYY`. Month-name headers
 use the configured tables. Do not find dates by scanning arbitrary body prose.
 
-For `timed` and `changelog`, a valid header takes precedence over a filename date;
+For `timed`, `changelog` and `daybook`, a valid header takes precedence over a filename date;
 a mismatch emits `filename_header_mismatch`. For `daily`, an invalid filename
 falls back to plain undated blocks with `invalid_daily_filename`. Unknown author
 tokens remain literal tokens and never default to operator authorship.
@@ -453,11 +458,11 @@ Order is the parser's cheapest ambiguity signal. A four-digit prose line
 such as a year (`2027` is a valid `20h27`) or an eight-digit order number
 can pass the header grammar, but it rarely also fits the file's sequence.
 The parser therefore checks each accepted header against its predecessor in
-the same file: in `timed` and `daily`, a clock earlier than the latest clock
+the same file: in `timed`, `daily` and `daybook`, a clock earlier than the latest clock
 so far on the same date emits `clock_regression` — except a crossing of
 midnight (a latest clock at or after 18:00 followed by one before 06:00, or
-an hour-24 clock), which is a late night, not an ambiguity; in `timed`, a date
-earlier than the previous date emits `date_regression`, and in `changelog`
+an hour-24 clock), which is a late night, not an ambiguity; in `timed` and
+`daybook`, a date earlier than the previous date emits `date_regression`, and in `changelog`
 (newest first) a date *later* than the previous one does. The boundary is
 still accepted, because diaries are occasionally written out of order, and
 the diagnostic carries both offsets so `parse --dry-run` lists exactly the

@@ -63,6 +63,9 @@ def test_valid_manifest_normalizes_prefixes():
                         {"prefix": "a/", "dialect": "daily"}]}, "duplicate prefix"),
     ({"month_languages": ["xx-notalanguage"]}, "month language"),
     ({"command_tokens": ["two words"]}, "command_tokens"),
+    ({"clock_prefixes": ["two words"]}, "clock_prefixes"),
+    ({"clock_prefixes": ["at9"]}, "clock_prefixes"),
+    ({"clock_prefixes": [""]}, "clock_prefixes"),
 ])
 def test_invalid_manifests_name_the_field(changes, fragment):
     with pytest.raises(ManifestError, match=fragment):
@@ -122,5 +125,6 @@ def test_fingerprint_covers_parse_inputs_not_policy():
     assert base == config_fingerprint(build_parser_config(manifest()))
     assert base != config_fingerprint(build_parser_config(manifest(timezone="UTC")))
     assert base != config_fingerprint(build_parser_config(manifest(month_languages=["en"])))
+    assert base != config_fingerprint(build_parser_config(manifest(clock_prefixes=["at"])))
     assert base == config_fingerprint(build_parser_config(manifest(allow_remote_models=True)))
     assert base == config_fingerprint(build_parser_config(manifest(sensitivity="secret")))

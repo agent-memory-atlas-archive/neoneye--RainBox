@@ -399,6 +399,9 @@ def _ensure_diary_schema() -> None:
             "REFERENCES diary_generation (uuid, file_uuid) "
             "DEFERRABLE INITIALLY DEFERRED"))
         db.session.commit()
+    _ensure_membership_check("diary_generation", "ck_diary_generation_dialect", "dialect",
+                             DIARY_DIALECTS)
+    db.session.commit()
 
 
 def init_db(app: Flask) -> None:

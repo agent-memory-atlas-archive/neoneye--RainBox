@@ -56,6 +56,12 @@ DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$|^(\d{1,2}):(\d{2})$")
 CHANGELOG_HEADER = re.compile(
     r"^(\d{1,2})-(\d{1,2}|[^\s\d-]+)-(\d{4})[ \t]+([^\s<]\S*)(?:[ \t]+<[^\s<>]+>)?$")
 CHANGELOG_BULLET = re.compile(r"^\*[ \t]")
+# `1apr2027`, `03apr2027 saturday`, or a timesheet row
+# `1apr2027;1000;1530;05:30;note` whose first two fields are start and stop.
+DAYBOOK_DATE = re.compile(r"^(\d{1,2})([^\W\d_]+)(\d{4})(?:(;[^\r\n]*)|[ \t]+\S+)?$")
+DAYBOOK_SPAN = re.compile(r"^;(\d{2})(\d{2});(\d{2})(\d{2})(?:[;:]|$)")
+# After a configured clock prefix: `0930:` or `9:30` / `09:30`.
+DAYBOOK_CLOCK = r"(?:(\d{2})(\d{2}):|(\d{1,2}):(\d{2})(?=[: \t]|$))"
 FILENAME_DATE = (
     re.compile(r"^(\d{4})(\d{2})(\d{2})$"),
     re.compile(r"^(\d{4})_(\d{2})_(\d{2})$"),
@@ -307,6 +313,10 @@ class _Parser:
         self.lines = text.lines
         self.diags: list[Diagnostic] = []
         self.months: dict[str, int] = config.get("month_table", {})
+        prefixes = config.get("clock_prefixes", [])
+        self.daybook_clock = re.compile(
+            "^(?:" + "|".join(re.escape(p) for p in prefixes) + ")" + DAYBOOK_CLOCK
+        ) if prefixes else None
         self.tz = ZoneInfo(config["timezone"]) if config.get("timezone") else None
         self.cap: int = config.get("passage_cap", 600)
         self.file_date = filename_date(path)
@@ -404,7 +414,36 @@ class _Parser:
                     self.diags.append(Diagnostic("invalid_date", line.byte_start))
                 return None
             return _Marker("date", date=d, author=m[4])
+        if self.dialect == "daybook":
+            return self._daybook_day(line, report=report)
         return None
+
+    def _daybook_day(self, line: _Line, *, report: bool) -> _Marker | None:
+        """A daybook day line opens an entry that owns it: what follows the
+        date (a weekday, a timesheet row's note) stays searchable text."""
+        m = DAYBOOK_DATE.match(line.rec)
+        if not m:
+            return None
+        month = self.months.get(m[2].casefold())
+        if month is None:
+            if report:
+                self.diags.append(Diagnostic("unknown_month", line.byte_start))
+            return None
+        d = _valid_date(int(m[3]), month, int(m[1]))
+        if d is None:
+            if report:
+                self.diags.append(Diagnostic("invalid_date", line.byte_start))
+            return None
+        span = DAYBOOK_SPAN.match(m[4] or "")
+        if span:
+            start = _clock24(int(span[1]), int(span[2]))
+            end = _clock24(int(span[3]), int(span[4]))
+            if start is not None and end is not None:
+                return _Marker("start", date=d, clock_start=start[0], start_wraps=start[1],
+                               clock_end=end[0], end_wraps=end[1])
+            if report:
+                self.diags.append(Diagnostic("invalid_time", line.byte_start))
+        return _Marker("start", date=d)
 
     def entry_marker(self, i: int, *, report: bool, relaxed: bool = False) -> _Marker | None:
         """An entry-opening marker line of this dialect, or None. `relaxed`
@@ -445,6 +484,17 @@ class _Parser:
             if CHANGELOG_BULLET.match(line.text):
                 return _Marker("start")
             return None
+        if self.dialect == "daybook" and self.daybook_clock is not None:
+            m = self.daybook_clock.match(rec)
+            if not m:
+                return None
+            hour, minute = (m[1], m[2]) if m[1] is not None else (m[3], m[4])
+            clock = _clock24(int(hour), int(minute))
+            if clock is None:
+                if report:
+                    self.diags.append(Diagnostic("invalid_time", line.byte_start))
+                return None
+            return _Marker("start", clock_start=clock[0], start_wraps=clock[1])
         return None
 
     def boundary_shaped(self, i: int) -> bool:
@@ -596,7 +646,7 @@ class _Parser:
         prev_clock: tuple[date | None, int, int, int, int] | None = None
         for i, ln in enumerate(self.lines):
             marker = markers[i]
-            if marker is not None and marker.kind == "date":
+            if marker is not None and marker.date is not None:
                 cur = None
                 if (self.file_date is not None and marker.date != self.file_date
                         and not mismatch_reported):
@@ -610,11 +660,16 @@ class _Parser:
                         self.diags.append(Diagnostic("date_regression", ln.byte_start,
                                                      {"previous_byte_offset": prev_header_byte}))
                 prev_header_date, prev_header_byte = marker.date, ln.byte_start
+                # A daybook day line is a dated entry start: the line is the
+                # entry's own text, not a separate header range.
+                owned = marker.kind == "start"
                 ctx = {"date": marker.date, "basis": "header",
-                       "header": (ln.byte_start, ln.byte_end), "author": marker.author}
-                groups.append({"kind": "header", "first": i, "last": i})
+                       "header": None if owned else (ln.byte_start, ln.byte_end),
+                       "author": marker.author}
                 prev_clock = None if self.dialect == "timed" else prev_clock
-                continue
+                if not owned:
+                    groups.append({"kind": "header", "first": i, "last": i})
+                    continue
             if marker is not None and marker.kind == "start":
                 if marker.clock_start is not None:
                     prev_clock = self._check_clock_order(marker, ctx["date"], ln.byte_start,
