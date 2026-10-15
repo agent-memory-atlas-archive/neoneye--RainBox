@@ -46,7 +46,8 @@ PROTECTED_REGION_CAP = 16_384
 
 TERMINAL_START = re.compile(r"^(?:\$[ \t]|[A-Za-z0-9_.@-]+:[~/][^\r\n]*?[#$](?:[ \t]|$))")
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-TIMED_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
+# `20270901`, or with a semicolon trailer about the day: `20270901;all day`.
+TIMED_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2})(?:;[^\r\n]*)?$")
 TIMED_TIME = re.compile(r"^(\d{2})h(\d{2})(?:[ \t]*-[ \t]*(\d{2})h(\d{2}))?$")
 # `0830`, or with a colon: `08:30`, `8:30`.
 DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$|^(\d{1,2}):(\d{2})$")

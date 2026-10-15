@@ -432,7 +432,7 @@ inspection shows a false split. No content is discarded to resolve ambiguity.
 
 | Dialect | Exact boundary rule | Other text |
 |---|---|---|
-| `timed` | Valid `YYYYMMDD` line at column zero; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
+| `timed` | Valid `YYYYMMDD` line at column zero, optionally followed by `;` and a trailer about the day (`20270901;all day`), which stays in the header's context range; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
 | `daily` | Filename stem exactly `YYYY_MM_DD`; valid `HHMM`, `HH:MM` or `H:MM` at column zero at file start or immediately after an empty line | Blank lines within a record remain in it; a candidate inside a protected span is suppressed |
 | `changelog` | Valid `DD-month-YYYY` or `DD-MM-YYYY` plus whitespace and one author token, optionally followed by whitespace and an angle-bracketed contact (`<kreese@example.org>`); top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
 | `plain` | Nonempty blank-line-separated blocks | No inferred clock; use an unambiguous filename date if present |

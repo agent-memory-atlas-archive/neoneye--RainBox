@@ -413,6 +413,26 @@ def test_fence_breaker_closes_before_next_date_header():
     assert parsed.entries[-1].date_local == date(2027, 3, 13)
 
 
+def test_timed_date_line_with_semicolon_trailer():
+    raw = (b"20270901;all day\nwent hiking\n\n"
+           b"20270902;6h30m\n09h00\nwrote the report\n")
+    parsed = parse_file(raw, "current/202709xx.md", CFG)
+    assert [(e.date_local, e.clock_start) for e in parsed.entries] == [
+        (date(2027, 9, 1), None), (date(2027, 9, 2), time(9, 0))]
+    assert parsed.diagnostics == []
+
+
+@pytest.mark.parametrize("line", [b"20270901 all day", b"20270901all day", b"2027090;all day"])
+def test_timed_date_line_needs_semicolon_before_trailer(line):
+    parsed = parse_file(line + b"\nwent hiking\n", "current/x.txt", CFG)
+    assert parsed.entries and all(e.date_local is None for e in parsed.entries)
+
+
+def test_timed_invalid_date_with_trailer_is_diagnosed():
+    parsed = parse_file(b"20271301;all day\nwent hiking\n", "current/x.txt", CFG)
+    assert codes(parsed) == ["invalid_date"]
+
+
 @pytest.mark.parametrize("header, expected", [
     (b"27-juli-2027 kreese <kreese@example.org>", date(2027, 7, 27)),
     (b"27-juli-2027 kreese\t<kreese@example.org>  ", date(2027, 7, 27)),
