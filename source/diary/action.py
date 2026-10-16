@@ -19,6 +19,7 @@ from diary.retrieval import (
     DiaryContext,
     DiaryRequest,
     DiaryResult,
+    PhaseLog,
     create_cursor,
     current_manifest,
     load_cursor,
@@ -123,34 +124,39 @@ def diary_query(args: Any, ctx: DiaryContext, *,
                 journal_id: UUID | None = None,
                 record_telemetry: bool = True) -> DiaryObservation:
     t0 = _time.monotonic()
-    try:
-        req = validate_request(args)
-    except DiaryRequestError as exc:
-        return _error("invalid_request", str(exc))
-    budget = budget if budget is not None else observation_budget()
+    log = PhaseLog()
+    with log.phase("request"):
+        try:
+            req = validate_request(args)
+        except DiaryRequestError as exc:
+            return _error("invalid_request", str(exc))
+        budget = budget if budget is not None else observation_budget()
 
-    position = frozen = None
-    if req.mode == "continue":
-        err, cursor = load_cursor(req.cursor, ctx)
-        if err is not None:
-            return _error(err)
-        req = DiaryRequest.from_json(cursor.request)
-        position = dict(cursor.position)
-        frozen = position.pop("candidates", None)
+        position = frozen = None
+        if req.mode == "continue":
+            err, cursor = load_cursor(req.cursor, ctx)
+            if err is not None:
+                return _error(err)
+            req = DiaryRequest.from_json(cursor.request)
+            position = dict(cursor.position)
+            frozen = position.pop("candidates", None)
 
-    result = _run_revalidated(req, ctx, embed_query, position, frozen)
+    embed = log.recording(embed_query) if embed_query is not None else None
+    result = _run_revalidated(req, ctx, embed, position, frozen, log)
     if not result.ok:
         return _error(result.error or "unavailable")
-    rendered = render_items(result, budget)
-    next_cursor = None
-    if rendered.has_more:
-        if rendered.first_unrendered is not None:
-            pos = result.items[rendered.first_unrendered].resume
-        else:
-            pos = result.after_last
-        if pos is not None:
-            next_cursor = create_cursor(ctx, req, result.catalog_manifest, pos, result.candidates)
-    text = with_cursor(rendered.text, str(next_cursor)) if next_cursor else rendered.text
+    with log.phase("render"):
+        rendered = render_items(result, budget)
+        next_cursor = None
+        if rendered.has_more:
+            if rendered.first_unrendered is not None:
+                pos = result.items[rendered.first_unrendered].resume
+            else:
+                pos = result.after_last
+            if pos is not None:
+                next_cursor = create_cursor(ctx, req, result.catalog_manifest, pos,
+                                            result.candidates)
+        text = with_cursor(rendered.text, str(next_cursor)) if next_cursor else rendered.text
 
     injected = [it.citation for it in rendered.rendered]
     data = {
@@ -167,20 +173,24 @@ def diary_query(args: Any, ctx: DiaryContext, *,
         "budget": budget, "chars": len(text),
     }
     if record_telemetry:
-        _telemetry(req, ctx, result, rendered.rendered, journal_id)
+        with log.phase("telemetry"):
+            _telemetry(req, ctx, result, rendered.rendered, journal_id)
+    data["timing"] = log.timing()
     return DiaryObservation(ok=True, text=text, compact=rendered.compact, data=data)
 
 
 def _run_revalidated(req: DiaryRequest, ctx: DiaryContext, embed_query: Any,
-                     position: Any, frozen: Any) -> DiaryResult:
+                     position: Any, frozen: Any, log: PhaseLog) -> DiaryResult:
     """Retrieve, then re-read the versions of every source it used. A policy
     or catalog change in between retries once, then fails source_changed."""
     for _attempt in range(2):
         result = retrieve_diary(req, ctx, embed_query=embed_query, position=position,
-                                frozen=frozen)
+                                frozen=frozen, phases=log)
         if not result.ok:
             return result
-        if current_manifest(list(result.catalog_manifest)) == result.catalog_manifest:
+        with log.phase("revalidate"):
+            unchanged = current_manifest(list(result.catalog_manifest)) == result.catalog_manifest
+        if unchanged:
             return result
         db.session.rollback()
     return DiaryResult(ok=False, mode=req.mode, error="source_changed")

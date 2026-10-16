@@ -198,6 +198,19 @@ def test_vector_route_finds_paraphrase_lexical_misses(live, monkeypatch):
     assert "Physiotherapy" in fused.text
 
 
+def test_vector_search_records_its_query_embedding_call(live):
+    _vectors_on(live)
+    obs = diary_query({"mode": "search", "query": "physio"}, live.ctx(), budget=BUDGET,
+                      embed_query=fake_query())
+    timing = obs.data["timing"]
+    [call] = timing["embeddings"]["calls"]
+    assert call["model"] == "embeddinggemma:300m" and call["texts"] == 1
+    assert call["preview"] == ["physio"] and call["ms"] >= 0
+    vector = next(p for p in timing["phases"] if p["name"] == "vector")
+    assert vector["started_at"] <= call["requested_at"]
+    assert timing["embeddings"]["count"] == 1
+
+
 def test_outage_keeps_lexical_results(live):
     _vectors_on(live)
     obs = diary_query({"mode": "search", "query": "physiotherapy"}, live.ctx(), budget=BUDGET,

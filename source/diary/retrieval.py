@@ -10,9 +10,10 @@ turns the first unrendered item's position into a cursor (proposal §7).
 from __future__ import annotations
 
 import time as _time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -309,42 +310,112 @@ def _metadata_coverage(sources: list[Any], req: DiaryRequest, items: list[DiaryI
     return "complete"
 
 
+# --- timing ------------------------------------------------------------------------------
+
+
+#: How much of the query an embedding row keeps, as memory_query's do
+#: (llm.EMBEDDED_TEXT_CHARS): enough to tell two queries apart.
+EMBED_PREVIEW_CHARS: int = 200
+
+
+class PhaseLog:
+    """Wall-clock for the parts of one diary_query, laid out for the
+    assistant's waterfall: named phases with start times, recorded one after
+    another so they never overlap, and the query-embedding calls made inside
+    them. The waterfall draws a stretch no phase covers as unmeasured, so the
+    phases cover the whole action — the request, every route, the labels,
+    rendering and telemetry."""
+
+    def __init__(self) -> None:
+        self.phases: list[dict[str, Any]] = []
+        self.embed_calls: list[dict[str, Any]] = []
+
+    @contextmanager
+    def phase(self, name: str) -> Iterator[None]:
+        started = datetime.now(UTC)
+        t0 = _time.perf_counter()
+        try:
+            yield
+        finally:
+            self.phases.append({"name": name, "started_at": started.isoformat(),
+                                "ms": int((_time.perf_counter() - t0) * 1000)})
+
+    def recording(self, embed_query: Callable) -> Callable:
+        """`embed_query`, with each call recorded as an embedding row: the
+        diary's embedder talks to Ollama directly, so nothing else sees it."""
+        def embed(text: str, spec: dict[str, Any]) -> list[float]:
+            started = datetime.now(UTC)
+            t0 = _time.perf_counter()
+            try:
+                return embed_query(text, spec)
+            finally:
+                self.embed_calls.append({
+                    "model": spec.get("model"), "requested_at": started.isoformat(),
+                    "ms": int((_time.perf_counter() - t0) * 1000),
+                    "texts": 1, "chars": len(text),
+                    "preview": [text[:EMBED_PREVIEW_CHARS]]})
+        return embed
+
+    def timing(self) -> dict[str, Any]:
+        """The observation's `timing` block, in memory_query's shape."""
+        calls = self.embed_calls
+        return {"phases": self.phases, "embeddings": {
+            "count": len(calls), "ms": sum(c["ms"] for c in calls),
+            "chars": sum(c["chars"] for c in calls),
+            "models": sorted({c["model"] for c in calls if c.get("model")}),
+            "calls": calls, "dropped": 0}}
+
+
 # --- entry point -----------------------------------------------------------------------
 
 
 def retrieve_diary(req: DiaryRequest, ctx: DiaryContext, *,
                    embed_query: Callable[[str], list[float]] | None = None,
                    position: dict[str, Any] | None = None,
-                   frozen: list[str] | None = None) -> DiaryResult:
+                   frozen: list[str] | None = None,
+                   phases: PhaseLog | None = None) -> DiaryResult:
     """Run one request. `position`/`frozen` come from a cursor."""
+    log = phases if phases is not None else PhaseLog()
     t0 = _time.monotonic()
     if req.mode == "read" and position is None:
-        result = read_citation(req, ctx)
+        with log.phase("read"):
+            result = read_citation(req, ctx)
     else:
-        sources = eligible_sources(ctx, req.source)
+        with log.phase("sources"):
+            sources = eligible_sources(ctx, req.source)
         if not sources:
             return DiaryResult(ok=False, mode=req.mode, error="unavailable")
-        if req.mode == "literal":
-            result = _literal(req, sources, position)
-        elif req.mode == "timeline":
-            result = _timeline(req, sources, position)
-        elif req.mode == "search":
-            result = _search(req, sources, embed_query, position, frozen, ctx.vector_mode_override)
-        elif req.mode == "read":
-            result = _read_forward(sources, position or {})
+        if req.mode == "search":
+            result = _search(req, sources, embed_query, position, frozen,
+                             ctx.vector_mode_override, log)
+        elif req.mode in ("literal", "timeline", "read"):
+            with log.phase(req.mode):
+                if req.mode == "literal":
+                    result = _literal(req, sources, position)
+                elif req.mode == "timeline":
+                    result = _timeline(req, sources, position)
+                else:
+                    result = _read_forward(sources, position or {})
         else:
             return DiaryResult(ok=False, mode=req.mode, error="invalid_request")
         if result.ok:
-            result.catalog_manifest = catalog_manifest(sources)
-            result.metadata = _metadata_coverage(sources, req, result.items)
-            snaps = _snapshot_times(sources)
-            labels = {s.uuid: (s.config or {}).get("author_tokens", {}) for s in sources}
-            for it in result.items:
-                it.snapshot_at = snaps.get(it.source_uuid)
-                if it.author_token:
-                    it.author_label = labels.get(it.source_uuid, {}).get(it.author_token)
+            with log.phase("labels"):
+                _label(result, sources, req)
     result.timings_ms["total"] = int((_time.monotonic() - t0) * 1000)
     return result
+
+
+def _label(result: DiaryResult, sources: list[Any], req: DiaryRequest) -> None:
+    """What every item carries besides its text: the catalog versions, the
+    coverage verdict, snapshot times and author labels."""
+    result.catalog_manifest = catalog_manifest(sources)
+    result.metadata = _metadata_coverage(sources, req, result.items)
+    snaps = _snapshot_times(sources)
+    labels = {s.uuid: (s.config or {}).get("author_tokens", {}) for s in sources}
+    for it in result.items:
+        it.snapshot_at = snaps.get(it.source_uuid)
+        if it.author_token:
+            it.author_label = labels.get(it.source_uuid, {}).get(it.author_token)
 
 
 # --- literal -----------------------------------------------------------------------------
@@ -563,7 +634,8 @@ def _same_entry(key: dict, position: dict) -> bool:
 
 def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
             position: dict | None, frozen: list[str] | None,
-            vector_override: str | None = None) -> DiaryResult:
+            vector_override: str | None = None, log: PhaseLog | None = None) -> DiaryResult:
+    log = log if log is not None else PhaseLog()
     assert req.query is not None
     result = DiaryResult(ok=True, mode="search")
     if frozen is None:
@@ -572,7 +644,8 @@ def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
                             ("joined", _joined_route), ("fuzzy", _fuzzy_route),
                             ("variants", _variants_route)):
             t0 = _time.monotonic()
-            ranks[name] = {str(pid): i + 1 for i, pid in enumerate(route(req, sources))}
+            with log.phase(name):
+                ranks[name] = {str(pid): i + 1 for i, pid in enumerate(route(req, sources))}
             result.timings_ms[name] = int((_time.monotonic() - t0) * 1000)
         if vector_override is not None:
             vector_sources = [s for s in sources if vector_override != "off" and s.embedding_spec]
@@ -583,22 +656,26 @@ def _search(req: DiaryRequest, sources: list[Any], embed_query: Callable | None,
             if embed_query is None:
                 result.degraded_routes.append("vector_unavailable")
             else:
-                try:
-                    from diary.embeddings import vector_route
-                    ids = vector_route(req, vector_sources, embed_query, _params(sources, req),
-                                       _date_sql(req), mode_override=vector_override)
-                    ranks["vector"] = {str(pid): i + 1 for i, pid in enumerate(ids)}
-                except Exception:   # noqa: BLE001 — a vector failure never removes lexical results
-                    db.session.rollback()
-                    result.degraded_routes.append("vector_failed")
+                with log.phase("vector"):
+                    try:
+                        from diary.embeddings import vector_route
+                        ids = vector_route(req, vector_sources, embed_query,
+                                           _params(sources, req), _date_sql(req),
+                                           mode_override=vector_override)
+                        ranks["vector"] = {str(pid): i + 1 for i, pid in enumerate(ids)}
+                    except Exception:   # noqa: BLE001 — a vector failure never removes lexical results
+                        db.session.rollback()
+                        result.degraded_routes.append("vector_failed")
             result.timings_ms["vector"] = int((_time.monotonic() - t0) * 1000)
-        weights = {"fts": _lexical_coverage(req.query, sources), "variants": VARIANT_WEIGHT}
-        frozen = _fuse(ranks, sources, weights)
+        with log.phase("fuse"):
+            weights = {"fts": _lexical_coverage(req.query, sources), "variants": VARIANT_WEIGHT}
+            frozen = _fuse(ranks, sources, weights)
         result.route_ranks = ranks
     result.candidates = frozen
     start = (position or {}).get("index", 0)
     result.total_candidates = len(frozen)
-    groups = _load_groups(frozen, sources, _params(sources, req), req)
+    with log.phase("groups"):
+        groups = _load_groups(frozen, sources, _params(sources, req), req)
     for i in range(start, len(groups)):
         groups[i].resume = {"index": i}
     result.items = groups[start:]

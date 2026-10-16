@@ -248,6 +248,33 @@ def test_date_diagnostics_mark_results_from_their_file(live):
     assert meta(obs) == "partial"
 
 
+def _phase_spans(obs):
+    phases = obs.data["timing"]["phases"]
+    return [(p["name"], datetime.fromisoformat(p["started_at"]), p["ms"]) for p in phases]
+
+
+@pytest.mark.parametrize("args", [
+    {"mode": "timeline", "date_from": "1999-03-12", "date_to": "1999-03-13"},
+    {"mode": "search", "query": "physiotherapy exercises"},
+    {"mode": "literal", "query": "Edit::VSpace#move_left"},
+])
+def test_a_query_records_timed_phases_that_tile_the_action(live, args):
+    """The assistant's waterfall draws an action's own time from its phases;
+    a stretch no phase covers is drawn as unmeasured."""
+    obs = live.q(**args)
+    spans = _phase_spans(obs)
+    names = [n for n, _, _ in spans]
+    assert {"request", "labels", "render"} <= set(names)
+    if args["mode"] == "search":
+        assert {"identifier", "fts", "joined", "fuzzy", "variants"} <= set(names)
+    else:
+        assert args["mode"] in names
+    for (_, a, a_ms), (_, b, _) in zip(spans, spans[1:]):
+        assert a + timedelta(milliseconds=a_ms) <= b + timedelta(milliseconds=1)   # disjoint
+    covered = sum(ms for _, _, ms in spans)
+    assert obs.data["timings_ms"]["action"] - covered <= 50
+
+
 def test_literal_pages_without_skips_or_duplicates(live):
     body = "".join(f"19980301\n{h:02d}h00\nrepeat marker {h}\n\n" for h in range(0, 24))
     live.write("current/1998.txt", body)
