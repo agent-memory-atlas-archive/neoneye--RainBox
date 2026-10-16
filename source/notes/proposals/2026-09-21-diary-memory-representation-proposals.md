@@ -728,8 +728,17 @@ passage.
 
 Coverage uses two fields: `enumeration = complete|partial|not_applicable` and
 `metadata = complete|partial`. Timeline/read can enumerate completely; ranked
-search always uses `not_applicable`. Quarantine, undated material and unresolved
-parsing diagnostics make metadata partial within the requested sources. Report
+search always uses `not_applicable`. Metadata is partial when something may be
+missing or mislabeled: within the requested sources, a quarantined file or an
+ingest problem (a held or unstable file); under a date filter, undated
+entries anywhere, or a date-affecting diagnostic (`invalid_date`,
+`invalid_time`, `unknown_month`, `filename_header_mismatch`,
+`date_regression`) in a file with entries in the range, since a misdated
+entry sits near its neighbours' dates and can fall outside the range;
+without one, a date-affecting diagnostic in a file the result came from. Diagnostics about boundaries or order alone
+(`clock_regression`, terminal and fence regions, overrides) leave every label
+standing and the metadata complete — a diary written out of order on purpose
+must not caveat every answer. Report
 counts only for sources the caller may see. “No outcome found” is not proof that
 no outcome exists.
 

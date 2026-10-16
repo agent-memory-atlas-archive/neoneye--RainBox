@@ -40,6 +40,12 @@ DIAGNOSTIC_CODES = frozenset({
     "invalid_time", "unknown_month", "filename_header_mismatch",
     "invalid_daily_filename", "clock_regression", "date_regression",
 })
+# The codes after which an entry's date or clock label may be wrong. The
+# others flag boundaries or order worth inspecting; the labels stand.
+DATE_DIAGNOSTIC_CODES = frozenset({
+    "invalid_date", "invalid_time", "unknown_month", "filename_header_mismatch",
+    "date_regression",
+})
 # How far an unmatched fence opener (or a likely terminal region) protects
 # before the circuit breaker closes it.
 PROTECTED_REGION_CAP = 16_384

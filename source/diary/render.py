@@ -112,7 +112,7 @@ def _status(result: DiaryResult, n: int, has_more: bool) -> str:
     if result.degraded_routes:
         notes.append("degraded: " + ", ".join(result.degraded_routes))
     if result.metadata == "partial":
-        notes.append("some files are quarantined, undated or have parse diagnostics")
+        notes.append("some files are quarantined, undated or have date problems")
     if notes:
         line += " (" + "; ".join(notes) + ")"
     return line + "."

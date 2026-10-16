@@ -212,6 +212,35 @@ def test_date_filter_applies_before_the_cap(live):
     assert "alpha last" in obs.text and "alpha extra" not in obs.text
 
 
+def meta(obs) -> str:
+    return obs.data["coverage"]["metadata"]
+
+
+def test_ordering_and_boundary_diagnostics_leave_metadata_complete(live):
+    live.write("current/2028.txt", "20280105\n10h00\nsecond errand\n09h00\nfirst errand\n"
+                                   "```\nunclosed fence\n")
+    live.resync()
+    obs = live.q(mode="literal", query="errand")
+    assert obs.ok and "first errand" in obs.text
+    assert meta(obs) == "complete"
+    assert "date problems" not in obs.text
+
+
+def test_date_diagnostics_mark_results_from_their_file(live):
+    live.write("current/2028.txt", "20280105\n09h00\nquiet errand\n")
+    live.write("current/2029.txt", "20290105\n09h00\nnoisy errand\n\n20291301\n10h00\nlate errand\n")
+    live.resync()
+    obs = live.q(mode="literal", query="noisy errand")
+    assert meta(obs) == "partial" and "date problems" in obs.text
+    # Unfiltered: only the files a result came from can mislabel it.
+    assert meta(live.q(mode="literal", query="quiet errand")) == "complete"
+    # Filtered: a file with entries in the range could hold a misdated match.
+    obs = live.q(mode="literal", query="quiet errand", date_from="2028-01-05", date_to="2028-01-05")
+    assert meta(obs) == "complete"
+    obs = live.q(mode="timeline", date_from="2029-01-05", date_to="2029-01-05")
+    assert meta(obs) == "partial"
+
+
 def test_literal_pages_without_skips_or_duplicates(live):
     body = "".join(f"20280301\n{h:02d}h00\nrepeat marker {h}\n\n" for h in range(0, 24))
     live.write("current/2028.txt", body)

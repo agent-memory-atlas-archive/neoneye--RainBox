@@ -19,7 +19,8 @@ import sqlalchemy as sa
 
 import db
 from diary.citations import format_citation, parse_citation
-from diary.parsing import find_identifiers, sha256_hex
+from diary.parsing import (DATE_DIAGNOSTIC_CODES, DIAGNOSTIC_CODES, find_identifiers,
+                           sha256_hex)
 
 ROUTE_CAP = 20
 TIMELINE_BATCH = 30
@@ -244,23 +245,50 @@ def _snapshot_times(sources: list[Any]) -> dict[UUID, datetime | None]:
     return {r[0]: r[1] for r in rows}
 
 
-def _metadata_coverage(sources: list[Any], req: DiaryRequest) -> str:
-    """partial when quarantined files, unresolved diagnostics, or (under a
-    date filter) undated entries exist within the requested sources."""
+_HAS_CODE = ("EXISTS (SELECT 1 FROM jsonb_array_elements(f.diagnostics) d "
+             "WHERE d->>'code' = ANY(:codes))")
+_HAS_OTHER_CODE = ("EXISTS (SELECT 1 FROM jsonb_array_elements(f.diagnostics) d "
+                   "WHERE NOT d->>'code' = ANY(:parse_codes))")
+
+
+def _metadata_coverage(sources: list[Any], req: DiaryRequest, items: list[DiaryItem]) -> str:
+    """partial when something may be missing or mislabeled: within the
+    requested sources, a quarantined file or an ingest problem (a held or
+    unstable file); under a date filter, undated entries anywhere, or a
+    date-affecting diagnostic in a file with entries in the range (a
+    misdated entry sits near its neighbours' dates); without one, a
+    date-affecting diagnostic in a file the result came from. Diagnostics
+    about boundaries or order alone leave the labels standing."""
     ids = [s.uuid for s in sources]
     if not ids:
         return "complete"
+    params = {"s": ids, "codes": sorted(DATE_DIAGNOSTIC_CODES),
+              "parse_codes": sorted(DIAGNOSTIC_CODES)}
+    filtered = req.date_from is not None
     bad = db.session.execute(sa.text(
-        "SELECT 1 FROM diary_file WHERE source_uuid = ANY(:s) AND "
-        "(availability = 'quarantined' OR jsonb_array_length(diagnostics) > 0) LIMIT 1"),
-        {"s": ids}).first()
+        "SELECT 1 FROM diary_file f WHERE f.source_uuid = ANY(:s) AND "
+        f"(f.availability = 'quarantined' OR {_HAS_OTHER_CODE}) LIMIT 1"), params).first()
     if bad is not None:
         return "partial"
-    if req.date_from is not None:
+    if filtered:
         undated = db.session.execute(sa.text(
             "SELECT 1 " + _ELIGIBLE_ENTRIES + " AND e.date_local IS NULL LIMIT 1"),
             {"sources": ids}).first()
         if undated is not None:
+            return "partial"
+        in_range = db.session.execute(sa.text(
+            "SELECT 1 " + _ELIGIBLE_ENTRIES + _DATE_FILTER + " AND " + _HAS_CODE + " LIMIT 1"),
+            {**_params(sources, req), "codes": params["codes"]}).first()
+        return "partial" if in_range is not None else "complete"
+    touched = sorted({(it.source_uuid, it.path) for it in items})
+    if touched:
+        hit = db.session.execute(sa.text(
+            "SELECT 1 FROM diary_file f WHERE (f.source_uuid, f.relative_path) IN "
+            "(SELECT * FROM unnest(CAST(:ts AS uuid[]), CAST(:tp AS text[]))) AND "
+            + _HAS_CODE + " LIMIT 1"),
+            {"ts": [t[0] for t in touched], "tp": [t[1] for t in touched],
+             "codes": params["codes"]}).first()
+        if hit is not None:
             return "partial"
     return "complete"
 
@@ -292,7 +320,7 @@ def retrieve_diary(req: DiaryRequest, ctx: DiaryContext, *,
             return DiaryResult(ok=False, mode=req.mode, error="invalid_request")
         if result.ok:
             result.catalog_manifest = catalog_manifest(sources)
-            result.metadata = _metadata_coverage(sources, req)
+            result.metadata = _metadata_coverage(sources, req, result.items)
             snaps = _snapshot_times(sources)
             for it in result.items:
                 it.snapshot_at = snaps.get(it.source_uuid)
