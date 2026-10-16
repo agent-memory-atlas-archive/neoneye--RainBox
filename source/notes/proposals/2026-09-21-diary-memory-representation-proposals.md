@@ -195,6 +195,11 @@ Validation and defaults:
   `daybook` clock line such as `Kl0930:`. The default is none, so a daybook
   has no clock lines until the manifest names its prefix; the word is the
   writer's language, not the parser's.
+- `decimal_hour_spans` (default false) reads a `daybook` span line's digits
+  after the hour as hundredths of an hour, the way a timesheet adds up
+  worked time: `0875-1675` is 08:45–16:45. Without it `HHMM` is a clock and
+  `0875` is `invalid_time`. The notation is the writer's choice, so the
+  parser never guesses it from the digits.
 
 Keep immutable parser configuration on each generation. Its SHA-256 fingerprint
 covers canonical JSON, parser/identifier versions, chunk cap and the
@@ -442,7 +447,7 @@ inspection shows a false split. No content is discarded to resolve ambiguity.
 | `timed` | Valid `YYYYMMDD` line at column zero, optionally followed by `;` and a trailer about the day (`20270901;all day`), which stays in the header's context range; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
 | `daily` | Filename stem exactly `YYYY_MM_DD`; valid `HHMM`, `HH:MM` or `H:MM` at column zero at file start or immediately after an empty line | Blank lines within a record remain in it; a candidate inside a protected span is suppressed |
 | `changelog` | Valid `DD-month-YYYY`, `DD-MM-YYYY` or `YYYY-MM-DD`, then whitespace, an optional `- `, an author of one to three words and an optional angle-bracketed contact (`2027-07-27  Kim Kreese  <kim@example.org>`, the GNU form); a `YYYY-MM-DD` line may also stand alone; a release-notes header `YYYY-MM-DD:` or `YYYYMMDD:` followed by a title (`2027-12-23: Toolkit, REVISION 812`) opens an entry that owns its line, so the title stays searchable; top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
-| `daybook` | Valid `DDmonthYYYY` at column zero (month name glued, from the configured tables), alone, followed by one word (`03apr2027 saturday`), or by `;` fields where a leading `;HHMM;HHMM` is the entry's start and stop (`1apr2027;1000;1530;05:30;note`); a configured clock prefix followed by `HHMM:` or `H:MM` at column zero | The day line opens an entry and stays its text, so a weekday or a timesheet note is searchable; it has no separate header range |
+| `daybook` | A day line at column zero: `DDmonthYYYY` (month name glued, from the configured tables), alone, followed by up to three words (`03apr2027 saturday`), or by `;` fields where a leading `;HHMM;HHMM` is the entry's start and stop (`1apr2027;1000;1530;05:30;note`); `YYYY/M/D`, alone or followed by `:`, a tab or spaces and anything (`2027/4/1	7.5`); or `YYYYMMDD;` and anything (`20270401;8;note`). Entry lines: a worked span `HHMM-HHMM` followed by whitespace (`0900-1530  6.50`), a range entry, in decimal hours with `decimal_hour_spans`; a configured clock prefix followed by `HHMM:` or `H:MM` | The day line opens an entry and stays its text, so a weekday or a timesheet note is searchable; it has no separate header range |
 | `plain` | Nonempty blank-line-separated blocks | No inferred clock; use an unambiguous filename date if present |
 
 For recognition only, remove the line ending and trailing spaces/tabs. An empty

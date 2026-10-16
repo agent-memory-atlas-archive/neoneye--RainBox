@@ -72,9 +72,16 @@ CHANGELOG_ISO_HEADER = re.compile(r"^(\d{4})-(\d{2})-(\d{2})" + _CHANGELOG_AUTHO
 # header opens an entry that owns its line.
 CHANGELOG_TITLED = re.compile(r"^(?:(\d{4})-(\d{2})-(\d{2})|(\d{4})(\d{2})(\d{2})):")
 CHANGELOG_BULLET = re.compile(r"^\*[ \t]")
-# `1apr2027`, `03apr2027 saturday`, or a timesheet row
+# `1apr2027`, `03apr2027 saturday` (up to three words), or a timesheet row
 # `1apr2027;1000;1530;05:30;note` whose first two fields are start and stop.
-DAYBOOK_DATE = re.compile(r"^(\d{1,2})([^\W\d_]+)(\d{4})(?:(;[^\r\n]*)|[ \t]+\S+)?$")
+DAYBOOK_DATE = re.compile(r"^(\d{1,2})([^\W\d_]+)(\d{4})(?:(;[^\r\n]*)|(?:[ \t]+\S+){1,3})?$")
+# `2027/4/1`, alone or followed by `:`, a tab or spaces and anything.
+DAYBOOK_SLASH_DATE = re.compile(r"^(\d{4})/(\d{1,2})/(\d{1,2})(?:[:\s].*)?$")
+# `20270401;8;note`: an eight-digit day needs the semicolon.
+DAYBOOK_YMD_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2});")
+# `0900-1530  6.50`: a worked span, an entry with that range. With the
+# manifest's `decimal_hour_spans`, `0875-1675` is decimal hours, 08:45–16:45.
+DAYBOOK_SPAN_LINE = re.compile(r"^(\d{2})(\d{2})-(\d{2})(\d{2})(?=[ \t]|$)")
 DAYBOOK_SPAN = re.compile(r"^;(\d{2})(\d{2});(\d{2})(\d{2})(?:[;:]|$)")
 # After a configured clock prefix: `0930:` or `9:30` / `09:30`.
 DAYBOOK_CLOCK = r"(?:(\d{2})(\d{2}):|(\d{1,2}):(\d{2})(?=[: \t]|$))"
@@ -355,6 +362,7 @@ class _Parser:
         self.lines = text.lines
         self.diags: list[Diagnostic] = []
         self.months: dict[str, int] = config.get("month_table", {})
+        self.decimal_spans: bool = config.get("decimal_hour_spans", False)
         prefixes = config.get("clock_prefixes", [])
         self.daybook_clock = re.compile(
             "^(?:" + "|".join(re.escape(p) for p in prefixes) + ")" + DAYBOOK_CLOCK
@@ -482,6 +490,14 @@ class _Parser:
     def _daybook_day(self, line: _Line, *, report: bool) -> _Marker | None:
         """A daybook day line opens an entry that owns it: what follows the
         date (a weekday, a timesheet row's note) stays searchable text."""
+        m = DAYBOOK_SLASH_DATE.match(line.rec) or DAYBOOK_YMD_DATE.match(line.rec)
+        if m:
+            d = _valid_date(int(m[1]), int(m[2]), int(m[3]))
+            if d is None:
+                if report:
+                    self.diags.append(Diagnostic("invalid_date", line.byte_start))
+                return None
+            return _Marker("start", date=d)
         m = DAYBOOK_DATE.match(line.rec)
         if not m:
             return None
@@ -545,8 +561,19 @@ class _Parser:
             if CHANGELOG_BULLET.match(line.text):
                 return _Marker("start")
             return None
-        if self.dialect == "daybook" and self.daybook_clock is not None:
-            m = self.daybook_clock.match(rec)
+        if self.dialect == "daybook":
+            span = DAYBOOK_SPAN_LINE.match(rec)
+            if span:
+                fraction = (lambda f: round(int(f) * 0.6)) if self.decimal_spans else int
+                start = _clock24(int(span[1]), fraction(span[2]))
+                end = _clock24(int(span[3]), fraction(span[4]))
+                if start is None or end is None:
+                    if report:
+                        self.diags.append(Diagnostic("invalid_time", line.byte_start))
+                    return None
+                return _Marker("start", clock_start=start[0], start_wraps=start[1],
+                               clock_end=end[0], end_wraps=end[1])
+            m = self.daybook_clock.match(rec) if self.daybook_clock is not None else None
             if not m:
                 return None
             hour, minute = (m[1], m[2]) if m[1] is not None else (m[3], m[4])

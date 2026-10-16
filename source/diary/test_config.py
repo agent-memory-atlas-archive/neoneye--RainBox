@@ -64,6 +64,7 @@ def test_valid_manifest_normalizes_prefixes():
     ({"month_languages": ["xx-notalanguage"]}, "month language"),
     ({"command_tokens": ["two words"]}, "command_tokens"),
     ({"clock_prefixes": ["two words"]}, "clock_prefixes"),
+    ({"decimal_hour_spans": "yes"}, "decimal_hour_spans"),
     ({"file_dialects": {"daily/": "changelog"}}, "file_dialects keys are file paths"),
     ({"file_dialects": {"../x.txt": "changelog"}}, r"\.\."),
     ({"file_dialects": {"daily/x.txt": "sonnet"}}, "unknown dialect"),
@@ -129,6 +130,7 @@ def test_fingerprint_covers_parse_inputs_not_policy():
     assert base != config_fingerprint(build_parser_config(manifest(timezone="UTC")))
     assert base != config_fingerprint(build_parser_config(manifest(month_languages=["en"])))
     assert base != config_fingerprint(build_parser_config(manifest(clock_prefixes=["at"])))
+    assert base != config_fingerprint(build_parser_config(manifest(decimal_hour_spans=True)))
     assert base != config_fingerprint(build_parser_config(manifest(file_dialects={"a.txt": "plain"})))
     assert base == config_fingerprint(build_parser_config(manifest(allow_remote_models=True)))
     assert base == config_fingerprint(build_parser_config(manifest(sensitivity="secret")))

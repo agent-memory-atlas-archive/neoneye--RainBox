@@ -506,8 +506,59 @@ def test_daybook_day_line_then_prefixed_clock_lines():
     assert parsed.diagnostics == []
 
 
+def test_daybook_slash_and_semicolon_day_lines_own_their_text():
+    raw = (b"2027/4/1\t7.5\n\n2027/04/02: 8 release day\n\n2027/4/3\n\n"
+           b"20270404;8;wrote the report\n")
+    parsed = book(raw)
+    assert [e.date_local for e in parsed.entries] == [
+        date(2027, 4, 1), date(2027, 4, 2), date(2027, 4, 3), date(2027, 4, 4)]
+    assert parsed.entries[1].text == "2027/04/02: 8 release day\n"
+    assert parsed.entries[3].text == "20270404;8;wrote the report\n"
+    assert parsed.diagnostics == []
+
+
+def test_daybook_time_span_lines_are_range_entries():
+    raw = b"1apr2027 thursday week14\n0900-1530  6.50\n1600-1700  1.00 - 0.5\n"
+    parsed = book(raw)
+    assert [(e.date_local, e.clock_start, e.clock_end) for e in parsed.entries] == [
+        (date(2027, 4, 1), None, None),
+        (date(2027, 4, 1), time(9, 0), time(15, 30)),
+        (date(2027, 4, 1), time(16, 0), time(17, 0))]
+    assert parsed.diagnostics == []
+
+
+def test_daybook_decimal_hour_spans():
+    cfg = config(dialect_rules=[{"prefix": "book/", "dialect": "daybook"}],
+                 decimal_hour_spans=True)
+    raw = b"1apr2027\n0825-1675  8.50\n1700-1750  0.50\n"
+    parsed = parse_file(raw, "book/notes.md", cfg)
+    assert [(e.clock_start, e.clock_end) for e in parsed.entries] == [
+        (None, None), (time(8, 15), time(16, 45)), (time(17, 0), time(17, 30))]
+    assert parsed.diagnostics == []
+    # Read as clocks, 75 is no minute.
+    assert codes(book(raw)) == ["invalid_time"]
+
+
+@pytest.mark.parametrize("raw, code", [
+    (b"2027/13/01\t8\n", "invalid_date"),
+    (b"1apr2027\n0900-2575  6.50\n", "invalid_time"),
+])
+def test_daybook_new_forms_diagnose_invalid_values(raw, code):
+    assert codes(book(raw)) == [code]
+
+
 @pytest.mark.parametrize("line", [
-    b"1apr2027 was a long day",      # a day line carries at most one word after the date
+    b"20270401 no semicolon",        # an eight-digit day needs the `;`
+    b"2027-04-01 0900-1530",         # dashed dates are not daybook day lines
+    b"090-1530 short",
+])
+def test_daybook_other_digit_lines_stay_text(line):
+    parsed = book(b"1apr2027\n" + line + b"\n")
+    assert [(e.date_local, e.clock_start) for e in parsed.entries] == [(date(2027, 4, 1), None)]
+
+
+@pytest.mark.parametrize("line", [
+    b"1apr2027 was a long day",      # a day line carries at most three words after the date
     b"Ab0930: not a configured prefix",
     b"Kl0930 standup",               # four digits need the colon
 ])
