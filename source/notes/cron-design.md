@@ -1,6 +1,6 @@
 # Cron — design (frontend + backend)
 
-**Status:** **Built and running.** The `/cron` page persists a folder tree of jobs to Postgres, the supervisor loop fires due jobs on their schedule, five action types exist (`message`, `command`, `backup`, `memory_sync`, `script`), run outcomes/health/retries/global-pause are all live, and the assistant creates **one-shot reminder jobs** through the same tables. Requires running via `python main.py` (the scheduler and web app share one process). Page at `GET /cron`.
+**Status:** **Built and running.** The `/cron` page persists a folder tree of jobs to Postgres, the supervisor loop fires due jobs on their schedule, six action types exist (`message`, `command`, `backup`, `memory_sync`, `diary_sync`, `script`), run outcomes/health/retries/global-pause are all live, and the assistant creates **one-shot reminder jobs** through the same tables. Requires running via `python main.py` (the scheduler and web app share one process). Page at `GET /cron`.
 **Date:** 2026-07-07
 **Source brief:** the original project plan → "## Cronjob"
 **UI scope:** **Desktop-first** (tablet acceptable). Small-phone layouts are a **non-goal** — the fixed-width tree + split view is tuned for wide viewports.
@@ -37,7 +37,7 @@ cron_job
   folder_uuid (nullable)          -- null = unfiled / root-level job
   cron_expr (text; '' = one-shot, see below),
   timezone ('localtime' | 'UTC', default 'localtime'),
-  action_type ('message'|'command'|'backup'|'memory_sync'|'script', CHECK-constrained),
+  action_type ('message'|'command'|'backup'|'memory_sync'|'diary_sync'|'script', CHECK-constrained),
   target, message, command        -- only the relevant ones are used
   description,
   max_retries (int, 0 = off, capped at 10),
@@ -69,13 +69,14 @@ The left panel of `/cron` is a forest: folders nest to any depth, each job lives
 
 ## Action types
 
-Five, dispatched by `fire_cron_job`. The New-job builder and Edit-action overlay offer **Message**, **Command**, and **Script**; `backup` and `memory_sync` are system types (seeded jobs) that the validator and firing path treat as first-class.
+Six, dispatched by `fire_cron_job`. The New-job builder and Edit-action overlay offer **Message**, **Command**, and **Script**; `backup`, `memory_sync` and `diary_sync` are system types (seeded jobs) that the validator and firing path treat as first-class, and whose action the Edit-action overlay leaves alone.
 
 1. **`message`** — post to a chatroom. `target` is a **chatroom uuid** (rename-proof; the UI's Target control is a `<select>` of rooms fed by the tree payload's `chatrooms` list). A blank or unknown target falls back to the **cron room**. The message is authored by the fixed `cron` system user (`CRON_SYSTEM_UUID`) so the chat page + SSE render it like any other message.
 2. **`command`** — enqueue to the **workspace-shell agent** (non-shell argv, no bash, workspace-confined — never a raw shell). The payload carries `room_uuid` (the cron room, where output/blocks post), `command_text`, `cron_run_uuid`, and `debug`. The fire returns with the run `pending`; the agent writes the real outcome back (see *Run outcomes*).
 3. **`backup`** — in-process database dump (`backup.dump`), because the workspace-shell allowlist can't run `pg_dump`/`zstd` or write files. Destination resolution: the job's `command` field → the `backup.repo` setting → the `RAINBOX_BACKUP_REPO` env var. Age recipients come from the `backup.age_recipient` setting (falling back to env, fail-closed). With `backup.git_push` set, the encrypted file is committed+pushed to the backup repo — an upload failure is reported (`✖ upload failed`) but does **not** fail the fire, since the local backup already succeeded. Runs synchronously on the supervisor thread — fine for a local single-user DB.
 4. **`memory_sync`** — in-process memory maintenance (`memory.embeddings.sync_memory_embeddings`): backfill embeddings for active claims and prune stale ones, keeping hybrid retrieval fresh between writes. Best-effort by construction — a missing embedder degrades to lexical-only and pruning still runs.
-5. **`script`** — run an **operator's external program** (e.g. a personal repo's cron entry point). `command` is shlex-split argv with **no shell**; `argv[0]` must be an **absolute path to an existing executable file** (shebang + `chmod +x` — interpreter lookup via PATH is deliberately unsupported, so what runs is always explicit). Runs on a **daemon thread** with `cwd` = the script's directory and a `CRON_SCRIPT_TIMEOUT` (10 min) wall-clock cap, so a slow fetch/render never blocks the supervisor loop; env/venv concerns live inside the script. Captured stdout+stderr is posted to the cron room (clipped to the last `CRON_SCRIPT_OUTPUT_CLIP` chars) and the outcome lands via the same pending→`cron_record_run_outcome` contract as `command` fires, so the pending sweep still backstops a killed process. This is operator tooling created on the /cron page: the workspace-shell policy that chat-issued commands go through is untouched, and per the repo's local-security stance it is a guardrail, not a sandbox.
+5. **`diary_sync`** — in-process diary maintenance (`diary.maintenance.refresh_enabled_sources`): for every enabled diary source, `sync` then `embed` its new passages under the embedding spec the source records. A source a manual sync holds is skipped (`busy`); an embedder whose model digest changed is reported and not re-embedded; any sync or embedding problem makes the run an error after the per-source line has posted. It never re-registers a source (see the diary spec, §9).
+6. **`script`** — run an **operator's external program** (e.g. a personal repo's cron entry point). `command` is shlex-split argv with **no shell**; `argv[0]` must be an **absolute path to an existing executable file** (shebang + `chmod +x` — interpreter lookup via PATH is deliberately unsupported, so what runs is always explicit). Runs on a **daemon thread** with `cwd` = the script's directory and a `CRON_SCRIPT_TIMEOUT` (10 min) wall-clock cap, so a slow fetch/render never blocks the supervisor loop; env/venv concerns live inside the script. Captured stdout+stderr is posted to the cron room (clipped to the last `CRON_SCRIPT_OUTPUT_CLIP` chars) and the outcome lands via the same pending→`cron_record_run_outcome` contract as `command` fires, so the pending sweep still backstops a killed process. This is operator tooling created on the /cron page: the workspace-shell policy that chat-issued commands go through is untouched, and per the repo's local-security stance it is a guardrail, not a sandbox.
 
    Script jobs also get a **"Check health"** button on Job details (`POST /cron/api/jobs/<uuid>/check_health` → `cron_script_health_check`): it runs the job's argv plus `--health` **synchronously** (`CRON_HEALTH_CHECK_TIMEOUT`, 60 s) and renders the output + ✔/✖ verdict inline on the page. The script owns the flag's semantics (print one line per check, exit 0 = healthy). It is a diagnostic probe, not a fire — **no `cron_run` row is recorded** and nothing posts to the cron room.
 
@@ -171,6 +172,7 @@ The page shell + CSS live in `webapp/cron_views.py`; all logic in `static/cron.j
 - **System** folder — "System maintenance jobs."
 - **Database backup** — `backup`, daily 03:30 local, seeded **disabled** with no destination; enabling it requires a destination (job command / `backup.repo` / `RAINBOX_BACKUP_REPO`) and an age recipient.
 - **Memory embedding sync** — `memory_sync`, daily 03:15 local, seeded **enabled** (unlike backup it needs no destination or secret and is safe, idempotent maintenance).
+- **Diary sync** — `diary_sync`, daily 03:45 local, seeded **enabled** for the same reason; a database without diary sources makes it a no-op.
 
 `seed_chat_defaults()` seeds the `cron` chatroom + system user (see *Firing*).
 

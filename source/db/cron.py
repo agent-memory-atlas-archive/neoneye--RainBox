@@ -37,13 +37,15 @@ from db.models import (
 SYSTEM_CRON_FOLDER_UUID = UUID("fc467ea3-5700-42ff-a109-9aa311c1886e")
 BACKUP_CRON_JOB_UUID = UUID("ea97c5b9-a4cd-4553-97d6-d60c5a4f0e81")
 MEMORY_SYNC_CRON_JOB_UUID = UUID("b7e84415-2d1a-4c9f-8f3e-6a0d9c1e2b34")
+DIARY_SYNC_CRON_JOB_UUID = UUID("867e3af3-d48c-4035-9714-6bf7006d336a")
 
 # Cron action types. 'message' posts to chat, 'command' runs via the
 # workspace-shell agent, 'backup' dumps the database in-process, 'memory_sync'
-# reconciles memory embeddings in-process, and 'script' runs an operator's
-# external program on a background thread (all see fire_cron_job).
-# Shared by the tree validator and the upsert.
-CRON_ACTION_TYPES = ("message", "command", "backup", "memory_sync", "script")
+# reconciles memory embeddings in-process, 'diary_sync' refreshes every enabled
+# diary source in-process, and 'script' runs an operator's external program on
+# a background thread (all see fire_cron_job).
+# Shared by the tree validator, the upsert and the cron_job CHECK.
+CRON_ACTION_TYPES = ("message", "command", "backup", "memory_sync", "diary_sync", "script")
 
 # Wall-clock limit for one 'script' fire. Must stay below
 # CRON_RUN_PENDING_TIMEOUT so the runner resolves its own outcome before the
@@ -957,6 +959,28 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
                     f"{embedded} embedded, {pruned} pruned"
                 )
             outcome = "ok"
+        elif job.action_type == "diary_sync":
+            # In-process maintenance, memory_sync's sibling: sync every enabled
+            # diary source and embed its new passages (diary.maintenance). A
+            # source a manual sync is holding is skipped until the next fire.
+            # Synchronous on the supervisor thread; a night's diary edits are
+            # seconds of work.
+            from diary import maintenance
+
+            if debug:
+                post_cron_event(
+                    f'▶ dry-run "{label}" (diary_sync, {trigger}): would sync every '
+                    "enabled diary source and embed its new passages"
+                )
+                outcome = "ok"
+            else:
+                results = maintenance.refresh_enabled_sources()
+                lines = [r.summary() for r in results] or ["no enabled diary source"]
+                post_cron_event(f'▶ diary_sync "{label}" ({trigger}): ' + " · ".join(lines))
+                problems = [f"{r.name}: {p}" for r in results for p in r.problems]
+                if problems:
+                    raise CronFireError("; ".join(problems))
+                outcome = "ok"
         else:  # message
             text = (job.message or "").strip() or "(empty message)"
             room = _cron_resolve_target_room(job.target)
@@ -1315,5 +1339,26 @@ def seed_cron_defaults() -> None:
                 "degrades to lexical-only and pruning still runs."
             ),
             position=1,
+        ))
+    if db.session.query(CronJob).filter_by(uuid=DIARY_SYNC_CRON_JOB_UUID).first() is None:
+        # Seeded ENABLED, like memory_sync: no destination or secret, and a
+        # database without diary sources makes it a no-op.
+        db.session.add(CronJob(
+            uuid=DIARY_SYNC_CRON_JOB_UUID,
+            name="Diary sync",
+            enabled=True,
+            folder_uuid=SYSTEM_CRON_FOLDER_UUID,
+            cron_expr="45 3 * * *",
+            timezone="localtime",
+            action_type="diary_sync",
+            command="",
+            description=(
+                "Sync every enabled diary source and embed its new passages "
+                "(in-process), so diary edits reach search by morning. Runs "
+                "daily at 03:45 local time. A manifest or parser-version change "
+                "still needs `register`; an embedder whose model changed is "
+                "reported, not re-embedded."
+            ),
+            position=2,
         ))
     db.session.commit()

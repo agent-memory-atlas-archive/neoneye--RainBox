@@ -567,19 +567,10 @@ def init_db(app: Flask) -> None:
         # Widen the action_type check to admit the actions added after the
         # table's first cut (create_all() never ALTERs an existing constraint,
         # so older DBs still carry a narrower CHECK). Re-created only while the
-        # current definition lacks the newest value ('script') — the drop+add
-        # pair takes an exclusive lock, so the steady state skips it.
-        _action_def = _constraint_def("cron_job_action_type_check")
-        if _action_def is None or "script" not in _action_def:
-            db.session.execute(
-                sa.text("ALTER TABLE cron_job DROP CONSTRAINT IF EXISTS cron_job_action_type_check")
-            )
-            db.session.execute(
-                sa.text(
-                    "ALTER TABLE cron_job ADD CONSTRAINT cron_job_action_type_check "
-                    "CHECK (action_type IN ('message','command','backup','memory_sync','script'))"
-                )
-            )
+        # current definition lacks one of CRON_ACTION_TYPES — the drop+add pair
+        # takes an exclusive lock, so the steady state skips it.
+        _ensure_membership_check("cron_job", "cron_job_action_type_check", "action_type",
+                                 CRON_ACTION_TYPES)
         # cron_run outcome tracking (status/finished_at/error) added after the
         # table's first cut. Pre-existing rows get 'pending' and are swept to
         # 'error' ("no completion recorded") by cron_tick — honest for rows

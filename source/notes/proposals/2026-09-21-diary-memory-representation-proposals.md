@@ -1138,6 +1138,18 @@ this context. A pilot source must be private, not secret.
 read API. The assistant cannot invoke the operator bypass through action args.
 No purge/reset deletes the input scratch files or any original diary file.
 
+Freshness is a cron job, not the operator's memory: the `diary_sync` action
+(`diary.maintenance.refresh_enabled_sources`), seeded enabled as the System
+job "Diary sync" at 03:45 local, runs `sync` and then `embed` for every
+enabled source, off the request path. It embeds only under the spec a source
+already records; when the served model's digest no longer matches, it reports
+that and embeds nothing, because a new epoch switches vector search off and
+re-embeds every passage — the operator's call. A source a manual sync holds is
+skipped until the next night (`busy`). It never re-registers: a manifest or
+parser-version change still goes through `register`, which leaves the source
+disabled until `enable`. Each fire posts one line per source to the cron room;
+a sync or embedding problem makes the run an error.
+
 ### Pilot order and gate
 
 The pilot runs **after parser/schema/retriever tests pass**, before production
@@ -1305,18 +1317,14 @@ small next to §11 and none blocks the first release.
   prompt's evidence should show whether a diary search already ran this
   turn. Measure with assistant-level eval cases, not the retrieval probe:
   the probe calls `diary_query` directly and cannot see this failure.
-- **Scheduled sync.** A diary edit reaches search only after a manual
-  `sync` (and `embed` for its vectors). A cron job running both for enabled
-  sources, off the request path, would keep freshness at "as of last night"
-  without the operator remembering. The advisory lock already makes a
-  concurrent manual sync safe (`busy`).
-- **Production rollout.** Register the full diary against the production
-  database with `--production`: `register`, `parse --dry-run` and a review of
-  every diagnostic (the pilot's three files alone surfaced four format
-  gaps, each fixed in the parser), `sync`, `embed`, `set-vector-mode exact`,
-  `enable` in the operator's real room. Extend the probe cases beyond one
-  month before trusting ranks across decades; topical answers at rank 4 on a
-  month could fall to page 2 on the whole diary.
+- **Re-registration without the off switch.** After a manifest or
+  parser-version change, `register` leaves the source disabled and the
+  nightly job skips it until `enable`. A refresh that re-registers when the
+  fingerprint is stale and restores the enabled state would close the gap.
+- **Probe at full scale.** The probe cases cover one month; the production
+  source holds two decades. Extend them across years before trusting ranks;
+  topical answers at rank 4 on a month could fall to page 2 on the whole
+  diary.
 - **Ranking depth for topical questions.** Topical probe cases pass when
   one gold passage reaches the first page; two of eleven sit at rank 4.
   Scoring should also track how many gold passages a first page carries, so

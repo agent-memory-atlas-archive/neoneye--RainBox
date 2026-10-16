@@ -237,6 +237,8 @@ function cronActionText(r){
   if (r.type === 'message') return 'msg → ' + cronRoomName(r.target) + ': ' + r.message;
   if (r.type === 'backup') return 'backup → ' + (r.command || 'RAINBOX_BACKUP_REPO');
   if (r.type === 'script') return 'script: ' + r.command;
+  if (r.type === 'memory_sync') return 'memory embedding sync (in-process)';
+  if (r.type === 'diary_sync') return 'diary sync + embed (in-process)';
   return 'cmd: ' + r.command;
 }
 function cronFlattenTree(parentId){
@@ -487,7 +489,11 @@ function cronSaveSchedule(){
 function cronEditAction(){
   const r = cronRowsState.find(x => x.uuid === cronEditUuid);
   if (!r) return;
-  document.querySelector('input[name="ea-atype"][value="' + r.type + '"]').checked = true;
+  // System actions (backup, memory_sync, diary_sync) have no radio: their
+  // action is fixed, so there is nothing to edit here.
+  const radio = document.querySelector('input[name="ea-atype"][value="' + r.type + '"]');
+  if (!radio) return;
+  radio.checked = true;
   cronToggleEditActionType();
   cronPopulateTargetSelect('ea-target', r.target || '');
   document.getElementById('ea-message').value = r.message || '';

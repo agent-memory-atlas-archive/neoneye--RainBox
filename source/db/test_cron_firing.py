@@ -496,6 +496,72 @@ def test_memory_sync_action_type_passes_check_constraint(firing):
     assert job.action_type == "memory_sync"  # committed by the fixture, no raise
 
 
+# --- diary_sync action: the nightly diary refresh ------------------------------
+
+
+def _cron_texts():
+    return [m.text for m in db.session.query(ChatMessage)
+            .filter_by(room_uuid=CRON_ROOM_UUID, sender_uuid=CRON_SYSTEM_UUID).all()]
+
+
+def _refresh_result(status="ok", problems=()):
+    from types import SimpleNamespace
+    return SimpleNamespace(name="diary-a", status=status, problems=list(problems),
+                           summary=lambda: "diary-a: 2 published, 9 unchanged; 3 embedded")
+
+
+def test_fire_diary_sync_reports_each_source(firing, monkeypatch):
+    import diary.maintenance as m
+    monkeypatch.setattr(m, "refresh_enabled_sources", lambda *a, **k: [_refresh_result()])
+    job = firing(action_type="diary_sync", name="Diary")
+    run = db.fire_cron_job(job, trigger="manual")
+    assert run.status == "ok"
+    assert any('diary_sync "Diary"' in t and "2 published" in t for t in _cron_texts())
+
+
+def test_fire_diary_sync_with_a_problem_is_an_error_run(firing, monkeypatch):
+    import diary.maintenance as m
+    monkeypatch.setattr(m, "refresh_enabled_sources", lambda *a, **k: [
+        _refresh_result("problem", ["embedder model changed; run embed by hand"])])
+    job = firing(action_type="diary_sync", name="DiaryBad")
+    run = db.fire_cron_job(job, trigger="manual")
+    assert run.status == "error" and "embedder model changed" in run.error
+    assert any("2 published" in t for t in _cron_texts())   # the sync result still posts
+
+
+def test_fire_diary_sync_with_no_enabled_source_is_ok(firing, monkeypatch):
+    import diary.maintenance as m
+    monkeypatch.setattr(m, "refresh_enabled_sources", lambda *a, **k: [])
+    run = db.fire_cron_job(firing(action_type="diary_sync", name="DiaryNone"), trigger="manual")
+    assert run.status == "ok"
+    assert any("no enabled diary source" in t for t in _cron_texts())
+
+
+def test_fire_diary_sync_dry_run_mutates_nothing(firing, monkeypatch):
+    import diary.maintenance as m
+
+    def boom(*a, **k):
+        raise AssertionError("a dry run must not refresh")
+    monkeypatch.setattr(m, "refresh_enabled_sources", boom)
+    run = db.fire_cron_job(firing(action_type="diary_sync", name="DiaryDry"),
+                           trigger="manual", debug=True)
+    assert run.status == "ok"
+    assert any('dry-run "DiaryDry"' in t and "would sync" in t for t in _cron_texts())
+
+
+def test_seed_creates_enabled_diary_sync_job(app_ctx):
+    db.seed_cron_defaults()
+    job = db.session.query(db.CronJob).filter_by(uuid=db.DIARY_SYNC_CRON_JOB_UUID).first()
+    assert job is not None and job.action_type == "diary_sync" and job.enabled is True
+    assert job.folder_uuid == db.SYSTEM_CRON_FOLDER_UUID
+    db.seed_cron_defaults()
+    assert db.session.query(db.CronJob).filter_by(uuid=db.DIARY_SYNC_CRON_JOB_UUID).count() == 1
+
+
+def test_diary_sync_action_type_passes_check_constraint(firing):
+    assert firing(action_type="diary_sync", name="CheckDiary").action_type == "diary_sync"
+
+
 def test_fire_debug_command_enqueues_with_flag(firing):
     """A command dry-run still goes through the workspace-shell agent (it owns
     the validation), with debug in the payload so it echoes instead of runs."""
