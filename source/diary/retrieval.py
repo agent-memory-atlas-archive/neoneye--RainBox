@@ -100,6 +100,8 @@ class DiaryItem:
     time_status: str
     date_basis: str
     author_token: str | None = None
+    # The manifest's `author_tokens` label for author_token, if it has one.
+    author_label: str | None = None
     superseded: bool = False
     match_count: int = 0
     reasons: list[str] = field(default_factory=list)
@@ -322,8 +324,11 @@ def retrieve_diary(req: DiaryRequest, ctx: DiaryContext, *,
             result.catalog_manifest = catalog_manifest(sources)
             result.metadata = _metadata_coverage(sources, req, result.items)
             snaps = _snapshot_times(sources)
+            labels = {s.uuid: (s.config or {}).get("author_tokens", {}) for s in sources}
             for it in result.items:
                 it.snapshot_at = snaps.get(it.source_uuid)
+                if it.author_token:
+                    it.author_label = labels.get(it.source_uuid, {}).get(it.author_token)
     result.timings_ms["total"] = int((_time.monotonic() - t0) * 1000)
     return result
 

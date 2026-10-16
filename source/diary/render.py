@@ -63,7 +63,10 @@ def date_label(item: DiaryItem) -> str:
     elif item.time_status == "invalid_range":
         label += " (range as written; end before start)"
     if item.author_token:
-        label += f" · author {item.author_token}"
+        if item.author_label and item.author_label != item.author_token:
+            label += f" · author {item.author_label} ({item.author_token})"
+        else:
+            label += f" · author {item.author_token}"
     return label
 
 

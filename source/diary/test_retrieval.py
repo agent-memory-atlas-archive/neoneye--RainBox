@@ -173,9 +173,16 @@ def test_excluded_file_is_invisible_on_every_route(live):
 def test_literal_finds_exact_match_with_citation(live):
     obs = live.q(mode="literal", query="Edit::VSpace#move_left")
     assert obs.ok and "Edit::VSpace#move_left" in obs.text
-    assert "2027-07-27" in obs.text and "author kreese" in obs.text
+    assert "2027-07-27" in obs.text and "author operator (kreese)" in obs.text
     assert obs.data["coverage"]["enumeration"] == "complete"
     assert_fenced(obs)
+
+
+def test_unmapped_author_token_is_shown_as_written(live):
+    live.write("archive/ChangeLog2.txt", "27-juli-2028 visitor\n*\tleft a guest note\n")
+    live.resync()
+    obs = live.q(mode="literal", query="guest note")
+    assert "author visitor" in obs.text and "operator" not in obs.text
 
 
 def test_literal_treats_sql_wildcards_literally(live):

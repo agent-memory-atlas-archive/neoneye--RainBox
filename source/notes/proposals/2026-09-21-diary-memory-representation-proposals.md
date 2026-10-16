@@ -461,7 +461,9 @@ Do not find dates by scanning arbitrary body prose.
 For `timed`, `changelog` and `daybook`, a valid header takes precedence over a filename date;
 a mismatch emits `filename_header_mismatch`. For `daily`, an invalid filename
 falls back to plain undated blocks with `invalid_daily_filename`. Unknown author
-tokens remain literal tokens and never default to operator authorship.
+tokens remain literal tokens and never default to operator authorship. A token
+mapped in `author_tokens` renders as `author <label> (<token>)`, so a label
+can say what a token is (a project name in the author slot, say).
 
 Order is the parser's cheapest ambiguity signal. A four-digit prose line
 such as a year (`2027` is a valid `20h27`) or an eight-digit order number
