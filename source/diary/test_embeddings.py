@@ -124,8 +124,8 @@ def test_backfill_is_content_keyed_and_resumable(live):
 
 def test_append_embeds_only_new_text(live):
     emb.embed_source(live.src.uuid, FakeEmbedder(), spec())
-    path = live.root / "current" / "2027.txt"
-    path.write_bytes(path.read_bytes() + b"\n20270315\n09h00\nbrand new sentence\n")
+    path = live.root / "current" / "1999.txt"
+    path.write_bytes(path.read_bytes() + b"\n19990315\n09h00\nbrand new sentence\n")
     live.resync()
     fake = FakeEmbedder()
     r = emb.embed_source(live.src.uuid, fake, spec())
@@ -162,7 +162,7 @@ def test_sweep_removes_vectors_of_text_edited_out(live):
     emb.embed_source(live.src.uuid, FakeEmbedder(), spec())
     gone = hashlib.sha256("13h15\nMein Rücken fühlt sich wieder normal an.\n".encode()).hexdigest()
     assert gone in {h for _, h in vector_rows(live.src.uuid)}
-    path = live.root / "current" / "2027.txt"
+    path = live.root / "current" / "1999.txt"
     path.write_bytes(path.read_bytes().replace("Mein Rücken fühlt sich wieder normal an.\n".encode(), b""))
     live.resync()
     emb.embed_source(live.src.uuid, FakeEmbedder(), spec())
@@ -233,7 +233,7 @@ def test_hnsw_fills_under_restrictive_filter(live):
     emb.build_hnsw_index()
     from diary.retrieval import DiaryRequest, _date_sql, _params, eligible_sources
     sources = eligible_sources(live.ctx())
-    req = DiaryRequest(mode="search", query="undo", date_from=date(2027, 7, 26), date_to=date(2027, 7, 26))
+    req = DiaryRequest(mode="search", query="undo", date_from=date(1999, 7, 26), date_to=date(1999, 7, 26))
     ids = emb.vector_route(req, sources, fake_query(), _params(sources, req), _date_sql(req),
                            mode_override="hnsw")
     # Every eligible passage that day, although the index alone could stop
@@ -241,7 +241,7 @@ def test_hnsw_fills_under_restrictive_filter(live):
     eligible = db.session.execute(sa.text(
         "SELECT count(*) FROM diary_passage p JOIN diary_entry e ON e.uuid = p.entry_uuid "
         "JOIN diary_file f ON f.current_generation_uuid = e.generation_uuid "
-        "WHERE f.source_uuid = :s AND e.date_local = '2027-07-26'"), {"s": live.src.uuid}).scalar()
+        "WHERE f.source_uuid = :s AND e.date_local = '1999-07-26'"), {"s": live.src.uuid}).scalar()
     assert 1 < eligible <= 20 and len(ids) == eligible
 
 
@@ -259,12 +259,12 @@ def test_probe_scores_and_gates(live):
         {"id": "lit-1", "kind": "literal", "args": {"mode": "literal", "query": "Edit::VSpace#move_left"},
          "gold": [_gold(live, "archive/ChangeLog.txt", "Edit::VSpace#move_left")]},
         {"id": "top-1", "kind": "topical", "args": {"mode": "search", "query": "back pain Rücken"},
-         "gold": [_gold(live, "current/2027.txt", "Mein Rücken")]},
+         "gold": [_gold(live, "current/1999.txt", "Mein Rücken")]},
         {"id": "tl-1", "kind": "timeline",
-         "args": {"mode": "timeline", "date_from": "2027-07-26", "date_to": "2027-07-26"},
+         "args": {"mode": "timeline", "date_from": "1999-07-26", "date_to": "1999-07-26"},
          "gold": [_gold(live, "archive/ChangeLog.txt", "*\tre-enabled Buffer#test_exception_xxx.\n"),
-                  _gold(live, "daily/2027_07_26.txt",
-                        (live.root / "daily" / "2027_07_26.txt").read_text())]},
+                  _gold(live, "daily/1999_07_26.txt",
+                        (live.root / "daily" / "1999_07_26.txt").read_text())]},
         {"id": "neg-1", "kind": "negative", "args": {"mode": "literal", "query": "zeppelin-xyz"}, "gold": []},
     ]
     db.diary_set_enabled(live.src.uuid, False)          # the probe reads disabled sources

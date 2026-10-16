@@ -444,10 +444,10 @@ inspection shows a false split. No content is discarded to resolve ambiguity.
 
 | Dialect | Exact boundary rule | Other text |
 |---|---|---|
-| `timed` | Valid `YYYYMMDD` line at column zero, optionally followed by `;` and a trailer about the day (`20270901;all day`), which stays in the header's context range; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
+| `timed` | Valid `YYYYMMDD` line at column zero, optionally followed by `;` and a trailer about the day (`19990901;all day`), which stays in the header's context range; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
 | `daily` | Filename stem exactly `YYYY_MM_DD`; valid `HHMM`, `HH:MM` or `H:MM` at column zero at file start or immediately after an empty line | Blank lines within a record remain in it; a candidate inside a protected span is suppressed |
-| `changelog` | Valid `DD-month-YYYY`, `DD-MM-YYYY` or `YYYY-MM-DD`, then whitespace, an optional `- `, an author of one to three words and an optional angle-bracketed contact (`2027-07-27  Kim Kreese  <kim@example.org>`, the GNU form); a `YYYY-MM-DD` line may also stand alone; a release-notes header `YYYY-MM-DD:` or `YYYYMMDD:` followed by a title (`2027-12-23: Toolkit, REVISION 812`) opens an entry that owns its line, so the title stays searchable; top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
-| `daybook` | A day line at column zero: `DDmonthYYYY` (month name glued, from the configured tables), alone, followed by up to three words (`03apr2027 saturday`), or by `;` fields where a leading `;HHMM;HHMM` is the entry's start and stop (`1apr2027;1000;1530;05:30;note`); `YYYY/M/D`, alone or followed by `:`, a tab or spaces and anything (`2027/4/1	7.5`); or `YYYYMMDD;` and anything (`20270401;8;note`). Entry lines: a worked span `HHMM-HHMM` followed by whitespace (`0900-1530  6.50`), a range entry, in decimal hours with `decimal_hour_spans`; a configured clock prefix followed by `HHMM:` or `H:MM` | The day line opens an entry and stays its text, so a weekday or a timesheet note is searchable; it has no separate header range |
+| `changelog` | Valid `DD-month-YYYY`, `DD-MM-YYYY` or `YYYY-MM-DD`, then whitespace, an optional `- `, an author of one to three words and an optional angle-bracketed contact (`1999-07-27  Kim Kreese  <kim@example.org>`, the GNU form); a `YYYY-MM-DD` line may also stand alone; a release-notes header `YYYY-MM-DD:` or `YYYYMMDD:` followed by a title (`1999-12-23: Toolkit, REVISION 812`) opens an entry that owns its line, so the title stays searchable; top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
+| `daybook` | A day line at column zero: `DDmonthYYYY` (month name glued, from the configured tables), alone, followed by up to three words (`03apr1999 saturday`), or by `;` fields where a leading `;HHMM;HHMM` is the entry's start and stop (`1apr1999;1000;1530;05:30;note`); `YYYY/M/D`, alone or followed by `:`, a tab or spaces and anything (`1999/4/1	7.5`); or `YYYYMMDD;` and anything (`19990401;8;note`). Entry lines: a worked span `HHMM-HHMM` followed by whitespace (`0900-1530  6.50`), a range entry, in decimal hours with `decimal_hour_spans`; a configured clock prefix followed by `HHMM:` or `H:MM` | The day line opens an entry and stays its text, so a weekday or a timesheet note is searchable; it has no separate header range |
 | `plain` | Nonempty blank-line-separated blocks | No inferred clock; use an unambiguous filename date if present |
 
 For recognition only, remove the line ending and trailing spaces/tabs. An empty
@@ -455,17 +455,17 @@ line contains only spaces/tabs after removing its ending. Never remove those
 bytes from stored text. Validate days/months/leap years and hours `00–23`, minutes
 `00–59`; malformed headers remain text plus a diagnostic. Filename dates accept
 only complete stems `YYYYMMDD`, `YYYY_MM_DD`, or `DD-MM-YYYY`, each optionally
-followed by `_` or `-` and a topic (`2027_07_26_harbour`); the `daily`
+followed by `_` or `-` and a topic (`1999_07_26_harbour`); the `daily`
 dialect's filename rule accepts the same topic suffix. A **month file**
 is a stem `YYYYMMxx` or `YYYY_MM_xx` (either case), optionally followed by
-`_` or `-` and a topic (`202709xx_work`): text before its first date line —
+`_` or `-` and a topic (`199909xx_work`): text before its first date line —
 typically what the month is about — is dated to the month's first day with
-basis `filename_month`, labelled `2027-09 (month from filename)`, and
+basis `filename_month`, labelled `1999-09 (month from filename)`, and
 in a plain file every block is. A header outside that month emits
-`filename_header_mismatch`. A **year file** (`2027`, `2027xxxx`, or either
+`filename_header_mismatch`. A **year file** (`1999`, `1999xxxx`, or either
 followed by `_`/`-` and a topic that does not start with a digit, such as
-`2027_overview`) does the same at year grain: basis `filename_year`, label
-`2027 (year from filename)`, a mismatch for a header outside the year. Day
+`1999_overview`) does the same at year grain: basis `filename_year`, label
+`1999 (year from filename)`, a mismatch for a header outside the year. Day
 stems are matched first, then month stems, then year stems. Month-name headers use the configured tables.
 Do not find dates by scanning arbitrary body prose.
 
@@ -477,7 +477,7 @@ mapped in `author_tokens` renders as `author <label> (<token>)`, so a label
 can say what a token is (a project name in the author slot, say).
 
 Order is the parser's cheapest ambiguity signal. A four-digit prose line
-such as a year (`2027` is a valid `20h27`) or an eight-digit order number
+such as a year (`1958` is a valid `19h58`) or an eight-digit order number
 can pass the header grammar, but it rarely also fits the file's sequence.
 The parser therefore checks each accepted header against its predecessor in
 the same file: in `timed`, `daily` and `daybook`, a clock earlier than the latest clock
@@ -642,7 +642,7 @@ forbidden. The five shapes:
 ```json
 {"mode":"search","query":"undo corruption"}
 {"mode":"literal","query":"Edit::VSpace#move_left","source":"diary-pilot"}
-{"mode":"timeline","date_from":"2027-07-26","date_to":"2027-07-27"}
+{"mode":"timeline","date_from":"1999-07-26","date_to":"1999-07-27"}
 {"mode":"read","citation":"diary:REVISION_UUID:120-980"}
 {"mode":"continue","cursor":"CURSOR_UUID"}
 ```
@@ -807,7 +807,7 @@ LIMIT**. Do not fetch global top-K and then filter in Python.
   diary's own spelling and each verified against an eligible passage, so a
   suggestion never reveals a word only an excluded file contains.
 - **Headers are not entry text:** a literal on a date or author header (a
-  ChangeLog `27-juli-2027 kreese` line) finds nothing, because headers are
+  ChangeLog `27-juli-1999 kreese` line) finds nothing, because headers are
   context ranges, not entry text. Dates are reached through `timeline`;
   author tokens are rare enough to leave to `read`.
 - **Identifier route in search:** at most eight recognized query tokens; equality
@@ -861,7 +861,7 @@ sentence four times. After fusion, candidates with the same `text_hash`
 within a source form one **group**, scored by its best member. A group
 renders its text once, with the citation of its most recent occurrence and
 a compact occurrence list: up to eight dates, then a count, such as
-`also on 2027-03-09, 2027-03-10, … (+212 more)`. That list is often itself
+`also on 1999-03-09, 1999-03-10, … (+212 more)`. That list is often itself
 the answer to “when did I …”. Grouping applies to ranked search only; literal
 and timeline enumerate every occurrence, because they promise completeness.
 
@@ -1334,7 +1334,7 @@ by free text until the next time line or date line. A synthetic day in
 that shape:
 
 ```text
-20270312
+19990312
 Woke at 07h10. Slept badly; the dog next door barked until two.
 
 09h30 - 10h00
@@ -1370,7 +1370,7 @@ continuation lines indented, no times, and the newest day first in the
 file. Synthetic:
 
 ```text
-27-juli-2027 kreese
+27-juli-1999 kreese
 *	refactoring: true/false return values from commands have been
 	replaced by an exception system; a thrown exception means no
 	modification occurred. This has improved robustness a lot.
@@ -1378,7 +1378,7 @@ file. Synthetic:
 *	bugfix: Edit::VSpace#move_left did not report its change,
 	trashing undo/redo completely.
 
-26-juli-2027 kreese
+26-juli-1999 kreese
 *	re-enabled Buffer#test_exception_xxx.
 ```
 

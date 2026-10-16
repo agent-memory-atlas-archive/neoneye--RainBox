@@ -52,13 +52,13 @@ PROTECTED_REGION_CAP = 16_384
 
 TERMINAL_START = re.compile(r"^(?:\$[ \t]|[A-Za-z0-9_.@-]+:[~/][^\r\n]*?[#$](?:[ \t]|$))")
 FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
-# `20270901`, or with a semicolon trailer about the day: `20270901;all day`.
+# `19990901`, or with a semicolon trailer about the day: `19990901;all day`.
 TIMED_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2})(?:;[^\r\n]*)?$")
 TIMED_TIME = re.compile(r"^(\d{2})h(\d{2})(?:[ \t]*-[ \t]*(\d{2})h(\d{2}))?$")
 # `0830`, or with a colon: `08:30`, `8:30`.
 DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$|^(\d{1,2}):(\d{2})$")
-# `27-juli-2027 kreese`, `27-07-2027 kreese`, or the GNU form
-# `2027-07-27  Kim Kreese  <kim@example.org>`: a date, an optional `- `, an
+# `27-juli-1999 kreese`, `27-07-1999 kreese`, or the GNU form
+# `1999-07-27  Kim Kreese  <kim@example.org>`: a date, an optional `- `, an
 # author of one to three words, none starting with a digit (`03:12` is a
 # clock, not a name) or a colon, and an optional angle-bracketed contact. An
 # ISO date may stand alone.
@@ -67,17 +67,17 @@ _CHANGELOG_AUTHOR = (r"(?:[ \t]+(?:-[ \t]+)?([^\s<\d:-]\S*(?:[ \t]+[^\s<\d]\S*){
 CHANGELOG_HEADER = re.compile(
     r"^(\d{1,2})-(\d{1,2}|[^\s\d-]+)-(\d{4})" + _CHANGELOG_AUTHOR + "$")
 CHANGELOG_ISO_HEADER = re.compile(r"^(\d{4})-(\d{2})-(\d{2})" + _CHANGELOG_AUTHOR + "?$")
-# A release-notes header, `2027-12-23: Toolkit, REVISION 812` or
-# `20271213: …`: the title after the colon is searchable text, so the
+# A release-notes header, `1999-12-23: Toolkit, REVISION 812` or
+# `19991213: …`: the title after the colon is searchable text, so the
 # header opens an entry that owns its line.
 CHANGELOG_TITLED = re.compile(r"^(?:(\d{4})-(\d{2})-(\d{2})|(\d{4})(\d{2})(\d{2})):")
 CHANGELOG_BULLET = re.compile(r"^\*[ \t]")
-# `1apr2027`, `03apr2027 saturday` (up to three words), or a timesheet row
-# `1apr2027;1000;1530;05:30;note` whose first two fields are start and stop.
+# `1apr1999`, `03apr1999 saturday` (up to three words), or a timesheet row
+# `1apr1999;1000;1530;05:30;note` whose first two fields are start and stop.
 DAYBOOK_DATE = re.compile(r"^(\d{1,2})([^\W\d_]+)(\d{4})(?:(;[^\r\n]*)|(?:[ \t]+\S+){1,3})?$")
-# `2027/4/1`, alone or followed by `:`, a tab or spaces and anything.
+# `1999/4/1`, alone or followed by `:`, a tab or spaces and anything.
 DAYBOOK_SLASH_DATE = re.compile(r"^(\d{4})/(\d{1,2})/(\d{1,2})(?:[:\s].*)?$")
-# `20270401;8;note`: an eight-digit day needs the semicolon.
+# `19990401;8;note`: an eight-digit day needs the semicolon.
 DAYBOOK_YMD_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2});")
 # `0900-1530  6.50`: a worked span, an entry with that range. With the
 # manifest's `decimal_hour_spans`, `0875-1675` is decimal hours, 08:45–16:45.
@@ -85,7 +85,7 @@ DAYBOOK_SPAN_LINE = re.compile(r"^(\d{2})(\d{2})-(\d{2})(\d{2})(?=[ \t]|$)")
 DAYBOOK_SPAN = re.compile(r"^;(\d{2})(\d{2});(\d{2})(\d{2})(?:[;:]|$)")
 # After a configured clock prefix: `0930:` or `9:30` / `09:30`.
 DAYBOOK_CLOCK = r"(?:(\d{2})(\d{2}):|(\d{1,2}):(\d{2})(?=[: \t]|$))"
-# A day file's stem may carry a topic after `_` or `-` (`2027_07_26_harbour`),
+# A day file's stem may carry a topic after `_` or `-` (`1999_07_26_harbour`),
 # as a month file's may.
 _TOPIC = r"(?:[_-].*)?$"
 FILENAME_DATE = (
@@ -95,8 +95,8 @@ FILENAME_DATE = (
 FILENAME_DATE_DMY = re.compile(r"^(\d{2})-(\d{2})-(\d{4})" + _TOPIC)
 # A month file: `YYYYMMxx` or `YYYY_MM_xx`, optionally `_topic` / `-topic`.
 FILENAME_MONTH = re.compile(r"^(\d{4})_?(\d{2})_?[xX]{2}" + _TOPIC)
-# A year file: `2027`, `2027xxxx`, or either with a topic (`2027_overview`).
-# Its topic may not start with a digit: `2027_03_12x` is a broken day stem.
+# A year file: `1999`, `1999xxxx`, or either with a topic (`1999_overview`).
+# Its topic may not start with a digit: `1999_03_12x` is a broken day stem.
 FILENAME_YEAR = re.compile(r"^(\d{4})(?:[xX]{4})?(?:[_-]\D.*)?$")
 DAILY_FILENAME = re.compile(r"^(\d{4})_(\d{2})_(\d{2})" + _TOPIC)
 
@@ -244,14 +244,14 @@ def filename_date(relative_path: str) -> date | None:
 
 
 def filename_month(relative_path: str) -> date | None:
-    """The first day of a month file's month (`202709xx.md` -> 2027-09-01)."""
+    """The first day of a month file's month (`199909xx.md` -> 1999-09-01)."""
     stem = posixpath.basename(relative_path).split(".", 1)[0]
     m = FILENAME_MONTH.match(stem)
     return _valid_date(int(m[1]), int(m[2]), 1) if m else None
 
 
 def filename_year(relative_path: str) -> date | None:
-    """The first day of a year file's year (`2027_overview.md` -> 2027-01-01).
+    """The first day of a year file's year (`1999_overview.md` -> 1999-01-01).
     Day and month stems are matched first, so this only sees what they left."""
     stem = posixpath.basename(relative_path).split(".", 1)[0]
     m = FILENAME_YEAR.match(stem)

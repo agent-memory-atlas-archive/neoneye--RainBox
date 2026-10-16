@@ -166,20 +166,20 @@ def test_search_vector_is_generated(source):
 def test_appends_store_bytes_once_and_keep_citations(source):
     """The replay the pilot gate runs, in miniature: thirty daily appends."""
     src, root, _ = source
-    path = root / "current" / "2027.txt"
+    path = root / "current" / "1999.txt"
     base = path.read_bytes()
     path.write_bytes(base)
     sync_source(src.uuid)
-    f = files(src)["current/2027.txt"]
+    f = files(src)["current/1999.txt"]
     first_cites = {(p.byte_start, p.byte_end): p.cite_revision_uuid for p in current_passages(f)}
     content = base
     for day in range(1, 31):
-        content += f"\n2027040{day % 10}\n09h00\nappended day {day}\n".encode()
+        content += f"\n1999040{day % 10}\n09h00\nappended day {day}\n".encode()
         path.write_bytes(content)
         report = sync_source(src.uuid)
         assert report.published == 1
     db.session.expire_all()
-    f = files(src)["current/2027.txt"]
+    f = files(src)["current/1999.txt"]
     revs = revisions(f)
     assert len(revs) == 31
     stored = sum(len(r.raw_bytes) for r in revs if r.raw_bytes is not None)
@@ -198,13 +198,13 @@ def test_appends_store_bytes_once_and_keep_citations(source):
 
 def test_edit_moves_citations_and_revert_reuses_revision(source):
     src, root, _ = source
-    path = root / "current" / "2027.txt"
+    path = root / "current" / "1999.txt"
     original = path.read_bytes()
     sync_source(src.uuid)
     edited = original.replace(b"Slept badly", b"Slept well")
     path.write_bytes(edited)
     sync_source(src.uuid)
-    f = files(src)["current/2027.txt"]
+    f = files(src)["current/1999.txt"]
     revs = revisions(f)
     assert len(revs) == 2 and all(r.raw_bytes is not None for r in revs)
     new = next(r for r in revs if r.sha256 == sha256_hex(edited))
@@ -212,7 +212,7 @@ def test_edit_moves_citations_and_revert_reuses_revision(source):
     path.write_bytes(original)
     sync_source(src.uuid)
     db.session.expire_all()
-    f = files(src)["current/2027.txt"]
+    f = files(src)["current/1999.txt"]
     assert len(revisions(f)) == 2                          # reused, not re-inserted
     gen = db.session.get(db.DiaryGeneration, f.current_generation_uuid)
     assert db.session.get(db.DiaryRevision, gen.revision_uuid).sha256 == sha256_hex(original)
@@ -220,19 +220,19 @@ def test_edit_moves_citations_and_revert_reuses_revision(source):
 
 def test_quarantine_hides_file_until_fixed(source):
     src, root, _ = source
-    path = root / "current" / "2027.txt"
+    path = root / "current" / "1999.txt"
     good = path.read_bytes()
     sync_source(src.uuid)
     path.write_bytes(good + b"\xff\n")
     report = sync_source(src.uuid)
     assert report.quarantined == 1
-    f = files(src)["current/2027.txt"]
+    f = files(src)["current/1999.txt"]
     assert f.availability == "quarantined"
     assert f.diagnostics[0]["code"] == "invalid_utf8"
     path.write_bytes(good + b"\nfine\n")
     sync_source(src.uuid)
     db.session.expire_all()
-    assert files(src)["current/2027.txt"].availability == "ready"
+    assert files(src)["current/1999.txt"].availability == "ready"
 
 
 def test_deleted_file_is_missing_and_scan_failure_marks_nothing(source):
@@ -246,29 +246,29 @@ def test_deleted_file_is_missing_and_scan_failure_marks_nothing(source):
     failed = sync_source(src.uuid)
     assert failed.scan_failed and failed.missing == 0
     db.session.expire_all()
-    assert files(src)["current/2027.txt"].availability == "ready"
+    assert files(src)["current/1999.txt"].availability == "ready"
 
 
 def test_policy_change_invalidates_publication(source):
     src, root, _ = source
     sync_source(src.uuid)
-    f = files(src)["current/2027.txt"]
-    raw = (root / "current" / "2027.txt").read_bytes() + b"\nmore\n"
-    parsed = parse_file(raw, "current/2027.txt", src.parser_config)
+    f = files(src)["current/1999.txt"]
+    raw = (root / "current" / "1999.txt").read_bytes() + b"\nmore\n"
+    parsed = parse_file(raw, "current/1999.txt", src.parser_config)
     stale = refresh(src).policy_version
     db.diary_set_enabled(src.uuid, True)                  # bumps the policy
     with pytest.raises(db.DiaryPolicyChanged):
         db.diary_publish(f.uuid, raw, sha256_hex(raw), parsed, parser_config=src.parser_config,
                          fingerprint=src.parser_fingerprint, policy_version=stale)
     db.session.expire_all()
-    assert files(src)["current/2027.txt"].current_generation_uuid == f.current_generation_uuid
+    assert files(src)["current/1999.txt"].current_generation_uuid == f.current_generation_uuid
 
 
 def test_failed_publication_leaves_no_partial_generation(source, monkeypatch):
     src, root, _ = source
     sync_source(src.uuid)
-    before = files(src)["current/2027.txt"].current_generation_uuid
-    (root / "current" / "2027.txt").write_bytes(b"20270312\n09h00\nnew text\n")
+    before = files(src)["current/1999.txt"].current_generation_uuid
+    (root / "current" / "1999.txt").write_bytes(b"19990312\n09h00\nnew text\n")
     real_insert = sa.insert
 
     def failing_insert(table, *a, **k):
@@ -282,7 +282,7 @@ def test_failed_publication_leaves_no_partial_generation(source, monkeypatch):
     monkeypatch.setattr(sa, "insert", real_insert)
     db.session.rollback()
     db.session.expire_all()
-    f = files(src)["current/2027.txt"]
+    f = files(src)["current/1999.txt"]
     assert f.current_generation_uuid == before
     assert db.session.query(db.DiaryGeneration).filter_by(file_uuid=f.uuid).count() == 1
 
@@ -303,51 +303,51 @@ def test_concurrent_sync_is_busy(source):
 
 def test_excluded_path_is_never_read(source):
     src, _, _ = source
-    db.diary_exclude(src.uuid, "daily/2027_07_26.txt")
+    db.diary_exclude(src.uuid, "daily/1999_07_26.txt")
     report = sync_source(src.uuid)
     assert report.excluded == 1 and report.published == 2
-    f = files(src)["daily/2027_07_26.txt"]
+    f = files(src)["daily/1999_07_26.txt"]
     assert revisions(f) == [] and f.current_generation_uuid is None
 
 
 def test_exact_move_carries_exclusion(source):
     src, root, _ = source
     sync_source(src.uuid)
-    db.diary_exclude(src.uuid, "daily/2027_07_26.txt")
-    (root / "daily" / "2027_07_26.txt").rename(root / "daily" / "2027_07_27.txt")
+    db.diary_exclude(src.uuid, "daily/1999_07_26.txt")
+    (root / "daily" / "1999_07_26.txt").rename(root / "daily" / "1999_07_27.txt")
     report = sync_source(src.uuid)
     assert report.carried == 1
-    assert "daily/2027_07_27.txt" in db.diary_exclusions(src.uuid)
-    assert files(src)["daily/2027_07_27.txt"].current_generation_uuid is None
+    assert "daily/1999_07_27.txt" in db.diary_exclusions(src.uuid)
+    assert files(src)["daily/1999_07_27.txt"].current_generation_uuid is None
 
 
 def test_edited_rename_is_held_until_reconciled(source):
     src, root, _ = source
     sync_source(src.uuid)
-    db.diary_exclude(src.uuid, "daily/2027_07_26.txt")
-    old = root / "daily" / "2027_07_26.txt"
-    (root / "daily" / "2027_07_28.txt").write_bytes(old.read_bytes() + b"\nedited\n")
+    db.diary_exclude(src.uuid, "daily/1999_07_26.txt")
+    old = root / "daily" / "1999_07_26.txt"
+    (root / "daily" / "1999_07_28.txt").write_bytes(old.read_bytes() + b"\nedited\n")
     old.unlink()
     report = sync_source(src.uuid)
     assert report.held == 1 and report.published == 0
-    held = files(src)["daily/2027_07_28.txt"]
+    held = files(src)["daily/1999_07_28.txt"]
     assert held.availability == "pending" and held.current_generation_uuid is None
     assert sync_source(src.uuid).held == 1                  # still held
-    assert db.diary_reconcile(src.uuid, exclude=[], release=["daily/2027_07_28.txt"]) == []
+    assert db.diary_reconcile(src.uuid, exclude=[], release=["daily/1999_07_28.txt"]) == []
     assert sync_source(src.uuid).published == 1
 
 
 def test_prune_rematerializes_then_deletes(source):
     src, root, _ = source
-    path = root / "current" / "2027.txt"
+    path = root / "current" / "1999.txt"
     sync_source(src.uuid)
-    path.write_bytes(path.read_bytes() + b"\n20270401\n09h00\nx\n")
+    path.write_bytes(path.read_bytes() + b"\n19990401\n09h00\nx\n")
     sync_source(src.uuid)
-    f = files(src)["current/2027.txt"]
+    f = files(src)["current/1999.txt"]
     assert len(revisions(f)) == 2
-    assert db.diary_prune(src.uuid, "current/2027.txt") == 1
+    assert db.diary_prune(src.uuid, "current/1999.txt") == 1
     db.session.expire_all()
-    (only,) = revisions(files(src)["current/2027.txt"])
+    (only,) = revisions(files(src)["current/1999.txt"])
     assert only.raw_bytes is not None and bytes(only.raw_bytes) == path.read_bytes()
     assert {p.cite_revision_uuid for p in current_passages(f)} == {only.uuid}
 

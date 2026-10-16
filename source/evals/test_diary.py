@@ -49,7 +49,7 @@ def test_forbidden_source_is_a_hard_failure(live):
 
 
 def test_budget_overflow_is_a_hard_failure(live):
-    case = _case(live, {"mode": "timeline", "date_from": "2027-03-12", "date_to": "2027-03-12"})
+    case = _case(live, {"mode": "timeline", "date_from": "1999-03-12", "date_to": "1999-03-12"})
     score, d = score_diary_recall_case(case, budget=200)
     assert "budget_overflow" in d["hard_failures"] and score == 0.0
 

@@ -188,14 +188,14 @@ def test_legacy_actions_are_still_dropped_whole():
 
 def test_audit_sees_full_diary_observation(live):
     agent = _agent()
-    obs = _action_diary_query(_ctx(live), {"mode": "timeline", "date_from": "2027-03-12",
-                                           "date_to": "2027-03-13"})
+    obs = _action_diary_query(_ctx(live), {"mode": "timeline", "date_from": "1999-03-12",
+                                           "date_to": "1999-03-13"})
     assert len(obs.text) > agent.REPLY_AUDIT_MAX_OBSERVATION_CHARS
     last_line = [ln for ln in obs.text.splitlines() if ln.strip() and not ln.startswith(("[", "<", "---"))][-1]
     prompt = agent._build_reply_audit_prompt(
         "You did physio.", messages=[{"sender_type": "human", "text": "what did I do"}],
-        scratchpad=[_step(obs, args={"mode": "timeline", "date_from": "2027-03-12",
-                                     "date_to": "2027-03-13"})])
+        scratchpad=[_step(obs, args={"mode": "timeline", "date_from": "1999-03-12",
+                                     "date_to": "1999-03-13"})])
     assert last_line.strip()[:40] in prompt                 # the end of the result survived
     assert "<diary_passages" in prompt
 

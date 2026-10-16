@@ -108,10 +108,10 @@ def assert_fenced(obs, budget=BUDGET):
     ({"mode": "fly"}, "mode"),
     ({"mode": "search", "query": "x", "cursor": "y"}, "not allowed"),
     ({"mode": "search", "query": "x", "surprise": 1}, "unknown"),
-    ({"mode": "timeline", "date_from": "2027-03-12"}, "requires"),
-    ({"mode": "timeline", "date_from": "2027-03-12", "date_to": "2027-03-11"}, "before"),
-    ({"mode": "timeline", "date_from": "2027-13-01", "date_to": "2027-13-02"}, "ISO"),
-    ({"mode": "timeline", "date_from": "2020-01-01", "date_to": "2027-01-01"}, "366"),
+    ({"mode": "timeline", "date_from": "1999-03-12"}, "requires"),
+    ({"mode": "timeline", "date_from": "1999-03-12", "date_to": "1999-03-11"}, "before"),
+    ({"mode": "timeline", "date_from": "1999-13-01", "date_to": "1999-13-02"}, "ISO"),
+    ({"mode": "timeline", "date_from": "1992-01-01", "date_to": "1999-01-01"}, "366"),
     ({"mode": "continue", "cursor": "nope"}, "cursor"),
     ({"mode": "read"}, "requires"),
 ])
@@ -121,8 +121,8 @@ def test_validation_rejects(args, fragment):
 
 
 def test_validation_accepts_inclusive_single_day_and_untrimmed_literal():
-    r = validate_request({"mode": "timeline", "date_from": "2027-03-12", "date_to": "2027-03-12"})
-    assert r.date_from == r.date_to == date(2027, 3, 12)
+    r = validate_request({"mode": "timeline", "date_from": "1999-03-12", "date_to": "1999-03-12"})
+    assert r.date_from == r.date_to == date(1999, 3, 12)
     assert validate_request({"mode": "literal", "query": "  spaced "}).query == "  spaced "
 
 
@@ -133,7 +133,7 @@ def test_disabled_source_is_unavailable_on_every_route(world):
     world.resync()
     for args in ({"mode": "search", "query": "physiotherapy"},
                  {"mode": "literal", "query": "Physiotherapy"},
-                 {"mode": "timeline", "date_from": "2027-03-12", "date_to": "2027-03-12"}):
+                 {"mode": "timeline", "date_from": "1999-03-12", "date_to": "1999-03-12"}):
         obs = world.q(**args)
         assert not obs.ok and obs.data["error"] == "unavailable"
 
@@ -163,7 +163,7 @@ def test_excluded_file_is_invisible_on_every_route(live):
     assert "Edit::VSpace" not in live.q(mode="literal", query="Edit::VSpace#move_left").text
     assert "Edit::VSpace" not in live.q(mode="search", query="Edit::VSpace#move_left").text
     assert live.q(mode="read", citation=cite).data["error"] == "not_found"
-    tl = live.q(mode="timeline", date_from="2027-07-27", date_to="2027-07-27")
+    tl = live.q(mode="timeline", date_from="1999-07-27", date_to="1999-07-27")
     assert "Edit::VSpace" not in tl.text
 
 
@@ -173,49 +173,49 @@ def test_excluded_file_is_invisible_on_every_route(live):
 def test_literal_finds_exact_match_with_citation(live):
     obs = live.q(mode="literal", query="Edit::VSpace#move_left")
     assert obs.ok and "Edit::VSpace#move_left" in obs.text
-    assert "2027-07-27" in obs.text and "author operator (kreese)" in obs.text
+    assert "1999-07-27" in obs.text and "author operator (kreese)" in obs.text
     assert obs.data["coverage"]["enumeration"] == "complete"
     assert_fenced(obs)
 
 
 def test_unmapped_author_token_is_shown_as_written(live):
-    live.write("archive/ChangeLog2.txt", "27-juli-2028 visitor\n*\tleft a guest note\n")
+    live.write("archive/ChangeLog2.txt", "27-juli-1998 visitor\n*\tleft a guest note\n")
     live.resync()
     obs = live.q(mode="literal", query="guest note")
     assert "author visitor" in obs.text and "operator" not in obs.text
 
 
 def test_literal_treats_sql_wildcards_literally(live):
-    live.write("current/2028.txt", "20280101\n09h00\nsaved 100%_done here\n\n10h00\nsaved 100 done\n")
+    live.write("current/1998.txt", "19980101\n09h00\nsaved 100%_done here\n\n10h00\nsaved 100 done\n")
     live.resync()
     obs = live.q(mode="literal", query="100%_done")
-    assert obs.text.count("--- current/2028.txt") == 1
+    assert obs.text.count("--- current/1998.txt") == 1
 
 
 def test_literal_crosses_chunk_boundaries(live):
-    long = "20280102\n09h00\n" + ("a" * 90 + "\n") * 7 + "needle-spanning" + "b" * 50 + "\n"
+    long = "19980102\n09h00\n" + ("a" * 90 + "\n") * 7 + "needle-spanning" + "b" * 50 + "\n"
     long += ("c" * 90 + "\n") * 3
-    live.write("current/2028.txt", long)
+    live.write("current/1998.txt", long)
     live.resync()
     obs = live.q(mode="literal", query="needle-spanning")
     assert "needle-spanning" in obs.text
 
 
 def test_literal_prompt_spelling_fallback(live):
-    live.write("current/2028.txt", "20280103\n09h00\nuse Vec<u8> for the buffer\n")
+    live.write("current/1998.txt", "19980103\n09h00\nuse Vec<u8> for the buffer\n")
     live.resync()
     obs = live.q(mode="literal", query="Vec‹u8›")
     assert obs.ok and "Vec‹u8›" in obs.text      # rendered through the fence escape
-    assert "--- current/2028.txt" in obs.text
+    assert "--- current/1998.txt" in obs.text
 
 
 def test_date_filter_applies_before_the_cap(live):
-    body = "".join(f"2028020{d}\n09h00\nalpha {d}\n\n" for d in range(1, 10))
-    body += "".join(f"20280210\n{h:02d}h00\nalpha extra {h}\n\n" for h in range(0, 23))
-    body += "20280211\n09h00\nalpha last\n"
-    live.write("current/2028.txt", body)
+    body = "".join(f"1998020{d}\n09h00\nalpha {d}\n\n" for d in range(1, 10))
+    body += "".join(f"19980210\n{h:02d}h00\nalpha extra {h}\n\n" for h in range(0, 23))
+    body += "19980211\n09h00\nalpha last\n"
+    live.write("current/1998.txt", body)
     live.resync()
-    obs = live.q(mode="literal", query="alpha", date_from="2028-02-11", date_to="2028-02-11")
+    obs = live.q(mode="literal", query="alpha", date_from="1998-02-11", date_to="1998-02-11")
     assert "alpha last" in obs.text and "alpha extra" not in obs.text
 
 
@@ -224,7 +224,7 @@ def meta(obs) -> str:
 
 
 def test_ordering_and_boundary_diagnostics_leave_metadata_complete(live):
-    live.write("current/2028.txt", "20280105\n10h00\nsecond errand\n09h00\nfirst errand\n"
+    live.write("current/1998.txt", "19980105\n10h00\nsecond errand\n09h00\nfirst errand\n"
                                    "```\nunclosed fence\n")
     live.resync()
     obs = live.q(mode="literal", query="errand")
@@ -234,23 +234,23 @@ def test_ordering_and_boundary_diagnostics_leave_metadata_complete(live):
 
 
 def test_date_diagnostics_mark_results_from_their_file(live):
-    live.write("current/2028.txt", "20280105\n09h00\nquiet errand\n")
-    live.write("current/2029.txt", "20290105\n09h00\nnoisy errand\n\n20291301\n10h00\nlate errand\n")
+    live.write("current/1998.txt", "19980105\n09h00\nquiet errand\n")
+    live.write("current/1997.txt", "19970105\n09h00\nnoisy errand\n\n19971301\n10h00\nlate errand\n")
     live.resync()
     obs = live.q(mode="literal", query="noisy errand")
     assert meta(obs) == "partial" and "date problems" in obs.text
     # Unfiltered: only the files a result came from can mislabel it.
     assert meta(live.q(mode="literal", query="quiet errand")) == "complete"
     # Filtered: a file with entries in the range could hold a misdated match.
-    obs = live.q(mode="literal", query="quiet errand", date_from="2028-01-05", date_to="2028-01-05")
+    obs = live.q(mode="literal", query="quiet errand", date_from="1998-01-05", date_to="1998-01-05")
     assert meta(obs) == "complete"
-    obs = live.q(mode="timeline", date_from="2029-01-05", date_to="2029-01-05")
+    obs = live.q(mode="timeline", date_from="1997-01-05", date_to="1997-01-05")
     assert meta(obs) == "partial"
 
 
 def test_literal_pages_without_skips_or_duplicates(live):
-    body = "".join(f"20280301\n{h:02d}h00\nrepeat marker {h}\n\n" for h in range(0, 24))
-    live.write("current/2028.txt", body)
+    body = "".join(f"19980301\n{h:02d}h00\nrepeat marker {h}\n\n" for h in range(0, 24))
+    live.write("current/1998.txt", body)
     live.resync()
     seen = []
     obs = live.q(budget=900, mode="literal", query="repeat marker")
@@ -268,8 +268,8 @@ def test_literal_pages_without_skips_or_duplicates(live):
 def test_search_groups_identical_routine_entries(live):
     obs = live.q(mode="search", query="physiotherapy exercises")
     assert obs.text.count("Physiotherapy exercises.") == 1
-    assert "(same text also on 2027-03-12)" in obs.text
-    assert "2027-03-13 09h30–10h00" in obs.text          # most recent occurrence cited
+    assert "(same text also on 1999-03-12)" in obs.text
+    assert "1999-03-13 09h30–10h00" in obs.text          # most recent occurrence cited
     assert obs.data["coverage"]["enumeration"] == "not_applicable"
 
 
@@ -301,54 +301,54 @@ def test_search_cursor_freezes_ranking(live):
 
 
 def test_timeline_one_inclusive_day(live):
-    obs = live.q(mode="timeline", date_from="2027-03-12", date_to="2027-03-12")
+    obs = live.q(mode="timeline", date_from="1999-03-12", date_to="1999-03-12")
     assert "Woke at" in obs.text and "Mein Rücken" in obs.text
-    assert "2027-03-13" not in obs.text
+    assert "1999-03-13" not in obs.text
 
 
 def test_month_preamble_overlaps_a_search_filter_and_fills_a_whole_month_timeline(live):
-    live.write("current/202802xx.txt", "month focus: the harbour survey\n\n"
-                                      "20280215\n09h00\nsurvey day one\n")
+    live.write("current/199802xx.txt", "month focus: the harbour survey\n\n"
+                                      "19980215\n09h00\nsurvey day one\n")
     live.resync()
     # A timeline enumerates what lies inside the range: the month only whole.
-    obs = live.q(mode="timeline", date_from="2028-02-15", date_to="2028-02-15")
+    obs = live.q(mode="timeline", date_from="1998-02-15", date_to="1998-02-15")
     assert "survey day one" in obs.text and "month focus" not in obs.text
-    obs = live.q(mode="timeline", date_from="2028-02-01", date_to="2028-02-29")
+    obs = live.q(mode="timeline", date_from="1998-02-01", date_to="1998-02-28")
     t = obs.text
-    assert "2028-02 (month from filename)" in t
+    assert "1998-02 (month from filename)" in t
     assert t.index("month focus") < t.index("survey day one")
     # Search and literal match by content: any overlap with the month counts.
-    obs = live.q(mode="literal", query="harbour survey", date_from="2028-02-20", date_to="2028-03-05")
+    obs = live.q(mode="literal", query="harbour survey", date_from="1998-02-20", date_to="1998-03-05")
     assert "month focus" in obs.text
-    obs = live.q(mode="literal", query="harbour survey", date_from="2028-03-01", date_to="2028-03-05")
+    obs = live.q(mode="literal", query="harbour survey", date_from="1998-03-01", date_to="1998-03-05")
     assert "month focus" not in obs.text
 
 
 def test_year_file_overlaps_a_search_filter_and_fills_a_whole_year_timeline(live):
-    live.write("current/2028_overview.txt", "year focus: the lighthouse logbook\n")
+    live.write("current/1998_overview.txt", "year focus: the lighthouse logbook\n")
     live.resync()
-    obs = live.q(mode="timeline", date_from="2028-06-10", date_to="2028-06-12")
+    obs = live.q(mode="timeline", date_from="1998-06-10", date_to="1998-06-12")
     assert "lighthouse logbook" not in obs.text
-    obs = live.q(mode="timeline", date_from="2028-01-01", date_to="2028-12-31")
-    assert "2028 (year from filename)" in obs.text and "lighthouse logbook" in obs.text
-    obs = live.q(mode="literal", query="lighthouse logbook", date_from="2028-06-10", date_to="2028-06-12")
-    assert "2028 (year from filename)" in obs.text
-    obs = live.q(mode="literal", query="lighthouse logbook", date_from="2029-01-01", date_to="2029-01-31")
+    obs = live.q(mode="timeline", date_from="1998-01-01", date_to="1998-12-31")
+    assert "1998 (year from filename)" in obs.text and "lighthouse logbook" in obs.text
+    obs = live.q(mode="literal", query="lighthouse logbook", date_from="1998-06-10", date_to="1998-06-12")
+    assert "1998 (year from filename)" in obs.text
+    obs = live.q(mode="literal", query="lighthouse logbook", date_from="1997-01-01", date_to="1997-01-31")
     assert "lighthouse logbook" not in obs.text
 
 
 def test_timeline_reads_newest_first_changelog_chronologically(live):
-    obs = live.q(mode="timeline", date_from="2027-07-25", date_to="2027-07-27")
+    obs = live.q(mode="timeline", date_from="1999-07-25", date_to="1999-07-27")
     t = obs.text
     assert t.index("started the undo rewrite") < t.index("re-enabled Buffer") < t.index("version 0.8")
 
 
 def test_timeline_pages_a_huge_entry_without_skips(live):
-    body = "20280401\n09h00\n" + "".join(f"line {i:03d} " + "z" * 60 + "\n" for i in range(60))
-    live.write("current/2028.txt", body)
+    body = "19980401\n09h00\n" + "".join(f"line {i:03d} " + "z" * 60 + "\n" for i in range(60))
+    live.write("current/1998.txt", body)
     live.resync()
     seen = []
-    obs = live.q(budget=1500, mode="timeline", date_from="2028-04-01", date_to="2028-04-01")
+    obs = live.q(budget=1500, mode="timeline", date_from="1998-04-01", date_to="1998-04-01")
     for _ in range(40):
         seen += re.findall(r"line (\d{3}) ", obs.text)
         if not obs.data["next_cursor"]:
@@ -383,14 +383,14 @@ def test_read_inside_multibyte_character_is_not_found(live):
     hit = citations(live.q(mode="literal", query="Rücken"))[0]
     rev, rng = hit.split(":")[1], hit.split(":")[2]
     start = int(rng.split("-")[0])
-    raw = (live.root / "current" / "2027.txt").read_bytes()
+    raw = (live.root / "current" / "1999.txt").read_bytes()
     u = raw.index("ü".encode(), start)
     assert live.q(mode="read", citation=f"diary:{rev}:{u + 1}-{u + 3}").data["error"] == "not_found"
 
 
 def test_citation_to_superseded_snapshot(live):
     before = citations(live.q(mode="literal", query="Slept badly"))[0]
-    path = live.root / "current" / "2027.txt"
+    path = live.root / "current" / "1999.txt"
     path.write_bytes(path.read_bytes().replace(b"Slept badly", b"Slept well"))
     live.resync()
     obs = live.q(mode="read", citation=before)
@@ -399,8 +399,8 @@ def test_citation_to_superseded_snapshot(live):
 
 def test_citation_survives_append(live):
     before = citations(live.q(mode="literal", query="Physiotherapy"))
-    path = live.root / "current" / "2027.txt"
-    path.write_bytes(path.read_bytes() + b"\n20270315\n09h00\nappended\n")
+    path = live.root / "current" / "1999.txt"
+    path.write_bytes(path.read_bytes() + b"\n19990315\n09h00\nappended\n")
     live.resync()
     after = citations(live.q(mode="literal", query="Physiotherapy"))
     assert before == after
@@ -410,8 +410,8 @@ def test_citation_survives_append(live):
 
 
 def _paged(live):
-    body = "".join(f"20280501\n{h:02d}h00\npaged text {h}\n\n" for h in range(0, 24))
-    live.write("current/2028.txt", body)
+    body = "".join(f"19980501\n{h:02d}h00\npaged text {h}\n\n" for h in range(0, 24))
+    live.write("current/1998.txt", body)
     live.resync()
     obs = live.q(budget=800, mode="literal", query="paged text")
     assert obs.data["next_cursor"]
@@ -444,7 +444,7 @@ def test_repeated_cursor_read_is_idempotent(live):
 @pytest.mark.parametrize("budget", [1100, 1900, 3500])
 def test_rendered_text_never_exceeds_budget(live, budget):
     for args in ({"mode": "search", "query": "the"},
-                 {"mode": "timeline", "date_from": "2027-03-12", "date_to": "2027-03-13"},
+                 {"mode": "timeline", "date_from": "1999-03-12", "date_to": "1999-03-13"},
                  {"mode": "literal", "query": "e"}):
         obs = diary_query(args, live.ctx(), budget=budget)
         assert obs.ok and len(obs.text) <= budget
@@ -479,10 +479,10 @@ def test_budget_arithmetic_four_maximal_passages_fit():
     assert budget == AssistantAgent.MAX_SCRATCHPAD_CHARS - DIARY_SCRATCHPAD_RESERVE == 3500
     items = [DiaryItem(
         source_uuid=uuid.UUID(int=1), source_name="a-realistic-source-name",
-        snapshot_at=datetime(2027, 3, 14, 9, 12, tzinfo=UTC),
-        path="current/some/deeper/folder/2027.txt", entry_uuid=uuid.uuid4(),
+        snapshot_at=datetime(1999, 3, 14, 9, 12, tzinfo=UTC),
+        path="current/some/deeper/folder/1999.txt", entry_uuid=uuid.uuid4(),
         passage_uuid=uuid.uuid4(), cite_revision=uuid.uuid4(), byte_start=100000 + i,
-        byte_end=100700 + i, text="x" * (PASSAGE_CAP - 1) + "\n", date_local=date(2027, 3, 12),
+        byte_end=100700 + i, text="x" * (PASSAGE_CAP - 1) + "\n", date_local=date(1999, 3, 12),
         clock_start=None, clock_end=None, time_status="date_only", date_basis="header",
         author_token="kreese") for i in range(4)]
     result = DiaryResult(ok=True, mode="search", items=items, metadata="partial",
@@ -507,25 +507,25 @@ def test_item_too_large_for_budget_still_makes_progress():
 
 
 def test_timeline_keeps_late_night_entries_after_the_evening(live):
-    live.write("current/2028.txt", "20280601\n21h00\nevening\n\n23h50\nlate\n\n00h20\nafter midnight\n")
+    live.write("current/1998.txt", "19980601\n21h00\nevening\n\n23h50\nlate\n\n00h20\nafter midnight\n")
     live.resync()
-    t = live.q(mode="timeline", date_from="2028-06-01", date_to="2028-06-01").text
+    t = live.q(mode="timeline", date_from="1998-06-01", date_to="1998-06-01").text
     assert t.index("evening") < t.index("late") < t.index("after midnight")
 
 
 def test_literal_matches_inside_one_excerpt_are_not_repeated(live):
-    live.write("current/2028.txt", "20280701\n09h00\nset DB_PASSWORD and APP_PASSWORD now\nthen restart\n")
+    live.write("current/1998.txt", "19980701\n09h00\nset DB_PASSWORD and APP_PASSWORD now\nthen restart\n")
     live.resync()
     obs = live.q(mode="literal", query="PASSWORD")
-    assert obs.text.count("--- current/2028.txt") == 1 and "2 matches" in obs.text
+    assert obs.text.count("--- current/1998.txt") == 1 and "2 matches" in obs.text
 
 
 def test_literal_window_snaps_to_line_boundaries(live):
     filler = "".join(f"line {i} with some words\n" for i in range(12))
-    live.write("current/2028.txt", f"20280702\n09h00\n{filler}needle here\n{filler}")
+    live.write("current/1998.txt", f"19980702\n09h00\n{filler}needle here\n{filler}")
     live.resync()
     obs = live.q(mode="literal", query="needle")
-    block = obs.text.split("--- current/2028.txt", 1)[1].split("\n", 1)[1]
+    block = obs.text.split("--- current/1998.txt", 1)[1].split("\n", 1)[1]
     assert block.startswith("line ") and "needle here" in block
     assert block.split("</diary_passages>")[0].rstrip("\n").endswith("words")
 
@@ -534,7 +534,7 @@ def test_literal_window_snaps_to_line_boundaries(live):
 
 
 def _rubyforge(live):
-    live.write("current/2028.txt", "20280801\n09h00\nuploaded the gem to RubyForge today\n\n"
+    live.write("current/1998.txt", "19980801\n09h00\nuploaded the gem to RubyForge today\n\n"
                                    "10h00\nunrelated ruby notes\n")
     live.resync()
 
@@ -555,7 +555,7 @@ def test_search_tolerates_typos(live, typo):
 
 def test_known_word_pairs_are_not_glued_into_typos(live):
     from diary.fuzzy import close_words
-    live.write("current/2028.txt", "20281230\n09h00\ndidn't finish, doing it tomorrow; did i do in time\n")
+    live.write("current/1998.txt", "19981230\n09h00\ndidn't finish, doing it tomorrow; did i do in time\n")
     live.resync()
     assert close_words("what did i do in the evening", [live.src.uuid]) == []
 
@@ -579,7 +579,7 @@ def test_literal_stays_exact_and_suggests_spellings(live):
 
 def test_suggestions_never_reveal_excluded_files(live):
     _rubyforge(live)
-    db.diary_exclude(live.src.uuid, "current/2028.txt")
+    db.diary_exclude(live.src.uuid, "current/1998.txt")
     miss = live.q(mode="literal", query="ruby forge")
     assert miss.data["suggestions"] == [] and "RubyForge" not in miss.text
 
@@ -595,10 +595,10 @@ def test_vocabulary_is_rebuilt_by_sync_and_cleared_by_purge(live):
 
 
 def test_common_words_do_not_rank(live):
-    body = "".join(f"2028090{d}\n09h00\nthe the the note {d}\n\n" for d in range(1, 10))
-    body += "".join(f"2028091{d}\n09h00\nthe usual the day {d}\n\n" for d in range(0, 10))
-    body += "20280920\n09h00\nthe zeppelin arrived\n"
-    live.write("current/2028.txt", body)
+    body = "".join(f"1998090{d}\n09h00\nthe the the note {d}\n\n" for d in range(1, 10))
+    body += "".join(f"1998091{d}\n09h00\nthe usual the day {d}\n\n" for d in range(0, 10))
+    body += "19980920\n09h00\nthe zeppelin arrived\n"
+    live.write("current/1998.txt", body)
     live.resync()
     obs = live.q(mode="search", query="the the zeppelin")
     first = obs.text.split("--- ", 2)[1]
@@ -607,17 +607,17 @@ def test_common_words_do_not_rank(live):
 
 def test_typos_keep_length_but_not_other_words(live):
     from diary.fuzzy import close_words
-    live.write("current/2028.txt", "20281001\n09h00\nan event related to nothing even\n")
+    live.write("current/1998.txt", "19981001\n09h00\nan event related to nothing even\n")
     live.resync()
     assert close_words("evening relax", [live.src.uuid]) == []
 
 
 def _diary_with_its_own_typo(live):
-    body = "".join(f"2028110{d}\n09h00\nuploaded to RubyForge again {d}\n\n" for d in range(1, 6))
-    body += "20281106\n09h00\nthe RubyFroge mirror was down\n\n"
-    body += "".join(f"2028111{d}\n09h00\neven more notes {d}\n\n" for d in range(0, 6))
-    body += "20281116\n09h00\nthe event started\n"
-    live.write("current/2028.txt", body)
+    body = "".join(f"1998110{d}\n09h00\nuploaded to RubyForge again {d}\n\n" for d in range(1, 6))
+    body += "19981106\n09h00\nthe RubyFroge mirror was down\n\n"
+    body += "".join(f"1998111{d}\n09h00\neven more notes {d}\n\n" for d in range(0, 6))
+    body += "19981116\n09h00\nthe event started\n"
+    live.write("current/1998.txt", body)
     live.resync()
 
 
@@ -646,7 +646,7 @@ def test_literal_names_the_diarys_other_spellings(live):
 
 
 def test_typographic_quotes_do_not_hide_words(live):
-    live.write("current/2028.txt", "20281201\n09h00\nmoved the \u201cstaging\u201d box\n")
+    live.write("current/1998.txt", "19981201\n09h00\nmoved the \u201cstaging\u201d box\n")
     live.resync()
     assert "staging" in live.q(mode="search", query="staging").text
     words = {r[0] for r in db.session.execute(sa.text(
@@ -656,9 +656,9 @@ def test_typographic_quotes_do_not_hide_words(live):
 
 def test_rare_neighbor_words_are_not_typos(live):
     from diary.fuzzy import rare_variants
-    live.write("current/2028.txt", "".join(
-        f"2028121{d}\n09h00\nremove the old file {d}\n\n" for d in range(0, 6))
-        + "20281216\n09h00\nthe remote host\n")
+    live.write("current/1998.txt", "".join(
+        f"1998121{d}\n09h00\nremove the old file {d}\n\n" for d in range(0, 6))
+        + "19981216\n09h00\nthe remote host\n")
     live.resync()
     # One edit apart but a word of its own that occurs once: still offered,
     # because frequency and distance cannot tell a rare word from a typo.

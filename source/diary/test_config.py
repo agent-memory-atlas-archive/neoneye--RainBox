@@ -78,10 +78,10 @@ def test_invalid_manifests_name_the_field(changes, fragment):
 
 def test_override_validation():
     sha = "a" * 64
-    ok = manifest(file_overrides={"current/2027.txt": {
+    ok = manifest(file_overrides={"current/1999.txt": {
         "content_sha256": sha, "force_boundary_offsets": [10],
         "suppress_boundary_offsets": [20], "pasted_ranges": [[30, 40], [50, 60]]}})
-    assert ok.file_overrides["current/2027.txt"].pasted_ranges == ((30, 40), (50, 60))
+    assert ok.file_overrides["current/1999.txt"].pasted_ranges == ((30, 40), (50, 60))
     with pytest.raises(ManifestError, match="overlap"):
         manifest(file_overrides={"x.txt": {"content_sha256": sha,
                                            "pasted_ranges": [[0, 10], [5, 20]]}})
@@ -111,7 +111,7 @@ def test_dialect_for_uses_longest_component_prefix():
         {"prefix": "daily/old/", "dialect": "changelog"},
     ]).dialect_rules
     assert dialect_for("x.txt", rules) == "timed"
-    assert dialect_for("daily/2027_07_26.txt", rules) == "daily"
+    assert dialect_for("daily/1999_07_26.txt", rules) == "daily"
     assert dialect_for("daily/old/ChangeLog.txt", rules) == "changelog"
     assert dialect_for("dailyish/x.txt", rules) == "timed"   # component boundary
     assert dialect_for("x.txt", ()) == "plain"

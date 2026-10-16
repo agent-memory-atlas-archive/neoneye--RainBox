@@ -1,4 +1,4 @@
-27-juli-2027 kreese
+27-juli-1999 kreese
 *	refactoring: true/false return values from commands have been
 	replaced by an exception system; a thrown exception means no
 	modification occurred. This has improved robustness a lot.
@@ -6,9 +6,9 @@
 *	bugfix: Edit::VSpace#move_left did not report its change,
 	trashing undo/redo completely.
 
-26-Juli-2027 kreese
+26-Juli-1999 kreese
 *	re-enabled Buffer#test_exception_xxx.
 
-25-jul.-2027 kreese
+25-jul.-1999 kreese
 Notes before the first bullet belong to the day.
 *	started the undo rewrite.

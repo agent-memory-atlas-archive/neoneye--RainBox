@@ -1,4 +1,4 @@
-20270312
+19990312
 Woke at 07h10. Slept badly; the dog next door barked until two.
 
 09h30 - 10h00
@@ -26,7 +26,7 @@ next week.
 13h15
 Mein Rücken fühlt sich wieder normal an.
 
-20270313
+19990313
 09h30 - 10h00
 Physiotherapy exercises.
 
@@ -35,7 +35,7 @@ tried embeddinggemma:300m against the old index, commit 3fa9c2e1 broke
 the loader in `load_index`.
 
 ```
-20270314
+19990314
 14h30 not a boundary, inside a fence
 ```
 

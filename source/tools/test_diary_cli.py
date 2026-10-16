@@ -117,5 +117,5 @@ def test_query_prints_the_observation(workspace, capsys):
     out = capsys.readouterr().out
     assert "Edit::VSpace#move_left" in out and "<diary_passages" in out
     assert cli.main(["--database-url", SANDBOX_URL, "query", "--source", name,
-                     "timeline", "--from", "2027-07-26"]) == 0
+                     "timeline", "--from", "1999-07-26"]) == 0
     assert "re-enabled Buffer" in capsys.readouterr().out
