@@ -57,10 +57,16 @@ TIMED_DATE = re.compile(r"^(\d{4})(\d{2})(\d{2})(?:;[^\r\n]*)?$")
 TIMED_TIME = re.compile(r"^(\d{2})h(\d{2})(?:[ \t]*-[ \t]*(\d{2})h(\d{2}))?$")
 # `0830`, or with a colon: `08:30`, `8:30`.
 DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$|^(\d{1,2}):(\d{2})$")
-# `27-juli-2027 kreese` or `27-07-2027 kreese`, optionally followed by an
-# angle-bracketed contact, as in `27-07-2027 kreese <kreese@example.org>`.
+# `27-juli-2027 kreese`, `27-07-2027 kreese`, or the GNU form
+# `2027-07-27  Kim Kreese  <kim@example.org>`: a date, an optional `- `, an
+# author of one to three words, none starting with a digit (`03:12` is a
+# clock, not a name), and an optional angle-bracketed contact. An ISO date
+# may stand alone.
+_CHANGELOG_AUTHOR = (r"(?:[ \t]+(?:-[ \t]+)?([^\s<\d-]\S*(?:[ \t]+[^\s<\d]\S*){0,2})"
+                     r"(?:[ \t]+<[^\s<>]+>)?)")
 CHANGELOG_HEADER = re.compile(
-    r"^(\d{1,2})-(\d{1,2}|[^\s\d-]+)-(\d{4})[ \t]+([^\s<]\S*)(?:[ \t]+<[^\s<>]+>)?$")
+    r"^(\d{1,2})-(\d{1,2}|[^\s\d-]+)-(\d{4})" + _CHANGELOG_AUTHOR + "$")
+CHANGELOG_ISO_HEADER = re.compile(r"^(\d{4})-(\d{2})-(\d{2})" + _CHANGELOG_AUTHOR + "?$")
 CHANGELOG_BULLET = re.compile(r"^\*[ \t]")
 # `1apr2027`, `03apr2027 saturday`, or a timesheet row
 # `1apr2027;1000;1530;05:30;note` whose first two fields are start and stop.
@@ -307,7 +313,8 @@ def _quarantined(dialect: str, n: int, diag: Diagnostic) -> ParsedFile:
 
 
 def parse_file(raw_bytes: bytes, relative_path: str, parser_config: dict[str, Any]) -> ParsedFile:
-    dialect = dialect_for(relative_path, parser_config.get("dialect_rules", []))
+    dialect = dialect_for(relative_path, parser_config.get("dialect_rules", []),
+                          parser_config.get("file_dialects"))
     n = len(raw_bytes)
     nul = raw_bytes.find(b"\x00")
     if nul >= 0:
@@ -415,6 +422,14 @@ class _Parser:
                 return None
             return _Marker("date", date=d)
         if self.dialect == "changelog":
+            m = CHANGELOG_ISO_HEADER.match(rec)
+            if m:
+                d = _valid_date(int(m[1]), int(m[2]), int(m[3]))
+                if d is None:
+                    if report:
+                        self.diags.append(Diagnostic("invalid_date", line.byte_start))
+                    return None
+                return _Marker("date", date=d, author=m[4])
             m = CHANGELOG_HEADER.match(rec)
             if not m:
                 return None

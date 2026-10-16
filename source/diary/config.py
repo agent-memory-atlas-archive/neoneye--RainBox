@@ -24,7 +24,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Bump when parse_file's output for the same bytes and config changes. Part
 # of the fingerprint, so every generation parsed by older code goes stale.
-PARSER_VERSION = 10
+PARSER_VERSION = 11
 # Bump when the identifier annotation rules change (same effect).
 IDENTIFIER_VERSION = 1
 # Passage cap in characters (code points). §5/§8 of the proposal: four whole
@@ -39,7 +39,7 @@ _MANIFEST_KEYS = {
     "schema_version", "name", "root", "room_uuid", "agent_uuid", "timezone",
     "sensitivity", "allow_remote_models", "include_suffixes", "dialect_rules",
     "month_languages", "command_tokens", "author_tokens", "clock_prefixes",
-    "file_overrides",
+    "file_dialects", "file_overrides",
 }
 _OVERRIDE_KEYS = {
     "content_sha256", "force_boundary_offsets", "suppress_boundary_offsets",
@@ -82,6 +82,7 @@ class Manifest:
     command_tokens: tuple[str, ...]
     author_tokens: dict[str, str] = field(default_factory=dict)
     clock_prefixes: tuple[str, ...] = ()
+    file_dialects: dict[str, str] = field(default_factory=dict)
     file_overrides: dict[str, FileOverride] = field(default_factory=dict)
 
 
@@ -234,6 +235,17 @@ def load_manifest(raw: Any, *, check_root: bool = True) -> Manifest:
              "clock_prefixes must be non-empty words of letters")
     _require(len(set(clock_prefixes)) == len(clock_prefixes), "clock_prefixes has duplicates")
 
+    file_dialects_raw = raw.get("file_dialects", {})
+    _require(isinstance(file_dialects_raw, dict), "file_dialects must be an object")
+    file_dialects: dict[str, str] = {}
+    for path, dialect in file_dialects_raw.items():
+        _require(isinstance(path, str) and not path.endswith("/"),
+                 f"file_dialects keys are file paths, not directories: {path!r}")
+        norm = _normalize_relative_path(path)
+        _require(norm not in file_dialects, f"file_dialects has two entries for {norm!r}")
+        _require(dialect in DIALECTS, f"unknown dialect {dialect!r}")
+        file_dialects[norm] = dialect
+
     overrides_raw = raw.get("file_overrides", {})
     _require(isinstance(overrides_raw, dict), "file_overrides must be an object")
     overrides: dict[str, FileOverride] = {}
@@ -248,7 +260,7 @@ def load_manifest(raw: Any, *, check_root: bool = True) -> Manifest:
         include_suffixes=tuple(suffixes), dialect_rules=tuple(rules),
         month_languages=tuple(languages), command_tokens=tuple(commands),
         author_tokens=dict(authors), clock_prefixes=tuple(clock_prefixes),
-        file_overrides=overrides,
+        file_dialects=file_dialects, file_overrides=overrides,
     )
 
 
@@ -282,10 +294,14 @@ def month_tables(languages: tuple[str, ...]) -> dict[str, int]:
     return dict(sorted(table.items()))
 
 
-def dialect_for(relative_path: str, rules: tuple[DialectRule, ...] | list[dict]) -> str:
-    """Longest matching directory prefix, on path-component boundaries;
-    unmatched files are `plain`. `rules` may be DialectRule objects or the
-    serialized dicts stored in a parser config."""
+def dialect_for(relative_path: str, rules: tuple[DialectRule, ...] | list[dict],
+                file_dialects: dict[str, str] | None = None) -> str:
+    """A file named in `file_dialects`, else the longest matching directory
+    prefix, on path-component boundaries; unmatched files are `plain`.
+    `rules` may be DialectRule objects or the serialized dicts stored in a
+    parser config."""
+    if file_dialects and relative_path in file_dialects:
+        return file_dialects[relative_path]
     best_len = -1
     best = "plain"
     for rule in rules:
@@ -311,6 +327,7 @@ def build_parser_config(manifest: Manifest) -> dict[str, Any]:
         "command_tokens": sorted(manifest.command_tokens),
         "author_tokens": dict(sorted(manifest.author_tokens.items())),
         "clock_prefixes": sorted(manifest.clock_prefixes),
+        "file_dialects": dict(sorted(manifest.file_dialects.items())),
         "file_overrides": {
             path: {
                 "content_sha256": ov.content_sha256,
@@ -360,6 +377,7 @@ def manifest_to_json(manifest: Manifest) -> dict[str, Any]:
         "command_tokens": list(manifest.command_tokens),
         "author_tokens": dict(manifest.author_tokens),
         "clock_prefixes": list(manifest.clock_prefixes),
+        "file_dialects": dict(manifest.file_dialects),
         "file_overrides": {
             path: {
                 "content_sha256": ov.content_sha256,

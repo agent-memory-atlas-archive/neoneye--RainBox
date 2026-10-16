@@ -564,13 +564,41 @@ def test_changelog_header_contact_and_numeric_month(header, expected):
 
 
 @pytest.mark.parametrize("header", [
-    b"27-juli-2027 kreese someone",          # a second bare token is not a contact
+    b"27-juli-2027 kreese wrote this part",  # four words read as prose, not a name
     b"27-juli-2027 kreese <kreese at example.org>",
     b"27-juli-2027 <kreese@example.org>",    # a contact is not an author token
+    b"2027-07-27 03:12  Kim Kreese  <kim@example.org>",   # a clock is not a name
 ])
 def test_changelog_header_rejects_other_trailers(header):
     parsed = parse_file(header + b"\n*\ta\n", "archive/ChangeLog.txt", CFG)
     assert parsed.entries and all(e.date_local is None for e in parsed.entries)
+
+
+@pytest.mark.parametrize("header, author", [
+    (b"2027-07-27  Kim Kreese  <kim@example.org>", "Kim Kreese"),
+    (b"2027-07-27 Kim Kreese", "Kim Kreese"),
+    (b"2027-07-27 - kreese_notes", "kreese_notes"),
+    (b"27-juli-2027 Kim van Kreese", "Kim van Kreese"),
+    (b"2027-07-27", None),
+])
+def test_changelog_iso_and_gnu_headers(header, author):
+    parsed = parse_file(header + b"\n\tdid a thing\n", "archive/ChangeLog.txt", CFG)
+    assert [(e.date_local, e.author_token) for e in parsed.entries] == [(date(2027, 7, 27), author)]
+    assert parsed.diagnostics == []
+
+
+def test_changelog_iso_header_out_of_range_is_invalid_date():
+    parsed = parse_file(b"2027-13-27 kreese\n*\ta\n", "archive/ChangeLog.txt", CFG)
+    assert codes(parsed) == ["invalid_date"]
+
+
+def test_file_dialects_name_single_files():
+    cfg = config(file_dialects={"daily/2027_07_xx.txt": "changelog"})
+    raw = b"2027-07-27  Kim Kreese\n\t* did a thing\n"
+    month = parse_file(raw, "daily/2027_07_xx.txt", cfg)
+    assert month.dialect == "changelog" and month.diagnostics == []
+    assert [e.date_local for e in month.entries] == [date(2027, 7, 27)]
+    assert parse_file(b"0900\na\n", "daily/2027_07_26.txt", cfg).dialect == "daily"
 
 
 def test_changelog_numeric_month_out_of_range_is_invalid_date():

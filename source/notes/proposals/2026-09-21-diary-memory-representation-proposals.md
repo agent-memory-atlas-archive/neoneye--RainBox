@@ -160,6 +160,9 @@ Validation and defaults:
   slash; `""` is the root prefix. Reject `..`, absolute prefixes, duplicates and
   unknown dialects/languages. Suffix comparison is case-sensitive; `""` explicitly
   allows extensionless files. Skip symlinks, including symlinked directories.
+- `file_dialects` maps single relative file paths to a dialect and wins over
+  every prefix, for a file whose format differs from its folder's (a month
+  of ChangeLog among daily files). Keys are files, never directories.
 - Month names come from `babel.dates.get_month_names` (`wide` and
   `abbreviated`, trailing period stripped, matched case-insensitively) for
   each language tag in `month_languages`; `babel` 2.18 is already in the
@@ -438,7 +441,7 @@ inspection shows a false split. No content is discarded to resolve ambiguity.
 |---|---|---|
 | `timed` | Valid `YYYYMMDD` line at column zero, optionally followed by `;` and a trailer about the day (`20270901;all day`), which stays in the header's context range; valid `HHhMM` or `HHhMM - HHhMM` time line at column zero | Text after a date before the first time is a date-only entry; text before any date is undated |
 | `daily` | Filename stem exactly `YYYY_MM_DD`; valid `HHMM`, `HH:MM` or `H:MM` at column zero at file start or immediately after an empty line | Blank lines within a record remain in it; a candidate inside a protected span is suppressed |
-| `changelog` | Valid `DD-month-YYYY` or `DD-MM-YYYY` plus whitespace and one author token, optionally followed by whitespace and an angle-bracketed contact (`<kreese@example.org>`); top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
+| `changelog` | Valid `DD-month-YYYY`, `DD-MM-YYYY` or `YYYY-MM-DD`, then whitespace, an optional `- `, an author of one to three words and an optional angle-bracketed contact (`2027-07-27  Kim Kreese  <kim@example.org>`, the GNU form); a `YYYY-MM-DD` line may also stand alone; top-level `*` followed by whitespace opens a bullet | Retain indented continuations and internal blanks until next bullet/header; pre-bullet text is a date-only entry |
 | `daybook` | Valid `DDmonthYYYY` at column zero (month name glued, from the configured tables), alone, followed by one word (`03apr2027 saturday`), or by `;` fields where a leading `;HHMM;HHMM` is the entry's start and stop (`1apr2027;1000;1530;05:30;note`); a configured clock prefix followed by `HHMM:` or `H:MM` at column zero | The day line opens an entry and stays its text, so a weekday or a timesheet note is searchable; it has no separate header range |
 | `plain` | Nonempty blank-line-separated blocks | No inferred clock; use an unambiguous filename date if present |
 
