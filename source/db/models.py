@@ -1961,7 +1961,7 @@ class BenchmarkResult(db.Model):
 
 DIARY_AVAILABILITY = ("pending", "ready", "quarantined", "missing")
 DIARY_DIALECTS = ("timed", "daily", "changelog", "daybook", "plain")
-DIARY_DATE_BASES = ("header", "filename", "filename_month", "unknown")
+DIARY_DATE_BASES = ("header", "filename", "filename_month", "filename_year", "unknown")
 DIARY_VECTOR_MODES = ("off", "exact", "hnsw")
 # Typographic quotes the `simple` parser would glue onto words ("“production”"
 # is otherwise a different word from production). Blanked before indexing;

@@ -431,6 +431,27 @@ def test_month_filename_stems(path, expected):
     assert dates(parsed) == [expected, expected]
 
 
+@pytest.mark.parametrize("path, expected", [
+    ("notes/2027_overview.md", (date(2027, 1, 1), "filename_year")),
+    ("notes/2027xxxx.md", (date(2027, 1, 1), "filename_year")),
+    ("notes/2027xxxx_harbour.md", (date(2027, 1, 1), "filename_year")),
+    ("notes/2027XXXX-harbour.md", (date(2027, 1, 1), "filename_year")),
+    ("notes/2027.txt", (date(2027, 1, 1), "filename_year")),
+    ("notes/2027harbour.md", (None, "unknown")),
+    ("notes/2027_13.md", (None, "unknown")),
+    ("notes/0999_overview.md", (None, "unknown")),
+])
+def test_year_filename_stems(path, expected):
+    parsed = parse_file(b"first block\n\nsecond block\n", path, CFG)
+    assert dates(parsed) == [expected, expected]
+
+
+def test_year_file_header_outside_the_year_is_a_mismatch():
+    raw = b"27-juli-2028 kreese\n*\ta\n"
+    assert codes(parse_file(raw, "archive/2027xxxx_harbour.md", CFG)) == ["filename_header_mismatch"]
+    assert codes(parse_file(raw, "archive/2028xxxx_harbour.md", CFG)) == []
+
+
 def test_month_file_header_outside_the_month_is_a_mismatch():
     parsed = parse_file(b"20271001\n09h00\nwent hiking\n", "current/202709xx.md", CFG)
     assert codes(parsed) == ["filename_header_mismatch"]

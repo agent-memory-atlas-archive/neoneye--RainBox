@@ -320,6 +320,15 @@ def test_month_preamble_overlaps_any_date_filter_in_its_month(live):
     assert "month focus" not in obs.text
 
 
+def test_year_file_overlaps_any_date_filter_in_its_year(live):
+    live.write("current/2028_overview.txt", "year focus: the lighthouse logbook\n")
+    live.resync()
+    obs = live.q(mode="timeline", date_from="2028-06-10", date_to="2028-06-12")
+    assert "2028 (year from filename)" in obs.text and "lighthouse logbook" in obs.text
+    obs = live.q(mode="literal", query="lighthouse logbook", date_from="2029-01-01", date_to="2029-01-31")
+    assert "lighthouse logbook" not in obs.text
+
+
 def test_timeline_reads_newest_first_changelog_chronologically(live):
     obs = live.q(mode="timeline", date_from="2027-07-25", date_to="2027-07-27")
     t = obs.text

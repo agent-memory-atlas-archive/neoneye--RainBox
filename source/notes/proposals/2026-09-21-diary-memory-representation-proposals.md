@@ -230,7 +230,7 @@ fails. A source record is retained on purge.
 | `diary_exclusion` | `source_uuid FK`, `relative_path text`, `created_at` | Unique `(source_uuid,relative_path)`; excludes the entire file, all revisions |
 | `diary_cursor` | `room_uuid uuid`, `agent_uuid uuid?`, `request jsonb`, `catalog_manifest jsonb`, `position jsonb`, `expires_at` | Opaque UUID; expires after 30 minutes; never contains copied source text |
 
-`date_basis` is `header`, `filename`, `filename_month` or `unknown`.
+`date_basis` is `header`, `filename`, `filename_month`, `filename_year` or `unknown`.
 `time_status` is `date_only`, `minute`, `range`, `unknown`, `ambiguous` or
 `invalid_range`. For identifier annotations, subtype is `url`, `hash`, `path`,
 `symbol`, `issue` or `model`; other kinds use `none`. `value` is the original
@@ -457,7 +457,11 @@ is a stem `YYYYMMxx` or `YYYY_MM_xx` (either case), optionally followed by
 typically what the month is about — is dated to the month's first day with
 basis `filename_month`, labelled `2027-09 (month from filename)`, and
 in a plain file every block is. A header outside that month emits
-`filename_header_mismatch`. Month-name headers use the configured tables.
+`filename_header_mismatch`. A **year file** (`2027`, `2027xxxx`, or either
+followed by `_`/`-` and a topic that does not start with a digit, such as
+`2027_overview`) does the same at year grain: basis `filename_year`, label
+`2027 (year from filename)`, a mismatch for a header outside the year. Day
+stems are matched first, then month stems, then year stems. Month-name headers use the configured tables.
 Do not find dates by scanning arbitrary body prose.
 
 For `timed`, `changelog` and `daybook`, a valid header takes precedence over a filename date;
@@ -649,8 +653,9 @@ Contract:
   are inclusive**; `date_from == date_to` is one day. A model asked about
   “the 26th” writes the 26th twice, which is less error-prone than working out
   an exclusive end. Internally the bounds become `[date_from, date_to + 1 day)`.
-  A `filename_month` entry matches when that range overlaps its month, so a
-  question about one day still sees what that month was about.
+  A `filename_month` or `filename_year` entry matches when that range
+  overlaps its month or year, so a question about one day still sees what
+  that month or year was about.
   `search`/`literal` accept optional bounds; `timeline` requires both and
   spans at most 366 days. Optional `source` narrows the query to one source
   *name*, as the observation labels print it. Names are unique, and a model

@@ -54,6 +54,8 @@ def date_label(item: DiaryItem) -> str:
             label += " (date from filename)"
         elif item.date_basis == "filename_month":
             label = item.date_local.strftime("%Y-%m") + " (month from filename)"
+        elif item.date_basis == "filename_year":
+            label = item.date_local.strftime("%Y") + " (year from filename)"
     if item.clock_start is not None:
         label += " " + _clock(item.clock_start)
         if item.clock_end is not None:
