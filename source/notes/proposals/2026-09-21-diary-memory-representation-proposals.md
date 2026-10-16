@@ -467,7 +467,7 @@ The parser therefore checks each accepted header against its predecessor in
 the same file: in `timed`, `daily` and `daybook`, a clock earlier than the latest clock
 so far on the same date emits `clock_regression` — except a crossing of
 midnight (a latest clock at or after 18:00 followed by one before 06:00, or
-an hour-24 clock), which is a late night, not an ambiguity; in `timed` and
+a clock written with hours 24–29), which is a late night, not an ambiguity; in `timed` and
 `daybook`, a date earlier than the previous date emits `date_regression`, and in `changelog`
 (newest first) a date *later* than the previous one does. The boundary is
 still accepted, because diaries are occasionally written out of order, and
@@ -478,9 +478,10 @@ region cannot occur, since those headers are already suppressed.
 ### Clocks, order and chunks
 
 Keep local dates and minute values as written. Time ranges do not prove when the
-author typed a record or when its event occurred. Hour 24 is the writer's own
-past-midnight notation: `24h00` and `23h30 - 24h15` are valid, stored as
-`00:MM` under the date as written, and a range ending in hour 24 is a
+author typed a record or when its event occurred. Hours 24–29 are the
+writer's own past-midnight notation, counting on until the 06:00 late-night
+cutoff: `24h00`, `23h30 - 25h15`, `2500` and `25:30` are valid, stored as the
+hour less 24 under the date as written, and a range ending past hour 23 is a
 `range`, as is a bare range from the evening into the small hours
 (`18h00 - 02h00`: start at or after 18:00, end before 06:00). Otherwise an end earlier than a start is `invalid_range`; do not
 infer midnight rollover from bare clocks. DST gaps/overlaps are

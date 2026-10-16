@@ -173,8 +173,9 @@ class _Marker:
     clock_start: time | None = None
     clock_end: time | None = None
     author: str | None = None
-    # Written with hour 24 (`24h00`, `23h30 - 24h15`): past midnight by the
-    # writer's own notation. The stored clock is 00:MM on the date as written.
+    # Written with hours 24–29 (`24h00`, `23h30 - 25h15`, `2500`): past
+    # midnight by the writer's own notation. The stored clock is the hour
+    # less 24 on the date as written.
     start_wraps: bool = False
     end_wraps: bool = False
 
@@ -197,10 +198,11 @@ def _valid_clock(h: int, m: int) -> time | None:
 
 
 def _clock24(h: int, m: int) -> tuple[time, bool] | None:
-    """A clock that may be written with hour 24 for past midnight: returns
-    (clock, wraps). `24h15` is (00:15, True)."""
-    if h == 24 and 0 <= m <= 59:
-        return time(0, m), True
+    """A clock that may keep counting past midnight, hours 24–29 (until the
+    06:00 late-night cutoff): returns (clock, wraps). `24h15` is
+    (00:15, True), `2500` is (01:00, True)."""
+    if 24 <= h <= 29 and 0 <= m <= 59:
+        return time(h - 24, m), True
     t = _valid_clock(h, m)
     return (t, False) if t is not None else None
 

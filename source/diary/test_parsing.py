@@ -364,6 +364,20 @@ def test_plain_dialect_blocks():
     assert all(e.date_local == date(2027, 3, 12) and e.clock_start is None for e in parsed.entries)
 
 
+def test_daily_clocks_count_on_past_midnight_until_hour_29():
+    raw = b"2350\na\n\n2455\nb\n\n2500\nc\n\n25:30\nd\n\n2959\ne\n"
+    parsed = parse_file(raw, "daily/2027_07_26.txt", CFG)
+    assert [e.clock_start for e in parsed.entries] == [
+        time(23, 50), time(0, 55), time(1, 0), time(1, 30), time(5, 59)]
+    assert all(e.date_local == date(2027, 7, 26) for e in parsed.entries)
+    assert parsed.diagnostics == []
+
+
+def test_hour_30_is_not_a_clock():
+    parsed = parse_file(b"2350\na\n\n3000\nb\n", "daily/2027_07_26.txt", CFG)
+    assert codes(parsed) == ["invalid_time"]
+
+
 def dates(parsed) -> list[tuple[date | None, str]]:
     return [(e.date_local, e.date_basis) for e in parsed.entries]
 
@@ -486,7 +500,7 @@ DIAGNOSTIC_CASES = {
                            "current/x.txt", None),
     "possible_boundary_in_terminal": (b"0900\n$ ls\n\n1234\n", "daily/2027_07_26.txt", None),
     "invalid_date": (b"20271340\n", "current/x.txt", None),
-    "invalid_time": (b"20270312\n25h00\n", "current/x.txt", None),
+    "invalid_time": (b"20270312\n30h00\n", "current/x.txt", None),
     "unknown_month": (b"27-foo-2027 kreese\n", "archive/ChangeLog.txt", None),
     "filename_header_mismatch": (b"20270313\n09h00\nx\n", "current/20270312.txt", None),
     "invalid_daily_filename": (b"0900\nx\n", "daily/notes.txt", None),
