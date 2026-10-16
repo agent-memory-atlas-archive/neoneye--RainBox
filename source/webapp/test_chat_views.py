@@ -323,10 +323,12 @@ def test_assistant_rows_link_to_their_run_from_the_kebab():
     chat keeps a way into the trace after the progress bubble is reaped. It
     lives in the message kebab, with the row's other navigations, rather than
     beside copy and feedback where a bare "run" read as a control that would
-    execute something. An anchor, so cmd/middle-click opens a new tab."""
+    execute something. It opens the run in a new tab, so the chat stays put."""
     body = _body()
     assert "const runUuid = (m.meta || {}).assistant_run_uuid;" in body
     assert "inspect.href = '/assistant?id=' + encodeURIComponent(runUuid);" in body
+    assert "inspect.target = '_blank';" in body
+    assert "inspect.rel = 'noopener';" in body
     assert "inspect.textContent = 'Inspect \u2197';" in body
     assert "inspect.className = 'item';" in body
     assert "msg-run-link" not in body

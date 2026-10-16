@@ -1039,16 +1039,19 @@ function buildMessageMenu(m){
   menu.hidden = true;
   // The assistant run behind this row. The progress bubble carried this link
   // while the turn worked but is reaped once the reply lands — and a reply
-  // worth questioning is exactly when the trace is wanted. An anchor, not a
-  // button: it navigates, so cmd/middle-click should open it in a new tab.
+  // worth questioning is exactly when the trace is wanted. It opens in a new
+  // tab, so reading the trace never takes the reader out of the conversation.
   const runUuid = (m.meta || {}).assistant_run_uuid;
   if (runUuid){
     const inspect = document.createElement('a');
     inspect.className = 'item';
     inspect.setAttribute('role', 'menuitem');
     inspect.href = '/assistant?id=' + encodeURIComponent(runUuid);
+    inspect.target = '_blank';
+    inspect.rel = 'noopener';
+    inspect.addEventListener('click', () => { menu.hidden = true; });
     inspect.textContent = 'Inspect ↗';
-    inspect.title = 'Open the assistant run that produced this message';
+    inspect.title = 'Open the assistant run that produced this message in a new tab';
     menu.appendChild(inspect);
   }
   if (currentRoomIsDirect() && !m.streaming){
