@@ -306,25 +306,33 @@ def test_timeline_one_inclusive_day(live):
     assert "2027-03-13" not in obs.text
 
 
-def test_month_preamble_overlaps_any_date_filter_in_its_month(live):
+def test_month_preamble_overlaps_a_search_filter_and_fills_a_whole_month_timeline(live):
     live.write("current/202802xx.txt", "month focus: the harbour survey\n\n"
                                       "20280215\n09h00\nsurvey day one\n")
     live.resync()
+    # A timeline enumerates what lies inside the range: the month only whole.
     obs = live.q(mode="timeline", date_from="2028-02-15", date_to="2028-02-15")
+    assert "survey day one" in obs.text and "month focus" not in obs.text
+    obs = live.q(mode="timeline", date_from="2028-02-01", date_to="2028-02-29")
     t = obs.text
     assert "2028-02 (month from filename)" in t
     assert t.index("month focus") < t.index("survey day one")
+    # Search and literal match by content: any overlap with the month counts.
     obs = live.q(mode="literal", query="harbour survey", date_from="2028-02-20", date_to="2028-03-05")
     assert "month focus" in obs.text
     obs = live.q(mode="literal", query="harbour survey", date_from="2028-03-01", date_to="2028-03-05")
     assert "month focus" not in obs.text
 
 
-def test_year_file_overlaps_any_date_filter_in_its_year(live):
+def test_year_file_overlaps_a_search_filter_and_fills_a_whole_year_timeline(live):
     live.write("current/2028_overview.txt", "year focus: the lighthouse logbook\n")
     live.resync()
     obs = live.q(mode="timeline", date_from="2028-06-10", date_to="2028-06-12")
+    assert "lighthouse logbook" not in obs.text
+    obs = live.q(mode="timeline", date_from="2028-01-01", date_to="2028-12-31")
     assert "2028 (year from filename)" in obs.text and "lighthouse logbook" in obs.text
+    obs = live.q(mode="literal", query="lighthouse logbook", date_from="2028-06-10", date_to="2028-06-12")
+    assert "2028 (year from filename)" in obs.text
     obs = live.q(mode="literal", query="lighthouse logbook", date_from="2029-01-01", date_to="2029-01-31")
     assert "lighthouse logbook" not in obs.text
 

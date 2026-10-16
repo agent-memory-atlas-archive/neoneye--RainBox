@@ -240,6 +240,17 @@ def _date_sql(req: DiaryRequest) -> str:
     return _DATE_FILTER if req.date_from is not None else ""
 
 
+# A timeline enumerates what lies inside its range, so a month- or
+# year-dated entry is listed only when the range holds that whole period;
+# otherwise a year's overview would fill the first page of a one-day
+# timeline. Search and literal keep the overlap rule above.
+_TIMELINE_DATE_FILTER = (
+    " AND e.date_local >= :date_from AND e.date_local < :date_until"
+    " AND (e.date_basis NOT IN ('filename_month', 'filename_year')"
+    " OR (e.date_basis = 'filename_month' AND e.date_local + interval '1 month' <= :date_until)"
+    " OR (e.date_basis = 'filename_year' AND e.date_local + interval '1 year' <= :date_until))")
+
+
 def _snapshot_times(sources: list[Any]) -> dict[UUID, datetime | None]:
     rows = db.session.execute(sa.text(
         "SELECT f.source_uuid, max(r.first_ingested_at) FROM diary_file f "
@@ -511,7 +522,7 @@ def _timeline(req: DiaryRequest, sources: list[Any], position: dict | None) -> D
             "kd": date.fromisoformat(position["date"]), "ks": UUID(position["source"]),
             "kp": position["path"], "ko": position["ordinal"]})
         keyset = f" AND {_TIMELINE_KEY} >= (:kd, :ks, :kp, :ko)"
-    entry_sql = ("SELECT e.uuid " + _ELIGIBLE_ENTRIES + _date_sql(req) + keyset
+    entry_sql = ("SELECT e.uuid " + _ELIGIBLE_ENTRIES + _TIMELINE_DATE_FILTER + keyset
                  + f" ORDER BY {_TIMELINE_KEY} LIMIT {TIMELINE_BATCH + 1}")
     entry_ids = [r[0] for r in db.session.execute(sa.text(entry_sql), params).all()]
     more = len(entry_ids) > TIMELINE_BATCH

@@ -653,9 +653,12 @@ Contract:
   are inclusive**; `date_from == date_to` is one day. A model asked about
   “the 26th” writes the 26th twice, which is less error-prone than working out
   an exclusive end. Internally the bounds become `[date_from, date_to + 1 day)`.
-  A `filename_month` or `filename_year` entry matches when that range
-  overlaps its month or year, so a question about one day still sees what
-  that month or year was about.
+  For `search` and `literal`, a `filename_month` or `filename_year` entry
+  matches when that range overlaps its month or year, so a question about
+  one day still finds what that month or year was about. A `timeline`
+  enumerates what lies inside its range, so it lists such an entry only when
+  the range holds the whole month or year; otherwise a year's overview would
+  fill the first page of a one-day timeline.
   `search`/`literal` accept optional bounds; `timeline` requires both and
   spans at most 366 days. Optional `source` narrows the query to one source
   *name*, as the observation labels print it. Names are unique, and a model
