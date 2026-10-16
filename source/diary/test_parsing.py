@@ -587,6 +587,22 @@ def test_changelog_iso_and_gnu_headers(header, author):
     assert parsed.diagnostics == []
 
 
+def test_changelog_titled_header_is_a_dated_entry_owning_its_line():
+    raw = (b"2027-12-23: Toolkit, REVISION 812\n\nRelease notes.\n * fixed a crash\n\n"
+           b"20271213: Toolkit, REVISION 790\n * first build\n")
+    parsed = parse_file(raw, "archive/ChangeLog.txt", CFG)
+    assert [e.date_local for e in parsed.entries] == [date(2027, 12, 23), date(2027, 12, 13)]
+    assert parsed.entries[0].text.startswith("2027-12-23: Toolkit, REVISION 812\n")
+    assert parsed.entries[0].context_ranges == []
+    assert parsed.diagnostics == []          # newest first is the changelog order
+
+
+@pytest.mark.parametrize("line", [b"2027-12-23 : spaced colon", b"2027-1223: half dashed"])
+def test_changelog_titled_header_needs_the_colon_after_a_whole_date(line):
+    parsed = parse_file(line + b"\n * a\n", "archive/ChangeLog.txt", CFG)
+    assert all(e.date_local is None for e in parsed.entries)
+
+
 def test_changelog_iso_header_out_of_range_is_invalid_date():
     parsed = parse_file(b"2027-13-27 kreese\n*\ta\n", "archive/ChangeLog.txt", CFG)
     assert codes(parsed) == ["invalid_date"]

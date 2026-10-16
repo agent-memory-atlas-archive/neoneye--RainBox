@@ -60,13 +60,17 @@ DAILY_TIME = re.compile(r"^(\d{2})(\d{2})$|^(\d{1,2}):(\d{2})$")
 # `27-juli-2027 kreese`, `27-07-2027 kreese`, or the GNU form
 # `2027-07-27  Kim Kreese  <kim@example.org>`: a date, an optional `- `, an
 # author of one to three words, none starting with a digit (`03:12` is a
-# clock, not a name), and an optional angle-bracketed contact. An ISO date
-# may stand alone.
-_CHANGELOG_AUTHOR = (r"(?:[ \t]+(?:-[ \t]+)?([^\s<\d-]\S*(?:[ \t]+[^\s<\d]\S*){0,2})"
+# clock, not a name) or a colon, and an optional angle-bracketed contact. An
+# ISO date may stand alone.
+_CHANGELOG_AUTHOR = (r"(?:[ \t]+(?:-[ \t]+)?([^\s<\d:-]\S*(?:[ \t]+[^\s<\d]\S*){0,2})"
                      r"(?:[ \t]+<[^\s<>]+>)?)")
 CHANGELOG_HEADER = re.compile(
     r"^(\d{1,2})-(\d{1,2}|[^\s\d-]+)-(\d{4})" + _CHANGELOG_AUTHOR + "$")
 CHANGELOG_ISO_HEADER = re.compile(r"^(\d{4})-(\d{2})-(\d{2})" + _CHANGELOG_AUTHOR + "?$")
+# A release-notes header, `2027-12-23: Toolkit, REVISION 812` or
+# `20271213: …`: the title after the colon is searchable text, so the
+# header opens an entry that owns its line.
+CHANGELOG_TITLED = re.compile(r"^(?:(\d{4})-(\d{2})-(\d{2})|(\d{4})(\d{2})(\d{2})):")
 CHANGELOG_BULLET = re.compile(r"^\*[ \t]")
 # `1apr2027`, `03apr2027 saturday`, or a timesheet row
 # `1apr2027;1000;1530;05:30;note` whose first two fields are start and stop.
@@ -422,6 +426,15 @@ class _Parser:
                 return None
             return _Marker("date", date=d)
         if self.dialect == "changelog":
+            m = CHANGELOG_TITLED.match(rec)
+            if m:
+                y, mo, dd = (m[1], m[2], m[3]) if m[1] else (m[4], m[5], m[6])
+                d = _valid_date(int(y), int(mo), int(dd))
+                if d is None:
+                    if report:
+                        self.diags.append(Diagnostic("invalid_date", line.byte_start))
+                    return None
+                return _Marker("start", date=d)
             m = CHANGELOG_ISO_HEADER.match(rec)
             if m:
                 d = _valid_date(int(m[1]), int(m[2]), int(m[3]))
