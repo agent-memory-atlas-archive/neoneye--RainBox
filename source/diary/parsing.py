@@ -78,14 +78,17 @@ DAYBOOK_DATE = re.compile(r"^(\d{1,2})([^\W\d_]+)(\d{4})(?:(;[^\r\n]*)|[ \t]+\S+
 DAYBOOK_SPAN = re.compile(r"^;(\d{2})(\d{2});(\d{2})(\d{2})(?:[;:]|$)")
 # After a configured clock prefix: `0930:` or `9:30` / `09:30`.
 DAYBOOK_CLOCK = r"(?:(\d{2})(\d{2}):|(\d{1,2}):(\d{2})(?=[: \t]|$))"
+# A day file's stem may carry a topic after `_` or `-` (`2027_07_26_harbour`),
+# as a month file's may.
+_TOPIC = r"(?:[_-].*)?$"
 FILENAME_DATE = (
-    re.compile(r"^(\d{4})(\d{2})(\d{2})$"),
-    re.compile(r"^(\d{4})_(\d{2})_(\d{2})$"),
+    re.compile(r"^(\d{4})(\d{2})(\d{2})" + _TOPIC),
+    re.compile(r"^(\d{4})_(\d{2})_(\d{2})" + _TOPIC),
 )
-FILENAME_DATE_DMY = re.compile(r"^(\d{2})-(\d{2})-(\d{4})$")
+FILENAME_DATE_DMY = re.compile(r"^(\d{2})-(\d{2})-(\d{4})" + _TOPIC)
 # A month file: `YYYYMMxx` or `YYYY_MM_xx`, optionally `_topic` / `-topic`.
-FILENAME_MONTH = re.compile(r"^(\d{4})_?(\d{2})_?[xX]{2}(?:[_-].*)?$")
-DAILY_FILENAME = re.compile(r"^(\d{4})_(\d{2})_(\d{2})$")
+FILENAME_MONTH = re.compile(r"^(\d{4})_?(\d{2})_?[xX]{2}" + _TOPIC)
+DAILY_FILENAME = re.compile(r"^(\d{4})_(\d{2})_(\d{2})" + _TOPIC)
 
 # Identifier rules (IDENTIFIER_VERSION 1). Conservative; unusual identifiers
 # are reached through literal mode, not through these.

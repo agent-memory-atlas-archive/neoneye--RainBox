@@ -449,7 +449,9 @@ For recognition only, remove the line ending and trailing spaces/tabs. An empty
 line contains only spaces/tabs after removing its ending. Never remove those
 bytes from stored text. Validate days/months/leap years and hours `00–23`, minutes
 `00–59`; malformed headers remain text plus a diagnostic. Filename dates accept
-only complete stems `YYYYMMDD`, `YYYY_MM_DD`, or `DD-MM-YYYY`. A **month file**
+only complete stems `YYYYMMDD`, `YYYY_MM_DD`, or `DD-MM-YYYY`, each optionally
+followed by `_` or `-` and a topic (`2027_07_26_harbour`); the `daily`
+dialect's filename rule accepts the same topic suffix. A **month file**
 is a stem `YYYYMMxx` or `YYYY_MM_xx` (either case), optionally followed by
 `_` or `-` and a topic (`202709xx_work`): text before its first date line —
 typically what the month is about — is dated to the month's first day with

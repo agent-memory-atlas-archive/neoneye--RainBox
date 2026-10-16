@@ -382,6 +382,33 @@ def dates(parsed) -> list[tuple[date | None, str]]:
     return [(e.date_local, e.date_basis) for e in parsed.entries]
 
 
+@pytest.mark.parametrize("path, dialect", [
+    ("daily/2027_07_26_harbour.txt", "daily"),
+    ("daily/2027_07_26-harbour.txt", "daily"),
+])
+def test_daily_filename_may_carry_a_topic(path, dialect):
+    parsed = parse_file(b"9:30\nboarded\n\n10:15\nlanded\n", path, CFG)
+    assert parsed.dialect == dialect and parsed.diagnostics == []
+    assert [(e.date_local, e.clock_start) for e in parsed.entries] == [
+        (date(2027, 7, 26), time(9, 30)), (date(2027, 7, 26), time(10, 15))]
+
+
+@pytest.mark.parametrize("path, expected", [
+    ("notes/2027_03_12_harbour.txt", date(2027, 3, 12)),
+    ("notes/20270312-harbour.txt", date(2027, 3, 12)),
+    ("notes/12-03-2027_harbour.txt", date(2027, 3, 12)),
+    ("notes/2027_03_12harbour.txt", None),
+])
+def test_day_filename_topic_suffix(path, expected):
+    parsed = parse_file(b"a block\n", path, CFG)
+    assert [e.date_local for e in parsed.entries] == [expected]
+
+
+def test_daily_topic_suffix_needs_a_separator():
+    parsed = parse_file(b"0930\na\n", "daily/2027_07_26harbour.txt", CFG)
+    assert codes(parsed) == ["invalid_daily_filename"]
+
+
 def test_month_file_dates_its_preamble_to_the_month():
     raw = b"focus this month: ship the parser\n\n20270901;all day\nwent hiking\n"
     parsed = parse_file(raw, "current/202709xx.md", CFG)
