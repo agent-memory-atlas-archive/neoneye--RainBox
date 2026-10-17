@@ -111,21 +111,29 @@ item can exceed a fixed share of the budget. The excerpt is **a window, not a
 prefix**: the 280 chars of the item's full text (a diary passage is at most
 600, a claim or answer can be longer) that best match the current request,
 marked `…` at each cut end. The 280 includes the markers, so the text itself
-is at most 278. The window is chosen in three steps, coarsest first:
+is at most 278. The window is the best of all candidate windows, scored by
+word overlap with the request; line alignment is a **preference among equal
+scores, never a gate**:
 
-1. **whole lines** — the run of consecutive lines with the highest word
-   overlap that fits;
-2. **word boundaries** — when no whole line fits (a single line can be as
-   long as the 600-char passage, a claim longer still), the window inside the
-   best-matching line, cut at spaces;
-3. **characters** — when one word is longer than the window, a plain cut on
-   a character boundary.
+- **whole-line windows** — every run of consecutive lines that fits;
+- **word-boundary windows** — inside every line longer than the window (a
+  single line can be as long as the 600-char passage, a claim longer still),
+  each cut at spaces;
+- **character windows** — only where one word is longer than the window.
 
-With no matching word at all, the window is the start of the text. A fact two
-hundred chars into a passage is then shown when the request is about it,
-instead of being cut off by a fixed prefix; so is a fact near the end of one
-long line. Test: a single-line passage whose relevant fact starts after
-character 280 is shown, cut at words, with the markers inside the cap. Relevance (decision 3) is scored on the
+The highest overlap wins; on a tie, the whole-line window, then the earlier
+one. A gate would fail on an ordinary diary shape: the entry marker stays
+with a passage's first line, so a short `09h00` or date line followed by one
+long body line would always win as "the line-aligned window that fits",
+however late in the body the matching terms sit. With no matching word at
+all, the window is the start of the text.
+
+A fact two hundred chars into a passage is then shown when the request is
+about it, instead of being cut off by a fixed prefix; so is a fact near the
+end of one long line. Tests: a single-line passage whose relevant fact starts
+after character 280; a short heading line followed by a 450-char body line
+with the relevant fact after character 280 — the window is inside the body,
+not the heading; both cut at words, with the markers inside the cap. Relevance (decision 3) is scored on the
 **full text**, not the window, so a cut part can still select the item.
 
 Diary citations name bytes in an immutable revision, so the excerpt is exact
@@ -479,7 +487,8 @@ that, at near-zero cost per verdict.
    lifetime (refetch renews, carrying does not, an item leaves with its last
    fetching run); the excerpt window (a fact past the first 280 chars is shown
    when the request is about it, and recorded as cut when it is not; a
-   single long line with the fact after character 280); `injected: false`
+   single long line with the fact after character 280; a short heading
+   followed by a long body line with the fact late in the body); `injected: false`
    blocks labelled hypothetical and kept out of replay and the omission
    diagnosis; the source allow-list.
 3. Recording only: compute and store `metadata_["carried"]` with
