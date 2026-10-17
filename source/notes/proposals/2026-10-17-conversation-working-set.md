@@ -206,8 +206,9 @@ request path):
 
 ```
 score     = relevance(item, request) + 0.5 * recency
-relevance = word overlap of the item's excerpt with the current request
-            (lowercased word tokens, IDF-weighted within the candidate set)
+relevance = word overlap of the item's FULL text with the current request
+            (lowercased word tokens, IDF-weighted within the candidate set);
+            the 280-char window is chosen afterwards, for display only
 recency   = 1 / (1 + runs since the newest window run that fetched the item)
 ```
 
@@ -228,8 +229,14 @@ Lifetime follows from the derivation, with one rule:
   would drift from "what this conversation recently looked at" to "what it
   looked at once, long ago". A fact that keeps mattering keeps being fetched.
 - Items from the newest **6** window runs are always candidates; items from
-  older window runs are candidates only when they share at least two
-  IDF-weighted terms with the current request.
+  older window runs are candidates only when their **full text** shares at
+  least two IDF-weighted terms with the current request.
+
+Scoring and that two-term test read the full text, never the window: when a
+passage's matching terms sit further apart than one 280-char window, a
+window-scored item would be demoted or dropped although its content is
+relevant. Test: an older item whose two matching terms are separated by more
+than a window is still a candidate and ranks by both.
 
 The working set is a few dozen candidates at most, so ranking is
 microseconds.
@@ -279,26 +286,49 @@ source has a ready file, so a remote-enabled source B would unlock query text
 that a local-only source A inspired. Authorising an earlier argument needs
 the provenance of what its turn had read.
 
-So each run records its **evidence scope**: the diary sources whose text was
-in front of the model during that run — the sources of its `diary_query`
-results (their `catalog_manifest`) and of the diary items carried into it —
-each with the `policy_version` it had then:
+So each run records its **evidence scope**: every diary file whose text was
+in front of the model during that run, grouped by source with the source's
+`policy_version` then. Text reaches a turn three ways, and the scope covers
+all three:
+
+1. the run's own `diary_query` results — the files behind the citations it
+   was shown;
+2. diary items carried into it — their files;
+3. **search records rendered into it with their arguments** — the scope those
+   records carry, taken over whole. A query is diary-derived text even when
+   no diary passage came with it, so its origin travels with it.
 
 ```json
-"evidence_scope": {"diary": {"<source uuid>": 3, "<source uuid>": 7}}
+"evidence_scope": {"diary": {"<source uuid>": {"policy_version": 3,
+                                               "files": ["<file uuid>", …]}}}
 ```
 
-A search record from that run renders its arguments only when **every**
-source in the run's scope is eligible to the current turn (`eligible_sources`
-under its `DiaryContext`) **with the same `policy_version`**. Any policy
-change bumps that version — an exclusion, an enable or disable, the remote-
-models setting — so an excluded file withholds the queries it may have
-inspired even while other sources stay available. A sync bumps only
-`catalog_version`, which is not part of the test, so a nightly sync does not
-blank the log. A run with an empty diary scope saw no diary text, and its
-arguments render. A run with no recorded scope — every run before this is
-built — **cannot be authorised and is withheld**; there is no way to
-establish after the fact what it read.
+The third rule makes the scope transitive. Without it, a turn that received
+an earlier query's arguments but no diary item (the item lost on budget)
+could reuse that text in a memory query, record an empty scope, and hand the
+text to a later remote-model turn. With it, the middle turn's scope carries
+the first turn's, and the later turn withholds both. Withheld records carry
+no arguments and add nothing to the receiving scope.
+
+A search record renders its arguments only when its run's whole scope passes
+the current turn's gates:
+
+- every source in the scope is eligible to the current turn
+  (`eligible_sources` under its `DiaryContext`) **with the same
+  `policy_version`** — an exclusion, an enable or disable, or a change of the
+  remote-models setting bumps it, so any of them withholds;
+- every recorded file is still **`ready`** and not excluded. Policy does not
+  cover this: a sync that marks a file missing or quarantined bumps only
+  `catalog_version` (`diary_mark_file` passes `policy=False`), and
+  `eligible_sources` checks the source, not its files. So the file list is
+  rechecked directly — the same availability `resolve_citation` requires of
+  an item.
+
+`catalog_version` alone is not part of the test, so a nightly sync that
+leaves every recorded file `ready` does not blank the log. A run with an
+empty diary scope saw no diary text, and its arguments render. A run with no
+recorded scope — every run before this is built — **cannot be authorised and
+is withheld**; there is no way to establish after the fact what it read.
 
 Withheld records render as action and count alone —
 `turn -2  memory_query (query withheld) → 2 facts` — and the recorded block
@@ -313,8 +343,13 @@ own policy, not here.
 Tests: (1) local turns read diary source A (local-only); a later turn on a
 remote model can read source B (remote-enabled) — A's queries are withheld,
 B's render; (2) a file of A is excluded while B stays available — A's
-queries are withheld; (3) a nightly sync between the turns — nothing is
-withheld; (4) a run recorded before the scope existed — withheld.
+queries are withheld; (3) a nightly sync between the turns that leaves the
+read files `ready` — nothing is withheld; (4) a sync that marks a read file
+missing, and one that quarantines it — the queries it inspired are withheld;
+(5) three turns: turn 1 reads local-only A; turn 2 receives turn 1's query
+arguments but no diary item, and uses that text in a memory query; turn 3 on
+a remote model — turn 2's arguments are withheld too; (6) a run recorded
+before the scope existed — withheld.
 
 ## In the prompt
 
