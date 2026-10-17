@@ -109,11 +109,23 @@ An item is a stable reference plus a short excerpt:
 Every excerpt, whatever its source, is at most **280 chars**, so no single
 item can exceed a fixed share of the budget. The excerpt is **a window, not a
 prefix**: the 280 chars of the item's full text (a diary passage is at most
-600, a claim or answer can be longer) that best match the current request —
-the line-aligned window with the highest word overlap, falling back to the
-start when nothing matches — marked `…` at each cut end. A fact two hundred
-chars into a passage is then shown when the request is about it, instead of
-being cut off by a fixed prefix. Relevance (decision 3) is scored on the
+600, a claim or answer can be longer) that best match the current request,
+marked `…` at each cut end. The 280 includes the markers, so the text itself
+is at most 278. The window is chosen in three steps, coarsest first:
+
+1. **whole lines** — the run of consecutive lines with the highest word
+   overlap that fits;
+2. **word boundaries** — when no whole line fits (a single line can be as
+   long as the 600-char passage, a claim longer still), the window inside the
+   best-matching line, cut at spaces;
+3. **characters** — when one word is longer than the window, a plain cut on
+   a character boundary.
+
+With no matching word at all, the window is the start of the text. A fact two
+hundred chars into a passage is then shown when the request is about it,
+instead of being cut off by a fixed prefix; so is a fact near the end of one
+long line. Test: a single-line passage whose relevant fact starts after
+character 280 is shown, cut at words, with the markers inside the cap. Relevance (decision 3) is scored on the
 **full text**, not the window, so a cut part can still select the item.
 
 Diary citations name bytes in an immutable revision, so the excerpt is exact
@@ -262,94 +274,50 @@ whose content does not change underneath the reference:
 
 ### 5. Show what was searched, not only what was found
 
-Path dependence is as much about the queries as the results. The block ends
-with a log of the read actions the window's runs made:
+Path dependence is as much about what was tried as what was found. The block
+ends with a log of the read actions the window's runs made — **structure
+only, no free text**:
 
 ```
-turn -2  diary_query search "toolkit first release"  → 4 passages
-turn -2  memory_query "toolkit projects"             → 2 facts
-turn -5  diary_query timeline 1999-07-01..1999-07-31  → 23 entries (2 pages)
+turn -2  diary_query search   → 4 passages
+turn -2  memory_query         → 2 facts
+turn -5  diary_query timeline → 23 entries (2 pages)
 ```
 
-The loop can then refine a search instead of repeating it blind, or reopen a
-cursor-sized result with `read`. This also closes the diary spec's §12 gap
-("the decide prompt's evidence should show whether a diary search already
-ran").
+Turn, action, mode and result count, and nothing a model or the operator
+wrote: no query strings, no arguments, no date ranges. The loop learns that a
+diary search already ran this conversation and how much it found, and what
+it found is in the carried items above, re-admitted one by one. That closes
+the diary spec's §12 gap ("the decide prompt's evidence should show whether a
+diary search already ran") without copying text forward.
 
-**The log is evidence too, and passes the same gates.** A query is not
-neutral metadata: one written after reading a diary passage can carry a name
-or a fact from it. If the log copied queries unconditionally, a turn on a
-remote model would receive, through the log, exactly the diary-derived text
-that decision 2b keeps out of its items. Whether "the diary" is available
-now is not the right test: `diary_available()` is true when *any* usable
-source has a ready file, so a remote-enabled source B would unlock query text
-that a local-only source A inspired. Authorising an earlier argument needs
-the provenance of what its turn had read.
+**Why no arguments.** A query is not neutral metadata. One written after
+reading a diary passage can carry a name from it; so can one written after a
+spelling suggestion or a literal-search variant (strings from passages that
+have no citation of their own), or after a memory claim that has since been
+made secret — `set_memory_sensitivity()` posts no invalidation marker. Every
+item in the working set is a *reference*, re-read under this turn's rules
+(decision 2b), so the rules see exactly what reaches the prompt. A copied
+query string is the one channel that carries text without a reference to
+re-check. Authorising it would need provenance for every way an observation
+can reveal text — cited files, suggestions, variants, claims, seed answers,
+and every earlier query it was written from, transitively — and missing one
+channel is a leak. Leaving the arguments out makes the log safe by
+construction, and the working set keeps one rule: it shows only what this
+turn could have fetched itself.
 
-So each run records its **evidence scope**: every diary file whose text was
-in front of the model during that run, grouped by source with the source's
-`policy_version` then. Text reaches a turn three ways, and the scope covers
-all three:
-
-1. the run's own `diary_query` results — the files behind the citations it
-   was shown;
-2. diary items carried into it — their files;
-3. **search records rendered into it with their arguments** — the scope those
-   records carry, taken over whole. A query is diary-derived text even when
-   no diary passage came with it, so its origin travels with it.
-
-```json
-"evidence_scope": {"diary": {"<source uuid>": {"policy_version": 3,
-                                               "files": ["<file uuid>", …]}}}
-```
-
-The third rule makes the scope transitive. Without it, a turn that received
-an earlier query's arguments but no diary item (the item lost on budget)
-could reuse that text in a memory query, record an empty scope, and hand the
-text to a later remote-model turn. With it, the middle turn's scope carries
-the first turn's, and the later turn withholds both. Withheld records carry
-no arguments and add nothing to the receiving scope.
-
-A search record renders its arguments only when its run's whole scope passes
-the current turn's gates:
-
-- every source in the scope is eligible to the current turn
-  (`eligible_sources` under its `DiaryContext`) **with the same
-  `policy_version`** — an exclusion, an enable or disable, or a change of the
-  remote-models setting bumps it, so any of them withholds;
-- every recorded file is still **`ready`** and not excluded. Policy does not
-  cover this: a sync that marks a file missing or quarantined bumps only
-  `catalog_version` (`diary_mark_file` passes `policy=False`), and
-  `eligible_sources` checks the source, not its files. So the file list is
-  rechecked directly — the same availability `resolve_citation` requires of
-  an item.
-
-`catalog_version` alone is not part of the test, so a nightly sync that
-leaves every recorded file `ready` does not blank the log. A run with an
-empty diary scope saw no diary text, and its arguments render. A run with no
-recorded scope — every run before this is built — **cannot be authorised and
-is withheld**; there is no way to establish after the fact what it read.
-
-Withheld records render as action and count alone —
-`turn -2  memory_query (query withheld) → 2 facts` — and the recorded block
-holds the same withheld form, so the log never stores what the turn could not
-see.
+The cost is real but bounded: the loop cannot see the exact wording that was
+tried. The recording-only phase (*Rollout*, step 3) measures it — how often a
+later turn repeats or near-repeats an earlier query that the log would have
+named. If wording turns out to matter, arguments can come back on terms that
+are complete by construction (for example, only on turns whose every model
+is local, re-checking every claim and file a dependency graph records); that
+is a separate proposal, judged on that data.
 
 Earlier assistant *replies* in `conversation_history_xml` can also restate
 diary text, and they reach a remote-model turn today. That exposure predates
 this proposal and is not widened by it; it belongs to the history window's
 own policy, not here.
-
-Tests: (1) local turns read diary source A (local-only); a later turn on a
-remote model can read source B (remote-enabled) — A's queries are withheld,
-B's render; (2) a file of A is excluded while B stays available — A's
-queries are withheld; (3) a nightly sync between the turns that leaves the
-read files `ready` — nothing is withheld; (4) a sync that marks a read file
-missing, and one that quarantines it — the queries it inspired are withheld;
-(5) three turns: turn 1 reads local-only A; turn 2 receives turn 1's query
-arguments but no diary item, and uses that text in a memory query; turn 3 on
-a remote model — turn 2's arguments are withheld too; (6) a run recorded
-before the scope existed — withheld.
 
 ## In the prompt
 
@@ -418,7 +386,7 @@ under the same budget, in its own fixed position.
 Each run records what it carried, in `assistant_run.metadata_["carried"]`:
 
 ```json
-{"budget_chars": 2000, "block_chars": 1874, "candidates": 17,
+{"injected": true, "budget_chars": 2000, "block_chars": 1874, "candidates": 17,
  "boundary_marker": "<message uuid or null>",
  "block": "<the exact serialized <conversation_evidence> block>",
  "items": [{"ref": "diary:…", "turn": -2, "score": 1.42, "chars": 280,
@@ -426,6 +394,14 @@ Each run records what it carried, in `assistant_run.metadata_["carried"]`:
  "dropped": [{"ref": "claim:…", "reason": "budget"},
              {"ref": "diary:…", "reason": "ineligible"}, …]}
 ```
+
+`injected` says whether the block reached the prompts. It is `false` in the
+recording-only phase (*Rollout*, step 3) and whenever the setting is off: the
+block is then what *would* have been carried. The inspector labels such a row
+"would carry — not shown to the model", replay and the markdown export never
+treat it as input the model saw, and the omission diagnosis below applies
+only to `injected: true` runs — a fact in a hypothetical block cannot have
+been "in front of it and ignored".
 
 **The rendered block is the historical record.** Live turns rebuild the
 working set from stored rows, and that rebuild re-reads sources that change:
@@ -495,17 +471,24 @@ that, at near-zero cost per verdict.
    locked shield, each dropped with no excerpt logged; diary labels kept
    whole (inherited author, month- and year-level dates, superseded); the
    exact-range resolver (later passage of a long entry, appended file,
-   superseded file); the search log withheld across a local-to-remote
-   switch; budget on the full serialized block, with an oversized leading
+   superseded file); the search log carries no argument text (fixtures: a
+   query quoting a passage, one reusing a literal-search suggestion or
+   variant, one quoting a claim later made secret — none of the strings
+   appears in the block); budget on the full serialized block, with an oversized leading
    claim followed by a short relevant diary item (the diary item is carried);
    lifetime (refetch renews, carrying does not, an item leaves with its last
    fetching run); the excerpt window (a fact past the first 280 chars is shown
-   when the request is about it, and recorded as cut when it is not); the
-   source allow-list.
-3. Recording only: compute and store `metadata_["carried"]` and show the
-   inspector row, **without** adding the block to the prompt. A week of runs
+   when the request is about it, and recorded as cut when it is not; a
+   single long line with the fact after character 280); `injected: false`
+   blocks labelled hypothetical and kept out of replay and the omission
+   diagnosis; the source allow-list.
+3. Recording only: compute and store `metadata_["carried"]` with
+   `injected: false` and show the inspector row as "would carry", **without**
+   adding the block to the prompt. A week of runs
    shows what would have been carried and whether ranking picks the right
-   items — measured before it can change a single answer.
+   items — measured before it can change a single answer — and how often a
+   later turn repeats or near-repeats an earlier query, which is what leaving
+   arguments out of the search log costs.
 4. The block in the decide prompt and the audit prompt, behind a setting
    (`assistant.conversation_evidence`, default off), then on by default once
    the omission cases improve and cost stays inside budget.
