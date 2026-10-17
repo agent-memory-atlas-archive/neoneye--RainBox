@@ -104,10 +104,17 @@ An item is a stable reference plus a short excerpt:
 | diary | citation `diary:<revision>:<start>-<end>` (from `data.injected`) | the exact cited bytes via `resolve_citation`, with the renderer's full `date_label` |
 | memory claim | claim uuid | the claim's current text |
 | static seed answer | qa id | the answer text |
-
-Every excerpt, whatever its source, is cut to **280 chars** with an explicit
-`…` marker, so no single item can exceed a fixed share of the budget.
 | other reads | none | not carried (see 4) |
+
+Every excerpt, whatever its source, is at most **280 chars**, so no single
+item can exceed a fixed share of the budget. The excerpt is **a window, not a
+prefix**: the 280 chars of the item's full text (a diary passage is at most
+600, a claim or answer can be longer) that best match the current request —
+the line-aligned window with the highest word overlap, falling back to the
+start when nothing matches — marked `…` at each cut end. A fact two hundred
+chars into a passage is then shown when the request is about it, instead of
+being cut off by a fixed prefix. Relevance (decision 3) is scored on the
+**full text**, not the window, so a cut part can still select the item.
 
 Diary citations name bytes in an immutable revision, so the excerpt is exact
 however old the turn. The cited bytes alone are not enough, though: what an
@@ -266,24 +273,48 @@ ran").
 neutral metadata: one written after reading a diary passage can carry a name
 or a fact from it. If the log copied queries unconditionally, a turn on a
 remote model would receive, through the log, exactly the diary-derived text
-that decision 2b keeps out of its items. So each record inherits the gate of
-the turn that issued it — every run already records it as
-`metadata_["diary_availability"]` — and the record renders its arguments only
-when the current turn passes that gate too:
+that decision 2b keeps out of its items. Whether "the diary" is available
+now is not the right test: `diary_available()` is true when *any* usable
+source has a ready file, so a remote-enabled source B would unlock query text
+that a local-only source A inspired. Authorising an earlier argument needs
+the provenance of what its turn had read.
 
-- a record from a turn in which the diary was available (a `diary_query`, or
-  any other read issued in that turn, since its query may quote the diary)
-  renders its arguments only if the diary is available to this turn
-  (`diary_available(room, agent, models_local)`);
-- otherwise it renders as action and count alone —
-  `turn -2  memory_query (query withheld) → 2 facts` — and the recorded
-  block holds the same withheld form, so the log never stores what the turn
-  could not see.
+So each run records its **evidence scope**: the diary sources whose text was
+in front of the model during that run — the sources of its `diary_query`
+results (their `catalog_manifest`) and of the diary items carried into it —
+each with the `policy_version` it had then:
 
-Test: a conversation whose first turns run on local models with the diary
-available, then a turn on a remote model; the remote turn's block contains no
-diary item, no query text from the earlier turns, and its recorded `block`
-matches.
+```json
+"evidence_scope": {"diary": {"<source uuid>": 3, "<source uuid>": 7}}
+```
+
+A search record from that run renders its arguments only when **every**
+source in the run's scope is eligible to the current turn (`eligible_sources`
+under its `DiaryContext`) **with the same `policy_version`**. Any policy
+change bumps that version — an exclusion, an enable or disable, the remote-
+models setting — so an excluded file withholds the queries it may have
+inspired even while other sources stay available. A sync bumps only
+`catalog_version`, which is not part of the test, so a nightly sync does not
+blank the log. A run with an empty diary scope saw no diary text, and its
+arguments render. A run with no recorded scope — every run before this is
+built — **cannot be authorised and is withheld**; there is no way to
+establish after the fact what it read.
+
+Withheld records render as action and count alone —
+`turn -2  memory_query (query withheld) → 2 facts` — and the recorded block
+holds the same withheld form, so the log never stores what the turn could not
+see.
+
+Earlier assistant *replies* in `conversation_history_xml` can also restate
+diary text, and they reach a remote-model turn today. That exposure predates
+this proposal and is not widened by it; it belongs to the history window's
+own policy, not here.
+
+Tests: (1) local turns read diary source A (local-only); a later turn on a
+remote model can read source B (remote-enabled) — A's queries are withheld,
+B's render; (2) a file of A is excluded while B stays available — A's
+queries are withheld; (3) a nightly sync between the turns — nothing is
+withheld; (4) a run recorded before the scope existed — withheld.
 
 ## In the prompt
 
@@ -313,6 +344,31 @@ evidence when they disagree. It ranks **after `current_turn_steps` and after
 `acceptance_criteria_markdown`, before `user_settings_yaml`**: this turn's
 observations win, then the request and its criteria, then evidence this
 conversation already gathered, then defaults.
+
+**The instructions must change with it.** Two rules in force today
+contradict the block, and left alone they would make it inert: the decide
+instructions say "Having read in an earlier turn does not count, and neither
+does a transcript that already names some of the answer", and audit check 5
+judges support only "against the turn's observations". The model would still
+re-read what the block already holds, and the auditor would reject a reply
+supported by a carried item.
+
+The rule that replaces them, in both instruction sets:
+
+> Items in `conversation_evidence` were fetched earlier and re-read this
+> turn under this turn's access rules. An item may support a claim it states
+> directly, as an observation would. It does not answer a question that asks
+> for a complete set — every person, all the times, the first mention — and
+> it does not replace a read for anything it does not state: for those, call
+> the matching read action this turn.
+
+That keeps the reason the old rule exists — recalling a few of the people is
+how you miss the rest — and drops only the part that forced a fresh read of a
+fact already in hand. The decide instructions gain it beside the read rule;
+audit check 5 becomes "against the turn's observations and the carried
+evidence". Tests: a reply supported solely by a carried item is accepted by
+the audit and needs no new read; a set-valued question with only a partial
+carried answer still triggers the read.
 
 **The audit must see it too.** The reply audit reads `<turn_observations>`
 to judge whether a reply is supported. A reply that rests on a carried diary
@@ -350,12 +406,19 @@ The /assistant inspector shows a "carried evidence" row at the start of
 the turn, listing those items. That splits today's single invisible failure
 into two visible ones:
 
-- **in front of it and ignored** — the fact is in `carried.items` and the
-  reply does not use it: a reasoning or instruction problem;
-- **never there** — the fact is in `dropped`, or no window run ever fetched
+- **in front of it and ignored** — the fact is inside a carried item's
+  rendered window and the reply does not use it: a reasoning or instruction
+  problem;
+- **reference carried, fact cut** — the item was carried, but the fact lies
+  outside its window: an excerpt-selection problem;
+- **never there** — the item is in `dropped`, or no window run ever fetched
   it: a ranking or retrieval problem.
 
-They need different fixes, and today they look identical.
+They need different fixes, and today they look identical. Telling the first
+two apart needs the window, so each carried item records it:
+`{"ref": …, "window": [start, end], "full_chars": 512, "truncated": true}`,
+with the offsets in the item's own text; the recorded `block` shows exactly
+what was visible.
 
 Telemetry follows the existing stream: carried diary citations and claims are
 recorded as `retrieval_event` stage `considered`, source
@@ -370,8 +433,10 @@ that, at near-zero cost per verdict.
 1. **Multi-turn omission cases.** A case is a short scripted conversation:
    turn 1 asks something that makes the assistant fetch fact F; turns 2–4
    drift; turn 5 asks a question whose good answer needs F, without naming
-   it. Scored on whether the turn-5 reply uses F, and whether F was carried.
-   Private cases live beside the diary pilot cases
+   it. Scored on whether the turn-5 reply uses F, and on which of the three
+   omission classes a miss falls into — including a case whose F sits past
+   the first 280 chars of its passage, so excerpt selection is measured, not
+   assumed. Private cases live beside the diary pilot cases
    (`rainbox_customize/`), never in the repo.
 2. **Path stability.** Replay a recorded conversation twice and compare the
    action sequence of the later turns. With the working set, repeated
@@ -399,7 +464,9 @@ that, at near-zero cost per verdict.
    switch; budget on the full serialized block, with an oversized leading
    claim followed by a short relevant diary item (the diary item is carried);
    lifetime (refetch renews, carrying does not, an item leaves with its last
-   fetching run); the source allow-list.
+   fetching run); the excerpt window (a fact past the first 280 chars is shown
+   when the request is about it, and recorded as cut when it is not); the
+   source allow-list.
 3. Recording only: compute and store `metadata_["carried"]` and show the
    inspector row, **without** adding the block to the prompt. A week of runs
    shows what would have been carried and whether ranking picks the right
