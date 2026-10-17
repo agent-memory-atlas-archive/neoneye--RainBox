@@ -101,9 +101,12 @@ An item is a stable reference plus a short excerpt:
 
 | source | reference | excerpt and labels |
 |---|---|---|
-| diary | citation `diary:<revision>:<start>-<end>` (from `data.injected`) | reopened with `read_citation`, cut to 280 chars, with the renderer's full `date_label` |
+| diary | citation `diary:<revision>:<start>-<end>` (from `data.injected`) | the exact cited bytes via `resolve_citation`, with the renderer's full `date_label` |
 | memory claim | claim uuid | the claim's current text |
-| static seed answer | qa id | the answer's first 280 chars |
+| static seed answer | qa id | the answer text |
+
+Every excerpt, whatever its source, is cut to **280 chars** with an explicit
+`…` marker, so no single item can exceed a fixed share of the budget.
 | other reads | none | not carried (see 4) |
 
 Diary citations name bytes in an immutable revision, so the excerpt is exact
@@ -115,9 +118,33 @@ undated), DST ambiguity and invalid ranges, the inherited author
 snapshot warning — none of which is necessarily inside the cited bytes.
 Dropped, a passage someone else wrote reads as a fact about the operator, a
 month-level summary reads as a dated event, and corrected text appears
-without its warning. So a carried diary item is reopened through
-`read_citation`, and the carried form keeps the item's `date_label` whole,
-in the decide prompt and in the audit input alike.
+without its warning. So the carried form keeps the item's `date_label`
+whole, in the decide prompt and in the audit input alike.
+
+`read_citation` is the wrong reader for this. It is the model's *reader*: it
+finds the entry containing the cited start and reads forward from that
+entry's first passage, across later entries. Cut to 280 chars, its output can
+lose the very fact that was cited — a citation into the third passage of a
+long entry would come back as the entry's opening — and pin the old citation
+to different bytes. The working set needs an **exact-range resolver**:
+
+```python
+def resolve_citation(citation: str, ctx: DiaryContext) -> DiaryItem | None:
+    """Exactly the cited bytes, under read_citation's gates: eligible source
+    (room, enabled, agent, local models), ready file, not excluded, range
+    inside the revision, valid UTF-8. Labels for that range: when the cited
+    revision is on the file's current chain (the current revision, or one
+    whose bytes are its prefix), the date label, author and time status of
+    the current generation's entry containing the cited start; otherwise the
+    superseded label and no date. None when any gate fails."""
+```
+
+It shares `read_citation`'s gate and chain checks (factored out, so the two
+cannot drift) and differs only in what it returns. Tests: a citation into a
+later passage of a long entry returns that passage's bytes, not the entry's
+start; a citation whose file was appended to since stays on the chain and
+returns the same bytes with current labels; a citation whose file was edited
+before the cited range comes back labelled superseded.
 
 ### 2b. Re-admitted under today's rules, not the fetching turn's
 
@@ -126,11 +153,11 @@ automatically legitimate now. Every carried item goes through the same
 eligibility checks a fresh retrieval would apply, **before** it is ranked,
 rendered or logged:
 
-- **diary** — `read_citation` with the current `DiaryContext` already does
-  this: the room's enabled private sources only, the agent restriction, the
-  local-models gate (a turn on a remote model gets no diary text the fresh
-  route would refuse), file exclusions, file availability. A citation it
-  answers `not_found` is not carried, and its excerpt is never logged.
+- **diary** — `resolve_citation` with the current `DiaryContext` applies
+  the fresh route's gates: the room's enabled private sources only, the agent
+  restriction, the local-models gate (a turn on a remote model gets no diary
+  text the fresh route would refuse), file exclusions, file availability. A
+  citation it rejects is not carried, and its excerpt is never logged.
 - **memory claims** — membership in `hard_filtered_claims(include_secret=False,
   room_uuid, agent_uuid)` for this turn: active, not expired, not secret,
   in scope. A retracted, expired or out-of-scope claim is dropped.
@@ -151,9 +178,12 @@ memory items.
 
 Budget: **2,000 chars for the complete serialized block** — the XML wrapper,
 the note, every item with its reference and labels, and the search log —
-measured with the same length function that renders it. Items are admitted
-in score order until the next one would overflow; the search log takes at
-most 400 of the 2,000. For scale, that is two fifths of the 5,000-char
+measured with the same length function that renders it. The search log takes
+at most 400 of the 2,000. Items are admitted in score order, and an item that
+does not fit the remaining budget is **skipped, not a stop**: admission
+continues with the next candidate until none fits. With every excerpt capped
+at 280 chars this rarely matters, but it means one large leading item can
+never empty the working set. For scale, that is two fifths of the 5,000-char
 scratchpad, small next to the decide prompt (13–14k tokens in the latency
 proposal's measurement) but not small next to this turn's own evidence, which
 is why the block's rank sits below `current_turn_steps` (see *In the prompt*).
@@ -168,16 +198,34 @@ Score per item, highest first, cheapest signals only (no model call on the
 request path):
 
 ```
-score = relevance(item, request) + 0.5 * recency + 0.5 * reuse
+score     = relevance(item, request) + 0.5 * recency
 relevance = word overlap of the item's excerpt with the current request
             (lowercased word tokens, IDF-weighted within the candidate set)
-recency   = 1 / (1 + turns since the item was last fetched or carried-and-used)
-reuse     = 1 if the turn that fetched it ended with a reply the audit accepted
+recency   = 1 / (1 + runs since the newest window run that fetched the item)
 ```
 
-Decay is built in: an item not refetched and not relevant for **4 turns**
-drops out. The working set is a few dozen candidates at most (six turns ×
-a handful of items), so ranking is microseconds.
+Both signals are computed from stored rows at the start of the turn; nothing
+about an item's history has to be persisted for ranking. Whether a reply
+*used* an item is deliberately not a signal: an accepted reply does not say
+which retrieved items it relied on, and inferring it from text overlap would
+be a guess presented as a measurement.
+
+Lifetime follows from the derivation, with one rule:
+
+- An item exists while a run that **fetched** it has its reply in the
+  history window (and after the latest marker). Refetching renews it; when
+  its last fetching run leaves the window, so does the item.
+- **Carrying does not renew.** An item carried for many turns is not
+  refetched by being shown, so it ages out with its fetching run. Otherwise
+  an early item could keep itself alive indefinitely, and the working set
+  would drift from "what this conversation recently looked at" to "what it
+  looked at once, long ago". A fact that keeps mattering keeps being fetched.
+- Items from the newest **6** window runs are always candidates; items from
+  older window runs are candidates only when they share at least two
+  IDF-weighted terms with the current request.
+
+The working set is a few dozen candidates at most, so ranking is
+microseconds.
 
 Embedding similarity would rank better, but it costs an embedder call per
 turn and the embedder shares Ollama with the decide model (a cold embedder
@@ -213,6 +261,29 @@ The loop can then refine a search instead of repeating it blind, or reopen a
 cursor-sized result with `read`. This also closes the diary spec's §12 gap
 ("the decide prompt's evidence should show whether a diary search already
 ran").
+
+**The log is evidence too, and passes the same gates.** A query is not
+neutral metadata: one written after reading a diary passage can carry a name
+or a fact from it. If the log copied queries unconditionally, a turn on a
+remote model would receive, through the log, exactly the diary-derived text
+that decision 2b keeps out of its items. So each record inherits the gate of
+the turn that issued it — every run already records it as
+`metadata_["diary_availability"]` — and the record renders its arguments only
+when the current turn passes that gate too:
+
+- a record from a turn in which the diary was available (a `diary_query`, or
+  any other read issued in that turn, since its query may quote the diary)
+  renders its arguments only if the diary is available to this turn
+  (`diary_available(room, agent, models_local)`);
+- otherwise it renders as action and count alone —
+  `turn -2  memory_query (query withheld) → 2 facts` — and the recorded
+  block holds the same withheld form, so the log never stores what the turn
+  could not see.
+
+Test: a conversation whose first turns run on local models with the diary
+available, then a turn on a remote model; the remote turn's block contains no
+diary item, no query text from the earlier turns, and its recorded `block`
+matches.
 
 ## In the prompt
 
@@ -322,8 +393,13 @@ that, at near-zero cost per verdict.
    re-admission — a diary citation on a turn with a remote model, an excluded
    file, an expired or retracted or out-of-scope claim, a seed answer behind a
    locked shield, each dropped with no excerpt logged; diary labels kept
-   whole (inherited author, month- and year-level dates, superseded); budget
-   on the full serialized block; decay; the source allow-list.
+   whole (inherited author, month- and year-level dates, superseded); the
+   exact-range resolver (later passage of a long entry, appended file,
+   superseded file); the search log withheld across a local-to-remote
+   switch; budget on the full serialized block, with an oversized leading
+   claim followed by a short relevant diary item (the diary item is carried);
+   lifetime (refetch renews, carrying does not, an item leaves with its last
+   fetching run); the source allow-list.
 3. Recording only: compute and store `metadata_["carried"]` and show the
    inspector row, **without** adding the block to the prompt. A week of runs
    shows what would have been carried and whether ranking picks the right
