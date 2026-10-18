@@ -48,7 +48,6 @@ BENCHMARK_TEMPLATE: str = """
   button.cell-start:hover:enabled{border-color:#9aa3af;color:#1a1a2e}
   button.cell-start:disabled{opacity:0.35;cursor:default}
   .historic{color:#64748b;font-style:italic}
-  .historic-mark{font-style:normal;opacity:0.7;margin-right:0.25em}
   .cell-history{display:none;position:absolute;z-index:20;left:0;top:100%;
         min-width:22em;padding:0.5em 0.6em;border:1px solid #cbd5e1;
         border-radius:5px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,0.14);
@@ -176,10 +175,14 @@ function historicWarmup(t) {
   return best ? best.warmup_elapsed : null;
 }
 
+// yyyy-mm-dd hh:mm in local time, whatever the browser's locale.
 function fmtWhen(iso) {
   if (!iso) return '';
   const d = new Date(iso);
-  return isNaN(d) ? '' : d.toLocaleString();
+  if (isNaN(d)) return '';
+  const p = n => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) +
+         ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
 }
 
 function historyRow(e) {
@@ -362,13 +365,12 @@ function renderBench(b, ti, bi, targetUuid) {
     return `<div>${fmtCounts(b)}<span class="pill error" style="margin-left:0.4em">error</span></div>${errText}${benchDetails(b)}${benchStories(b, ti, bi)}${card}`;
   }
   if (b.status === 'pending') {
-    // Nothing ran this session, so the last stored result stands in — marked
-    // historic so a stale number is never mistaken for a fresh one.
+    // Nothing ran this session, so the last stored result stands in — greyed
+    // and italic so a stale number is never mistaken for a fresh one.
     const e = historicEntry(bname, targetUuid);
     // Same counts and chars as a live cell, so the two read side by side.
     if (e) {
-      return `<div class="historic"><span class="historic-mark">&#8987;</span>` +
-             `${fmtCounts(e)}${benchDetails(e)}</div>${card}`;
+      return `<div class="historic">${fmtCounts(e)}${benchDetails(e)}</div>${card}`;
     }
     return `<div class="muted">pending</div>${card}`;
   }
@@ -474,7 +476,7 @@ function render(state) {
     } else {
       const w = historicWarmup(t);
       if (w !== null) {
-        warmup = `<small class="historic"><span class="historic-mark">&#8987;</span>warmup ${w.toFixed(1)}s</small>`;
+        warmup = `<small class="historic">warmup ${w.toFixed(1)}s</small>`;
       }
     }
     const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${busy ? 'disabled' : ''}>Start</button>`;
