@@ -47,8 +47,8 @@ BENCHMARK_TEMPLATE: str = """
         background:#fff;color:#475569}
   button.cell-start:hover:enabled{border-color:#9aa3af;color:#1a1a2e}
   button.cell-start:disabled{opacity:0.35;cursor:default}
-  td.bench .historic{color:#64748b;font-style:italic}
-  td.bench .historic-mark{font-style:normal;opacity:0.7;margin-right:0.25em}
+  .historic{color:#64748b;font-style:italic}
+  .historic-mark{font-style:normal;opacity:0.7;margin-right:0.25em}
   .cell-history{display:none;position:absolute;z-index:20;left:0;top:100%;
         min-width:22em;padding:0.5em 0.6em;border:1px solid #cbd5e1;
         border-radius:5px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,0.14);
@@ -163,6 +163,19 @@ function historicEntry(benchName, targetUuid) {
   return (h.complete && h.complete[0]) || (h.partial && h.partial[0]) || null;
 }
 
+// The warmup a restored row shows beside its model: from the newest stored
+// cell standing in for a live one, provided that run warmed up at all.
+function historicWarmup(t) {
+  let best = null;
+  t.benchmarks.forEach(function (b, i) {
+    if (b.status !== 'pending') return;
+    const e = historicEntry(benchmarkNames[i], t.uuid);
+    if (!e || e.warmup_elapsed == null) return;
+    if (!best || (e.ended_at || '') > (best.ended_at || '')) best = e;
+  });
+  return best ? best.warmup_elapsed : null;
+}
+
 function fmtWhen(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -172,7 +185,7 @@ function fmtWhen(iso) {
 function historyRow(e) {
   const counts = '&#10003;' + e.correct + ' &#10007;' + e.mistakes + ' !' + e.failures;
   const per = e.trials_done > 0
-    ? (e.total_elapsed / e.trials_done).toFixed(1) + 's/tr'
+    ? (e.total_elapsed / e.trials_done).toFixed(2) + 's'
     : (e.status === 'done' ? '' : escapeHtml(e.status));
   return '<div class="hrow"><span class="hwhen">' + escapeHtml(fmtWhen(e.ended_at)) + '</span>' +
          '<span>' + e.trials_done + '/' + e.trials_total + '</span>' +
@@ -352,10 +365,10 @@ function renderBench(b, ti, bi, targetUuid) {
     // Nothing ran this session, so the last stored result stands in — marked
     // historic so a stale number is never mistaken for a fresh one.
     const e = historicEntry(bname, targetUuid);
+    // Same counts and chars as a live cell, so the two read side by side.
     if (e) {
-      const counts = '&#10003;' + e.correct + ' &#10007;' + e.mistakes + ' !' + e.failures;
       return `<div class="historic"><span class="historic-mark">&#8987;</span>` +
-             `${e.trials_done}/${e.trials_total} ${counts}</div>${card}`;
+             `${fmtCounts(e)}${benchDetails(e)}</div>${card}`;
     }
     return `<div class="muted">pending</div>${card}`;
   }
@@ -458,6 +471,11 @@ function render(state) {
       warmup = `<small class="muted">warming up…${secs}</small>`;
     } else if (t.warmup_elapsed !== null && t.warmup_elapsed !== undefined) {
       warmup = `<small class="muted">warmup ${t.warmup_elapsed.toFixed(1)}s</small>`;
+    } else {
+      const w = historicWarmup(t);
+      if (w !== null) {
+        warmup = `<small class="historic"><span class="historic-mark">&#8987;</span>warmup ${w.toFixed(1)}s</small>`;
+      }
     }
     const startBtn = `<button class="row-start" data-uuid="${escapeHtml(t.uuid)}" ${busy ? 'disabled' : ''}>Start</button>`;
     const benchCells = benchmarkNames.map((bname, i) => {

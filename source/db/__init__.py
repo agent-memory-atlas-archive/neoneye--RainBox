@@ -655,6 +655,10 @@ def init_db(app: Flask) -> None:
         _add_column_if_missing("memory_claim", "subj_pred_key",        "subj_pred_key TEXT")
         _add_column_if_missing("memory_claim", "value_key",            "value_key TEXT")
         _add_column_if_missing("memory_claim", "key_version",          "key_version INTEGER")
+        # benchmark_result gained the warmup time of the run behind each cell,
+        # so a restored row can show it next to the model like a live one does.
+        _add_column_if_missing("benchmark_result", "warmup_elapsed",
+                               "warmup_elapsed DOUBLE PRECISION")
         db.session.execute(sa.text(
             "CREATE UNIQUE INDEX IF NOT EXISTS memory_rejected_value_key_uniq "
             "ON memory_rejected_value (scope, "

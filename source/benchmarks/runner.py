@@ -336,6 +336,9 @@ class BenchmarkRunner:
                         kept["index"] = i
                         kept["benchmarks"] = list(cached["benchmarks"])
                         kept["status"] = "pending"
+                        # The row label keeps showing the earlier warmup, but
+                        # a cell stored from this run must not claim it.
+                        kept["run_warmup_elapsed"] = None
                         for bi, (name, _c, kw) in enumerate(self.specs):
                             if bi in chosen:
                                 kept["benchmarks"][bi] = _empty_benchmark_entry(
@@ -428,7 +431,9 @@ class BenchmarkRunner:
 
     def _set_warmup_elapsed(self, target_index: int, elapsed: float) -> None:
         with self._lock:
-            self._state["targets"][target_index]["warmup_elapsed"] = elapsed
+            target = self._state["targets"][target_index]
+            target["warmup_elapsed"] = elapsed
+            target["run_warmup_elapsed"] = elapsed
 
     def _set_benchmark_status(
         self,
@@ -480,6 +485,9 @@ class BenchmarkRunner:
                 target_label = target.get("display_name") or ""
                 model_name = target.get("model_name") or ""
                 provider = target.get("provider") or ""
+                # This run's warmup only: a single-cell re-run keeps the row's
+                # earlier warmup_elapsed on display, which it did not measure.
+                warmup_elapsed = target.get("run_warmup_elapsed")
             if status != "error" and entry.get("trials_done", 0) <= 0:
                 return
 
@@ -507,6 +515,7 @@ class BenchmarkRunner:
                 total_elapsed=entry.get("total_elapsed", 0.0),
                 reasoning_chars=entry.get("reasoning_chars"),
                 content_chars=entry.get("content_chars"),
+                warmup_elapsed=warmup_elapsed,
                 error=entry.get("error"),
                 config_fingerprint=(
                     db.benchmark_fingerprint(resolved) if resolved else ""

@@ -31,7 +31,8 @@ def _seed(spec_set="general", benchmark_name="base64_decode"):
             target_label="t0.15 c8k struct", model_name="gemma4:e4b",
             provider="ollama", status="done", trials_done=5, trials_total=5,
             correct=5, mistakes=0, failures=0, total_elapsed=9.5,
-            reasoning_chars=None, content_chars=None, error=None,
+            reasoning_chars=None, content_chars=None, warmup_elapsed=None,
+            error=None,
             config_fingerprint="cfg", spec_fingerprint="spec",
             started_at=datetime.now(UTC), ended_at=datetime.now(UTC),
         )

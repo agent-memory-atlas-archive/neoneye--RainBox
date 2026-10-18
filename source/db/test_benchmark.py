@@ -17,7 +17,8 @@ _TARGET = uuid4()
 
 def _record(benchmark_name="base64_decode", target_uuid=None, status="done",
             trials_done=5, trials_total=5, correct=5, spec_set="general",
-            config_fingerprint="cfg", spec_fingerprint="spec"):
+            config_fingerprint="cfg", spec_fingerprint="spec",
+            warmup_elapsed=None):
     return db.record_benchmark_result(
         spec_set=spec_set,
         benchmark_name=benchmark_name,
@@ -34,6 +35,7 @@ def _record(benchmark_name="base64_decode", target_uuid=None, status="done",
         total_elapsed=10.5,
         reasoning_chars=None,
         content_chars=None,
+        warmup_elapsed=warmup_elapsed,
         error=None,
         config_fingerprint=config_fingerprint,
         spec_fingerprint=spec_fingerprint,
@@ -180,6 +182,19 @@ def test_history_separates_complete_from_partial():
     assert len(entries["complete"]) == 1
     assert len(entries["partial"]) == 1
     assert entries["partial"][0]["status"] == "error"
+
+
+def test_history_carries_what_a_live_cell_shows():
+    """A restored cell renders the same counts, average time, chars and row
+    warmup as a live one; any of them missing makes the two incomparable."""
+    with app.app_context():
+        _record(warmup_elapsed=2.5)
+        entry = db.benchmark_history("general")["base64_decode"][str(_TARGET)]["complete"][0]
+
+    assert entry["total_elapsed"] == 10.5
+    assert entry["warmup_elapsed"] == 2.5
+    assert {"correct", "mistakes", "failures", "trials_done",
+            "reasoning_chars", "content_chars"} <= set(entry)
 
 
 def test_history_is_scoped_to_one_spec_set():

@@ -1941,6 +1941,10 @@ class BenchmarkResult(db.Model):
     total_elapsed: Mapped[float] = mapped_column(default=0.0)
     reasoning_chars: Mapped[int | None] = mapped_column()
     content_chars: Mapped[int | None] = mapped_column()
+    # Seconds the pre-trial warmup call took in the run that produced this
+    # cell. NULL when that run skipped warmup (the toggle off, or the model
+    # already loaded by the row above).
+    warmup_elapsed: Mapped[float | None] = mapped_column()
     error: Mapped[str | None] = mapped_column(Text)
     config_fingerprint: Mapped[str] = mapped_column(Text, default="")
     spec_fingerprint: Mapped[str] = mapped_column(Text, default="")

@@ -45,6 +45,26 @@ def test_a_finished_cell_is_recorded(runner):
     assert kwargs["model_name"] == "gemma4:e4b"
 
 
+def test_the_warmup_of_this_run_is_recorded(runner):
+    runner._set_warmup_elapsed(0, 2.5)
+    runner._state["targets"][0]["benchmarks"][0]["trials_done"] = 5
+    with app.app_context(), patch("db.record_benchmark_result") as rec:
+        runner._persist_cell(0, 0, "done")
+
+    assert rec.call_args.kwargs["warmup_elapsed"] == 2.5
+
+
+def test_a_warmup_from_an_earlier_run_is_not_recorded(runner):
+    """A single-cell re-run keeps the row's earlier warmup on display; a cell
+    that run stores did not wait through it."""
+    runner._state["targets"][0]["warmup_elapsed"] = 2.5
+    runner._state["targets"][0]["benchmarks"][0]["trials_done"] = 5
+    with app.app_context(), patch("db.record_benchmark_result") as rec:
+        runner._persist_cell(0, 0, "done")
+
+    assert rec.call_args.kwargs["warmup_elapsed"] is None
+
+
 def test_the_benchmark_is_identified_by_name_not_index(runner):
     """Reordering a spec set must not re-point a cell's history at another
     column, which is exactly what storing the index would do."""
