@@ -287,7 +287,9 @@ function personaInitEditor(){
 }
 function personaEditorValue(){ return personaCM.getValue(); }
 function personaEditorSet(value){ personaCM.setValue(value); }
-function personaEditorReadOnly(ro){ personaCM.setOption('readOnly', ro ? 'nocursor' : false); }
+// Read-only as `true`, not 'nocursor': the text stays selectable and copyable
+// without entering Edit, while typing, paste and drop are still refused.
+function personaEditorReadOnly(ro){ personaCM.setOption('readOnly', !!ro); }
 
 let personaEditorUuid = null;   // uuid whose content the editor currently holds
 function personaRenderEditor(){

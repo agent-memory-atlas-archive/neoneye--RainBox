@@ -290,7 +290,9 @@ function promptInitEditor(){
 }
 function promptEditorValue(){ return promptCM.getValue(); }
 function promptEditorSet(value){ promptCM.setValue(value); }
-function promptEditorReadOnly(ro){ promptCM.setOption('readOnly', ro ? 'nocursor' : false); }
+// Read-only as `true`, not 'nocursor': the text stays selectable and copyable
+// without entering Edit, while typing, paste and drop are still refused.
+function promptEditorReadOnly(ro){ promptCM.setOption('readOnly', !!ro); }
 function promptEditorVisible(show){
   promptCM.getWrapperElement().style.display = show ? '' : 'none';
   if (show) promptCM.refresh();  // re-measure after being hidden
