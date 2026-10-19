@@ -10,9 +10,9 @@ live via SSE). It is only enqueued for human messages (see the trigger in
 webapp/chat_api.py), so its own replies don't re-trigger it.
 
 This is the structured-output variant (`as_structured_llm`). Its plain-text
-sibling is `UnstructuredChatAgent` in agents/chat_unstructured.py; both share
-the transcript formatter (chat.transcript.format_history) and the memory
-retrieval helper (memory.retrieval.build_chat_memory_block).
+sibling is `UnstructuredChatAgent` in agents/chat_unstructured.py; both build
+their prompt with agents.chat_context.build_chat_prompt — the transcript, the
+memory retrieval, and the prompt layout (chat/prompt_layout.py).
 
 Specialized agents live in their own agents/<purpose>.py module; the shared
 base classes (Agent, ModelGroupAgent, StructuredLLMAgent) stay in agents/base.py.
@@ -28,7 +28,8 @@ from pydantic import BaseModel, Field
 import db
 from memory import retrieval as memory_retrieval
 from agents.base import StatusSender, StructuredLLMAgent
-from chat.transcript import format_history
+from agents.chat_context import ChatPrompt, build_chat_prompt, chat_system_prompt
+from chat.prompt_layout import SINGLE_TURN, current_prompt_layout
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,9 @@ class StructuredChatAgent(StructuredLLMAgent):
             system_prompt=CHAT_SYSTEM_PROMPT,
             response_model=ChatAgentResponse,
         )
+        # The prompt layout (chat/prompt_layout.py); handle() reads the
+        # setting once per turn and sets the matching system prompt.
+        self.prompt_layout = SINGLE_TURN
 
     @staticmethod
     def _room_uuid(payload: dict[str, Any]) -> UUID:
@@ -103,6 +107,15 @@ class StructuredChatAgent(StructuredLLMAgent):
         payload: dict[str, Any],
         journal_id: UUID | None = None,
     ) -> str:
+        """The user message alone — the whole prompt in the single_turn
+        layout, the context message in request_turn."""
+        return self.prompt_turns(payload, journal_id=journal_id).user_prompt
+
+    def prompt_turns(
+        self,
+        payload: dict[str, Any],
+        journal_id: UUID | None = None,
+    ) -> ChatPrompt:
         room_uuid = self._room_uuid(payload)
         # Diagnostic rows (debug-memory, debug-query, debug-router, thinking,
         # progress, ...) are operator-only audit content. Filter them out so
@@ -112,24 +125,19 @@ class StructuredChatAgent(StructuredLLMAgent):
             if m.get("kind") == "message"
         ]
         # Shared chat context: operator profile block + hybrid memory block
-        # (query extraction + retrieval + telemetry).
-        from agents.chat_context import build_chat_context_block
-        context_block, query, memories = build_chat_context_block(
+        # (query extraction + retrieval + telemetry), in this turn's layout.
+        prompt = build_chat_prompt(
             messages,
             agent_uuid=self.agent_uuid,
             room_uuid=room_uuid,
             journal_id=journal_id,
+            layout=self.prompt_layout,
         )
-        # Stash the retrieval result + the query for `handle` to log as
-        # `debug-memory`. Per-instance state is fine because each agent
-        # subprocess handles one job at a time.
-        self._last_retrieval_query = query
-        self._last_retrieved_memories = memories
-
-        transcript = format_history(messages)
-        if context_block:
-            return f"{context_block}\n\n{transcript}"
-        return transcript
+        # Stash for `handle` to log as `debug-memory`. Per-instance state is fine
+        # because each agent subprocess handles one job at a time.
+        self._last_retrieval_query = prompt.query
+        self._last_retrieved_memories = prompt.memories
+        return prompt
 
     @staticmethod
     def _render_reply(response: ChatAgentResponse) -> str:
@@ -145,15 +153,21 @@ class StructuredChatAgent(StructuredLLMAgent):
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
-        user_prompt = self.user_prompt(payload, journal_id=journal_id)
+        self.prompt_layout = current_prompt_layout()
+        self.system_prompt = chat_system_prompt(
+            CHAT_SYSTEM_PROMPT, self.prompt_layout)
+        prompt = self.prompt_turns(payload, journal_id=journal_id)
         logger.info(
-            "chat agent prompts for room %s:\n"
+            "chat agent prompts for room %s (layout %s):\n"
             "=== SYSTEM PROMPT ===\n%s\n"
             "=== USER PROMPT ===\n%s\n"
+            "=== FOLLOWUP TURNS ===\n%s\n"
             "=== END PROMPTS ===",
             room_uuid,
+            self.prompt_layout,
             self.system_prompt,
-            user_prompt,
+            prompt.user_prompt,
+            prompt.followup_turns,
         )
         memory_retrieval.record_memory_use(
             journal_id=journal_id,
@@ -163,7 +177,8 @@ class StructuredChatAgent(StructuredLLMAgent):
             memories=getattr(self, "_last_retrieved_memories", []),
         )
         db.post_progress(room_uuid, self.agent_uuid, "thinking")
-        response = cast(ChatAgentResponse, self._structured_call(user_prompt))
+        response = cast(ChatAgentResponse, self._structured_call(
+            prompt.user_prompt, followup_turns=prompt.followup_turns))
         reply = self._render_reply(response).strip()
         content_type = "json" if response.reply_format == "json" else "markdown"
         posted_uuid: str | None = None

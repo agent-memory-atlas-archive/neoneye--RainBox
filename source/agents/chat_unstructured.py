@@ -14,9 +14,9 @@ care". This is checked at runtime: setup() warns, and the model call raises if
 the constraint isn't satisfied (the agent_models compatibility filter can only
 express "must have", so the must-not-have rule lives here).
 
-Shared with the structured agent: the transcript formatter
-(chat.transcript.format_history) and memory retrieval
-(memory.retrieval.build_chat_memory_block).
+Shared with the structured agent: the prompt builder
+(agents.chat_context.build_chat_prompt) — the transcript, memory retrieval, and
+the prompt layout (chat/prompt_layout.py).
 """
 
 import logging
@@ -30,7 +30,8 @@ import db
 from memory import retrieval as memory_retrieval
 from agents.base import ModelGroupAgent, StatusSender
 from chat.streaming import StreamingReplyWriter, extract_stream_deltas
-from chat.transcript import format_history
+from agents.chat_context import ChatPrompt, build_chat_prompt, chat_system_prompt
+from chat.prompt_layout import SINGLE_TURN, current_prompt_layout
 from llm import prepare_llm
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,9 @@ class UnstructuredChatAgent(ModelGroupAgent):
         super().__init__(agent_uuid, name, send)
         self.system_prompt = UNSTRUCTURED_CHAT_SYSTEM_PROMPT
         self.group_excludes_structured_output = False
+        # The prompt layout (chat/prompt_layout.py); handle() reads the
+        # setting once per turn and sets the matching system prompt.
+        self.prompt_layout = SINGLE_TURN
 
     def setup(self) -> None:
         super().setup()  # resolves the bound model group + candidate models
@@ -102,6 +106,15 @@ class UnstructuredChatAgent(ModelGroupAgent):
         payload: dict[str, Any],
         journal_id: UUID | None = None,
     ) -> str:
+        """The user message alone — the whole prompt in the single_turn
+        layout, the context message in request_turn."""
+        return self.prompt_turns(payload, journal_id=journal_id).user_prompt
+
+    def prompt_turns(
+        self,
+        payload: dict[str, Any],
+        journal_id: UUID | None = None,
+    ) -> ChatPrompt:
         room_uuid = self._room_uuid(payload)
         # Diagnostic rows (debug-memory, debug-query, debug-router, thinking,
         # progress, ...) are operator-only audit content. Filter them out so
@@ -111,23 +124,19 @@ class UnstructuredChatAgent(ModelGroupAgent):
             if m.get("kind") == "message"
         ]
         # Shared chat context: operator profile block + hybrid memory block
-        # (query extraction + retrieval + telemetry).
-        from agents.chat_context import build_chat_context_block
-        context_block, query, memories = build_chat_context_block(
+        # (query extraction + retrieval + telemetry), in this turn's layout.
+        prompt = build_chat_prompt(
             messages,
             agent_uuid=self.agent_uuid,
             room_uuid=room_uuid,
             journal_id=journal_id,
+            layout=self.prompt_layout,
         )
         # Stash for `handle` to log as `debug-memory`. Per-instance state is fine
         # because each agent subprocess handles one job at a time.
-        self._last_retrieval_query = query
-        self._last_retrieved_memories = memories
-
-        transcript = format_history(messages)
-        if context_block:
-            return f"{context_block}\n\n{transcript}"
-        return transcript
+        self._last_retrieval_query = prompt.query
+        self._last_retrieved_memories = prompt.memories
+        return prompt
 
     def _make_writer(self, room_uuid: UUID) -> StreamingReplyWriter:
         """A StreamingReplyWriter that creates/updates this agent's rows in the
@@ -151,7 +160,10 @@ class UnstructuredChatAgent(ModelGroupAgent):
         idx = reasoning.rfind("</think>")
         return reasoning[idx + len("</think>"):].strip() if idx != -1 else ""
 
-    def _stream_reply(self, room_uuid: UUID, user_prompt: str) -> str:
+    def _stream_reply(
+        self, room_uuid: UUID, user_prompt: str,
+        followup_turns: list[dict[str, str]] | None = None,
+    ) -> str:
         """Stream a plain-text reply into live thinking/answer rows, falling
         back through the model group's members for *startup* failures. Once a
         model starts producing tokens we commit to it (no re-posting under a
@@ -173,6 +185,9 @@ class UnstructuredChatAgent(ModelGroupAgent):
         messages = [
             ChatMessage(role=MessageRole.SYSTEM, content=self.system_prompt),
             ChatMessage(role=MessageRole.USER, content=user_prompt),
+        ] + [
+            ChatMessage(role=MessageRole(turn["role"]), content=turn["content"])
+            for turn in followup_turns or []
         ]
         last_error: Exception | None = None
         for model_uuid in self.candidate_model_uuids:
@@ -231,15 +246,21 @@ class UnstructuredChatAgent(ModelGroupAgent):
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
         room_uuid = self._room_uuid(payload)
-        user_prompt = self.user_prompt(payload, journal_id=journal_id)
+        self.prompt_layout = current_prompt_layout()
+        self.system_prompt = chat_system_prompt(
+            UNSTRUCTURED_CHAT_SYSTEM_PROMPT, self.prompt_layout)
+        prompt = self.prompt_turns(payload, journal_id=journal_id)
         logger.info(
-            "unstructured chat agent prompts for room %s:\n"
+            "unstructured chat agent prompts for room %s (layout %s):\n"
             "=== SYSTEM PROMPT ===\n%s\n"
             "=== USER PROMPT ===\n%s\n"
+            "=== FOLLOWUP TURNS ===\n%s\n"
             "=== END PROMPTS ===",
             room_uuid,
+            self.prompt_layout,
             self.system_prompt,
-            user_prompt,
+            prompt.user_prompt,
+            prompt.followup_turns,
         )
         memory_retrieval.record_memory_use(
             journal_id=journal_id,
@@ -249,7 +270,8 @@ class UnstructuredChatAgent(ModelGroupAgent):
             memories=getattr(self, "_last_retrieved_memories", []),
         )
         # No progress placeholder: the live reasoning bubble supersedes it.
-        reply = self._stream_reply(room_uuid, user_prompt)
+        reply = self._stream_reply(
+            room_uuid, prompt.user_prompt, prompt.followup_turns)
         if not reply:
             logger.warning(
                 "unstructured chat agent produced an empty reply in room %s",

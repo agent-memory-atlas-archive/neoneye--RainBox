@@ -107,7 +107,7 @@ def _build_case_prompts(
     agent: AssistantAgent, case: db.EvalCase, profile: dict[str, Any] | None,
     include_formatting: bool, include_calibration: bool,
     include_classifier: bool = False,
-) -> tuple[str, str]:
+) -> tuple[str, str, list[dict[str, str]]]:
     case_input = case.input or {}
     message = str(case_input.get("message") or "")
     messages: list[dict[str, Any]] = []
@@ -130,17 +130,27 @@ def _build_case_prompts(
     )
 
 
-def _prompt_hash(system_prompt: str, user_prompt: str) -> str:
-    return hashlib.sha256(
-        (system_prompt + "\n\x00\n" + user_prompt).encode("utf-8")
-    ).hexdigest()[:16]
+def _prompt_hash(
+    system_prompt: str, user_prompt: str,
+    followup_turns: list[dict[str, str]] | None = None,
+) -> str:
+    """Over every message the call sends. The prompt.layout setting's turns
+    after the user prompt are part of what a case measures, so two layouts
+    never share a hash."""
+    text = system_prompt + "\n\x00\n" + user_prompt
+    for turn in followup_turns or []:
+        text += f"\n\x00\n{turn['role']}\n{turn['content']}"
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 _TIME_ELEMENT_RE = re.compile(
     r"<current_local_time>[^<]*</current_local_time>")
 
 
-def _comparable_prompt(system_prompt: str, user_prompt: str) -> tuple[str, str]:
+def _comparable_prompt(
+    system_prompt: str, user_prompt: str,
+    followup_turns: list[dict[str, str]] | None = None,
+) -> tuple[str, str, tuple[tuple[str, str], ...]]:
     """The pair-equality view of a prompt: the actual strings (not a hash —
     direct equality is what the invariant means), with the current-local-time
     element normalized out so a minute rollover between building the two
@@ -148,18 +158,20 @@ def _comparable_prompt(system_prompt: str, user_prompt: str) -> tuple[str, str]:
     uses one member's real prompt, so the model still sees a single
     consistent timestamp."""
     return (system_prompt,
-            _TIME_ELEMENT_RE.sub("<current_local_time/>", user_prompt))
+            _TIME_ELEMENT_RE.sub("<current_local_time/>", user_prompt),
+            tuple((t["role"], t["content"]) for t in followup_turns or []))
 
 
 def _generate_repetition(
     agent: AssistantAgent, system_prompt: str, user_prompt: str,
+    followup_turns: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """One live decision: ask for exactly one structured step, accept only
     `reply`. Returns an UNSCORED record (output text or error) — scoring is
     per case via _score_repetition, so a counterfactual pair can score one
     shared generation against both cases' expectations."""
     record: dict[str, Any] = {
-        "prompt_hash": _prompt_hash(system_prompt, user_prompt),
+        "prompt_hash": _prompt_hash(system_prompt, user_prompt, followup_turns),
         "model_group_uuid": (str(agent.model_group_uuid)
                              if agent.model_group_uuid else None),
     }
@@ -167,6 +179,7 @@ def _generate_repetition(
         decision = agent._structured_completion(
             system_prompt=system_prompt, user_prompt=user_prompt,
             response_model=AssistantStepDecision,
+            followup_turns=followup_turns,
         )
     except Exception as exc:  # noqa: BLE001 — a failed model call is a scored 0
         record.update({"error": f"{type(exc).__name__}: {exc}", "output": ""})
@@ -235,12 +248,12 @@ def run_profile_guidance_case(
         reps = [{**_score_repetition(case, record), "shared_generation": True}
                 for record in shared_records]
     else:
-        system_prompt, user_prompt = _build_case_prompts(
+        system_prompt, user_prompt, followup_turns = _build_case_prompts(
             agent, case, profile, include_formatting, include_calibration,
             include_classifier)
         for _ in range(repetitions):
             reps.append(_score_repetition(case, _generate_repetition(
-                agent, system_prompt, user_prompt)))
+                agent, system_prompt, user_prompt, followup_turns)))
     mean = statistics.fmean(r["score"] for r in reps) if reps else 0.0
     threshold = _threshold(case)
     rubric = case.rubric or {}
@@ -381,9 +394,11 @@ def run_profile_guidance_suite(
                 f"'{variant}' with its {pair_block} block off — the pair "
                 "definition is broken; refusing to score")
             continue
-        system_prompt, user_prompt = next(iter(prompts.values()))
-        records = [_generate_repetition(agent, system_prompt, user_prompt)
-                   for _ in range(repetitions)]
+        system_prompt, user_prompt, followup_turns = next(
+            iter(prompts.values()))
+        records = [_generate_repetition(
+            agent, system_prompt, user_prompt, followup_turns)
+            for _ in range(repetitions)]
         for case in pair_cases:
             shared_by_uuid[case.uuid] = records
     for case in cases:

@@ -622,6 +622,10 @@ def init_db(app: Flask) -> None:
         # the model that step (additive nullable; legacy rows stay NULL).
         _add_column_if_missing("assistant_step", "system_prompt", "system_prompt TEXT")
         _add_column_if_missing("assistant_step", "user_prompt", "user_prompt TEXT")
+        # The turns after user_prompt when a prompt layout split the request
+        # into messages of its own (additive nullable).
+        _add_column_if_missing(
+            "assistant_step", "followup_turns", "followup_turns JSONB")
         # Raw/partial provider response for successful and interrupted decides.
         _add_column_if_missing("assistant_step", "model_response", "model_response TEXT")
         # The responses this step's call rejected before the one it kept — the

@@ -1362,6 +1362,7 @@ def _active_model_call(run) -> dict | None:
         # is actively watching to be the one row that cannot say what it sent.
         "system_prompt": active.get("system_prompt"),
         "user_prompt": active.get("user_prompt"),
+        "followup_turns": active.get("followup_turns"),
         "log": active.get("log"),
         "partial_reasoning": newest.get("partial_reasoning"),
         "partial_response": newest.get("partial_response"),

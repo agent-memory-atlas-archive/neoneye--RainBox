@@ -217,6 +217,30 @@ def test_garbage_response_is_retried_with_what_was_wrong(monkeypatch):
     assert "Attempts remaining after this one: 2." in str(note.content)
 
 
+def test_followup_turns_follow_the_user_prompt_and_precede_corrections(
+    monkeypatch,
+):
+    """A prompt layout that sends the request as its own message passes it
+    as followup_turns: they go out after the user prompt, in order, and a
+    retry's corrections come after them."""
+    agent, calls = _scripted_agent(
+        monkeypatch, [GARBAGE_TEXT, '{"answer":"ok"}'])
+
+    agent._structured_completion(
+        system_prompt="Answer briefly.", user_prompt="context",
+        response_model=_Reply,
+        followup_turns=[{"role": "assistant", "content": "ack"},
+                        {"role": "user", "content": "the request"}],
+    )
+
+    first = [(m.role.value, str(m.content)) for m in calls[0]]
+    assert first == [("system", "Answer briefly."), ("user", "context"),
+                     ("assistant", "ack"), ("user", "the request")]
+    retry = [(m.role.value, str(m.content)) for m in calls[1]]
+    assert retry[:4] == first
+    assert retry[4][0] == "assistant" and GARBAGE_TEXT in retry[4][1]
+
+
 def test_every_earlier_mistake_rides_along_not_just_the_last(monkeypatch):
     """Corrections accumulate. A model told only about its latest mistake can
     cycle between two wrong answers forever; one that sees both cannot repeat

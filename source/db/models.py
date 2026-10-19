@@ -1128,6 +1128,11 @@ class AssistantStep(db.Model):
     # legacy rows that predate prompt capture.
     system_prompt: Mapped[str | None] = mapped_column(Text)
     user_prompt: Mapped[str | None] = mapped_column(Text)
+    # The turns sent after user_prompt, as [{role, content}, ...], when the
+    # call's prompt layout split the request into messages of its own
+    # (chat/prompt_layout.py): user_prompt is then the context, and these are
+    # the acknowledgement and the request. NULL on a single-message call.
+    followup_turns: Mapped[list | None] = mapped_column(JSONB)
     # Operator-facing debug context for this step: a list of
     # {label, text, uuid?, href?} entries (active profile, block switch
     # states, …) rendered as the collapsed "log" block on /assistant.

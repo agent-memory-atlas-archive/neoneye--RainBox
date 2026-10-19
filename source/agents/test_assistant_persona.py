@@ -77,8 +77,7 @@ def test_turn_log_records_the_persona_and_its_revision(ctx):
         db.set_member_persona(room.uuid, ASSISTANT_UUID, persona_uuid=pu)
         resolution = db.resolve_member_persona(room.uuid, ASSISTANT_UUID)
         entries = AssistantAgent._build_turn_log(
-            db.user_profile_context_stub() if hasattr(db, "user_profile_context_stub")
-            else _profile_context(), False, False, resolution, False)
+            _profile_context(), resolution, False)
         persona_entry = next(e for e in entries if e["label"] == "persona")
         assert persona_entry["text"] == p["name"]
         assert persona_entry["href"] == f"/persona?id={p['uuid']}"
@@ -162,7 +161,7 @@ def test_persona_survives_a_mid_run_criteria_refresh(persona_room, monkeypatch):
         AcceptanceCriteria(processing="refreshed", assumptions="a"),
     ]
 
-    def fake_criteria(*, system_prompt, user_prompt):
+    def fake_criteria(*, system_prompt, user_prompt, followup_turns=None):
         return criteria_queue.pop(0)
 
     agent._request_acceptance_criteria = fake_criteria

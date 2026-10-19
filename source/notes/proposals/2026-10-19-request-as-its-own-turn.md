@@ -1,6 +1,8 @@
 # The request as its own turn
 
-**Status:** Proposal. Nothing here is built.
+**Status:** Built behind the `prompt.layout` setting (/settings):
+`single_turn` is the prior behaviour and the default, `request_turn` is this
+design. The evaluation below has not been run yet.
 **Date:** 2026-10-19
 **Related:** `2026-08-31-turn-latency-and-prompt-redundancy.md` (prefix
 sharing and the nested block sets; read before moving any section),
@@ -147,13 +149,14 @@ Where the request goes then depends on what the call is about:
 |---|---|---|
 | decide | the request | its own final turn |
 | acceptance_criteria | the request | its own final turn |
-| recall filter (`_recall_filter_prefix`) | the request | its own final turn |
 | reply_audit | the draft reply | `current_user_request` section at the end of the single user turn, before the draft |
 | second_opinion | the proposed step | same, before the proposed step |
+| recall filter (`_recall_filter_prefix`) | the recalled candidates, scored against the query | `current_user_request` section at the end of its prefix |
 | response-language classifier, request summary, run summarizer | their own inputs | unchanged apart from the shared head |
 
 The second group judges something other than the request, so the request is
-material there and stays a section. The same principle would later give
+material there and stays a section. The recall filter belongs there: it scores
+candidates against the memory query, not against the request. The same principle would later give
 *their* subject (the draft, the proposed step) a turn of its own. That is a
 separate change, measured separately.
 
@@ -205,6 +208,30 @@ returns the system prompt and the turn list instead of a `(system, user)`
 pair. `_structured_completion` takes the turns after the system prompt
 instead of one `user_prompt`, and appends rejection corrections after them
 as it does now.
+
+### 6. One setting, read once per turn
+
+`prompt.layout` (`db/settings.py`) holds the layout; its choices are
+`PROMPT_LAYOUTS` in `chat/prompt_layout.py`, so a future layout reaches the
+/settings dropdown by being added there. The assistant reads it once at the
+start of a turn, beside the response-language gate, and records it in the
+turn log every step row carries — a refresh of the acceptance criteria
+mid-turn re-captures the profile, never the layout. The chat agents read it
+once per handled message. An unreadable value reads as `single_turn`.
+
+The shared assistant system prompt is the same in both layouts. Every call of
+a turn sends one byte-identical system prompt, and the calls that still carry
+the request section are described by it exactly as before; the decide and
+criteria calls learn where the request went from `REQUEST_MESSAGE_SECTION` at
+the end of their `turn_instructions`. The decide instructions' references to
+`current_user_request` are rewritten for the layout, each fragment required to
+occur once so a reworded constant fails loudly. The chat agents' system
+prompts swap their message-shape paragraph instead (`chat_system_prompt`):
+they make one call per turn, so nothing is shared across calls.
+
+The eval harness (`evals/profile_guidance.py`) builds and sends the turns in
+the layout the setting names, and its prompt hash covers them, so results
+from the two layouts never share a hash.
 
 ## Cost
 

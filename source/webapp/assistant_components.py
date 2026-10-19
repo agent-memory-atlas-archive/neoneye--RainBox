@@ -516,6 +516,10 @@ def _llm(event: dict) -> list[dict]:
                collapsed=True, key=f"{key}-system", cache=cache.get("system")),
         _block("user prompt", payload.get("user_prompt"),
                collapsed=True, key=f"{key}-user", cache=cache.get("user")),
+        # The turns sent after the user prompt when the prompt layout gave the
+        # request a message of its own: the acknowledgement, then the request.
+        _block("request turns", payload.get("followup_turns"),
+               collapsed=True, key=f"{key}-request"),
         # Reasoning before the response: the model produces them in that
         # order. Folded, so the response stays the first open block.
         _block("reasoning", payload.get("reasoning"),

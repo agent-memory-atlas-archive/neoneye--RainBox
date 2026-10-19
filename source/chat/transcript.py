@@ -73,3 +73,31 @@ def format_history(messages: list[dict[str, Any]], context_limit: int = 20) -> s
     lines.append("Current message:")
     lines.append(_format_irc_line(current))
     return "\n".join(lines)
+
+
+def split_history(
+    messages: list[dict[str, Any]], context_limit: int = 20
+) -> tuple[str, dict[str, Any] | None]:
+    """The transcript without its latest message, and that message — for the
+    request_turn layout (chat/prompt_layout.py), which sends the latest
+    message as a turn of its own instead of as the transcript's last line.
+    Same window and line format as `format_history`."""
+    if not messages:
+        return "Chat history: none", None
+    context = messages[:-1][-context_limit:]
+    if not context:
+        return "Chat history: none", messages[-1]
+    lines = ["Chat history, oldest first:"]
+    lines.extend(_format_irc_line(m) for m in context)
+    return "\n".join(lines), messages[-1]
+
+
+def current_message_line(current: dict[str, Any]) -> str:
+    """The one line that says who sent the Current message and when, for a
+    layout that sends the message itself verbatim: the sender and timestamp
+    the transcript prefix would have carried live here instead."""
+    sender = _one_line_text(current.get("sender_name") or "unknown")
+    timestamp = _message_timestamp(current)
+    when = f", sent {timestamp}" if timestamp else ""
+    return (f"The Current message follows as the next user message: "
+            f"from {sender}{when}.")

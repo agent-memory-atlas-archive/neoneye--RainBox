@@ -345,6 +345,7 @@ def _inner_calls(step, data: dict) -> list[dict]:
                 output_tokens=usage.get("output"),
                 payload={"system_prompt": data.get("system_prompt"),
                          "user_prompt": data.get("user_prompt"),
+                         "followup_turns": data.get("followup_turns"),
                          "model_response": data.get("response"),
                          "reasoning": data.get("reasoning")}))
     return calls
@@ -602,8 +603,8 @@ def _step_events(step) -> list[dict]:
             # read from lighter shapes in tests and tools, and a missing
             # optional field must not cost the whole stream.
             payload={k: getattr(step, k, None) for k in (
-                "system_prompt", "user_prompt", "model_response", "reasoning",
-                "log", "error")}
+                "system_prompt", "user_prompt", "followup_turns",
+                "model_response", "reasoning", "log", "error")}
             | {"rejected_attempts": getattr(step, "rejected_attempts", None) or []}
             # The response-language gate's decision, when this call is the
             # classifier's — present whether the call was answered or failed,
@@ -746,6 +747,7 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
         payload={"log": active.get("log"),
                  "system_prompt": active.get("system_prompt"),
                  "user_prompt": active.get("user_prompt"),
+                 "followup_turns": active.get("followup_turns"),
                  "model_response": response or None,
                  "reasoning": reasoning or None,
                  "error": active.get("error"),

@@ -112,7 +112,7 @@ def _stub_criteria_seam(agent, results, calls=None):
     given) records {"system_prompt": ..., "user_prompt": ...} per call."""
     queue = list(results)
 
-    def fake(*, system_prompt, user_prompt):
+    def fake(*, system_prompt, user_prompt, followup_turns=None):
         assert queue, "more criteria calls than scripted"
         if calls is not None:
             calls.append({"system_prompt": system_prompt,
@@ -207,7 +207,7 @@ def test_criteria_call_made_once_per_run_before_the_first_decide(room):
     order = []
     calls = []
 
-    def fake_criteria(*, system_prompt, user_prompt):
+    def fake_criteria(*, system_prompt, user_prompt, followup_turns=None):
         order.append("criteria")
         calls.append(user_prompt)
         return _criteria("step0")
@@ -771,7 +771,7 @@ def test_revision_observation_records_the_inner_call_model_meta(room):
     agent = _agent()
     inner_model = uuid4()
 
-    def fake_criteria(*, system_prompt, user_prompt):
+    def fake_criteria(*, system_prompt, user_prompt, followup_turns=None):
         # what base.py's _structured_completion would set for this call
         agent._last_usage = {"input": 300, "output": 60, "ms": 2500}
         agent._last_model_uuid = inner_model

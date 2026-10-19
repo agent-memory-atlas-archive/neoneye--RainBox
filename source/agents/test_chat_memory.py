@@ -216,7 +216,7 @@ def test_handle_posts_debug_memory_row_when_memories_injected(
         )
 
         # Stub the LLM so no live model call is made.
-        def fake_structured_call(self, user_prompt):
+        def fake_structured_call(self, user_prompt, followup_turns=None):
             return ChatAgentResponse(
                 reply_format="markdown",
                 reply_content="(stub reply)",
@@ -259,7 +259,7 @@ def test_handle_does_not_post_debug_memory_when_no_memories(
             room_uuid, human.uuid, "xyzzyqwertz plughfrobnitz",
         )
 
-        def fake_structured_call(self, user_prompt):
+        def fake_structured_call(self, user_prompt, followup_turns=None):
             return ChatAgentResponse(
                 reply_format="markdown", reply_content="(stub reply)",
             )

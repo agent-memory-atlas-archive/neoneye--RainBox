@@ -173,7 +173,7 @@ Key fields:
 - `final_summary`
 - `metadata` (run/model diagnostics). While a decide call is in flight,
   `metadata.active_call` checkpoints `{step_index, system_prompt, user_prompt,
-  requested_at, model_group_uuid, attempts[]}`. Attempt entries retain the
+  followup_turns, requested_at, model_group_uuid, attempts[]}`. Attempt entries retain the
   resolved model UUID/name, configured timeout, timestamps, and any error so a
   killed worker can be reconstructed before an `assistant_step` exists. The
   checkpoint is cleared after step persistence or interruption recovery.
@@ -203,6 +203,10 @@ Key fields:
   `assistant_llm_calls` excludes it, so it is never priced
 - `action`, `reason`, `args`
 - `system_prompt`, `user_prompt`: the exact decide-call prompt
+- `followup_turns`: JSONB `[{role, content}, ...]` sent after `user_prompt`
+  when the `prompt.layout` setting gave the request a message of its own
+  (`request_turn`: the acknowledgement, then the request); `user_prompt` is
+  then the context. NULL on a single-message call.
 - `reasoning`: the model's native thinking channel from the decide call
   (captured via instrumentation while the structured output streamed); NULL
   for a non-reasoning model. Distinct from `reason`, the schema's short

@@ -149,3 +149,54 @@ def test_stream_reply_creates_thinking_and_answer_rows(app_ctx, monkeypatch):
         db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
         db.session.query(db.ChatUser).filter(db.ChatUser.uuid == agent_uuid).delete()
         db.session.commit()
+
+
+class _RecordingStreamingLLM:
+    def __init__(self, calls):
+        self._calls = calls
+
+    def stream_chat(self, messages):
+        self._calls.append(list(messages))
+        yield _openai_chunk(content="ok")
+
+
+def test_stream_reply_sends_followup_turns_after_the_user_prompt(
+    app_ctx, monkeypatch,
+):
+    """The request_turn layout's acknowledgement and Current message go out
+    after the context message, in order."""
+    human = db.get_human_user()
+    assert human is not None
+    agent_uuid = uuid4()
+    db.session.add(
+        db.ChatUser(uuid=agent_uuid, name=f"cu-{uuid4().hex[:6]}", user_type="agent")
+    )
+    db.session.flush()
+    room = db.create_chatroom(f"turns-{uuid4().hex[:6]}", human.uuid, [agent_uuid])
+    calls: list[list] = []
+    try:
+        monkeypatch.setattr(
+            db, "resolved_model_kwargs", lambda u: ("lm_studio", "fake-model", {})
+        )
+        monkeypatch.setattr(
+            agent_chat_unstructured, "prepare_llm",
+            lambda *a, **k: _RecordingStreamingLLM(calls),
+        )
+        agent = UnstructuredChatAgent(
+            agent_uuid=agent_uuid, name="chat_unstructured", send=lambda _: None
+        )
+        agent.group_excludes_structured_output = True
+        agent.candidate_model_uuids = [uuid4()]
+
+        agent._stream_reply(room.uuid, "context", [
+            {"role": "assistant", "content": "ack"},
+            {"role": "user", "content": "line one\nline two"},
+        ])
+
+        sent = [(m.role.value, str(m.content)) for m in calls[0]]
+        assert sent[1:] == [("user", "context"), ("assistant", "ack"),
+                            ("user", "line one\nline two")]
+    finally:
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == room.uuid).delete()
+        db.session.query(db.ChatUser).filter(db.ChatUser.uuid == agent_uuid).delete()
+        db.session.commit()

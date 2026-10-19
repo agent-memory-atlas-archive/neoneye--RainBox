@@ -481,6 +481,7 @@ class ModelGroupAgent(Agent):
         validator: Callable[[BaseModel], None] | None = None,
         purpose: str | None = None,
         candidate_model_uuids: list[UUID] | None = None,
+        followup_turns: list[dict[str, str]] | None = None,
     ) -> BaseModel:
         """Run one structured-output call (system + user message -> a parsed
         `response_model`), falling back through the model group's members in
@@ -522,7 +523,12 @@ class ModelGroupAgent(Agent):
         is still the agent's own — it earns the same rejection retries, fires
         the same attempt hooks, and leaves the same `_last_*` snapshot for the
         caller to persist — so it overrides the candidates rather than forking
-        a second call path that has none of that."""
+        a second call path that has none of that.
+
+        `followup_turns` are `{role, content}` turns sent after the user
+        prompt, for a prompt layout that splits one request across several
+        messages (chat/prompt_layout.py: the context as `user_prompt`, then an
+        acknowledgement and the request). Rejection corrections follow them."""
         from llama_index.core.callbacks import CallbackManager, TokenCountingHandler
         from llama_index.core.instrumentation.dispatcher import instrument_tags
         from llama_index.core.llms import ChatMessage, MessageRole
@@ -536,6 +542,9 @@ class ModelGroupAgent(Agent):
         messages = [
             ChatMessage(role=MessageRole.SYSTEM, content=system_prompt),
             ChatMessage(role=MessageRole.USER, content=user_prompt),
+        ] + [
+            ChatMessage(role=MessageRole(turn["role"]), content=turn["content"])
+            for turn in followup_turns or []
         ]
         self._last_usage = None
         self._last_model_uuid = None
@@ -922,6 +931,7 @@ class StructuredLLMAgent(ModelGroupAgent):
         self,
         user_prompt: str,
         validator: Callable[[BaseModel], None] | None = None,
+        followup_turns: list[dict[str, str]] | None = None,
     ) -> BaseModel:
         """One structured-output call against this agent's fixed `system_prompt`
         and `response_model`. Thin wrapper over
@@ -933,6 +943,7 @@ class StructuredLLMAgent(ModelGroupAgent):
             user_prompt=user_prompt,
             response_model=self.response_model,
             validator=validator,
+            followup_turns=followup_turns,
         )
 
     def handle(self, journal_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:

@@ -23,6 +23,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from chat.prompt_layout import DEFAULT_PROMPT_LAYOUT, PROMPT_LAYOUTS
 from db.models import AppSetting, db
 from services.definitions import (
     CORE_KEY,
@@ -242,6 +243,20 @@ SETTINGS: dict[str, Setting] = {
                     "decision, so turning it off and on again compares the two "
                     "directly. A turn that names a language, changes language, "
                     "or has nothing to reuse still asks.",
+    ),
+    "prompt.layout": Setting(
+        "prompt.layout", None, "string", DEFAULT_PROMPT_LAYOUT,
+        choices=PROMPT_LAYOUTS,
+        description="How the assistant and the chat agents arrange a model "
+                    "call's messages. 'single_turn' sends one user message "
+                    "holding everything, with the request as a section inside "
+                    "it. 'request_turn' sends the context as one user "
+                    "message, a fixed assistant acknowledgement, then the "
+                    "request verbatim as the final user message — the "
+                    "position chat models treat as the thing to act on. Read "
+                    "once per turn, so switching takes effect on the next "
+                    "message. See notes/proposals/"
+                    "2026-10-19-request-as-its-own-turn.md.",
     ),
     "profile.current_changed_at": Setting(
         "profile.current_changed_at", None, "string", None, internal=True,

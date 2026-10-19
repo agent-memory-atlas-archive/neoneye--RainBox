@@ -59,7 +59,8 @@ def case(app_ctx):
 def _stub(reply_text, action=AssistantActionName.REPLY):
     captured = {"prompts": []}
 
-    def fake(self, *, system_prompt, user_prompt, response_model, validator=None):
+    def fake(self, *, system_prompt, user_prompt, response_model, validator=None,
+             followup_turns=None):
         captured["prompts"].append((system_prompt, user_prompt))
         # The real ModelGroupAgent usage schema — {"input", "output", "ms"} —
         # so this stub can't mask a key mismatch in the harness again.
@@ -504,7 +505,8 @@ def test_pair_shares_baseline_generation(divergence_pair, monkeypatch):
             "derivative behavior to global change concisely.")
     calls = {"n": 0}
 
-    def fake(self, *, system_prompt, user_prompt, response_model, validator=None):
+    def fake(self, *, system_prompt, user_prompt, response_model, validator=None,
+             followup_turns=None):
         calls["n"] += 1
         self._last_usage = {"input": 100, "output": 10, "ms": 5}
         self._last_model_uuid = None

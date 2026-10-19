@@ -307,3 +307,24 @@ def test_the_recall_filter_backend_is_llm_until_the_operator_says_otherwise(app_
     a fresh install's memory recall depend on something nobody started."""
     assert db_settings.SETTINGS["memory.recall_filter_backend"].default == "llm"
     assert db.get_setting("memory.recall_filter_backend") == "llm"
+
+
+def test_the_prompt_layout_is_single_turn_until_the_operator_says_otherwise(app_ctx):
+    """The layout choices come from chat/prompt_layout.py, so a future layout
+    reaches the /settings dropdown by being added there."""
+    from chat.prompt_layout import PROMPT_LAYOUTS, current_prompt_layout
+
+    spec = db_settings.SETTINGS["prompt.layout"]
+    assert spec.choices == PROMPT_LAYOUTS
+    assert db.get_setting("prompt.layout") == "single_turn"
+    assert current_prompt_layout() == "single_turn"
+
+
+def test_an_unreadable_prompt_layout_reads_as_the_default(monkeypatch):
+    from chat.prompt_layout import current_prompt_layout
+
+    def broken(_key):
+        raise RuntimeError("no app context")
+
+    monkeypatch.setattr(db, "get_setting", broken)
+    assert current_prompt_layout() == "single_turn"
