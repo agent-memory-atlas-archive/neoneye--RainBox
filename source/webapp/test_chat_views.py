@@ -554,6 +554,24 @@ def test_reasoning_renders_as_worked_for_line_joined_to_its_reply():
     assert "removeDeletedMessages(d.deleted_ids || [m.id])" in body
 
 
+def test_one_to_one_rooms_render_as_text_messages():
+    """A room of one person and one model (every direct room, or an agents
+    room with a single agent) reads as a text thread: the person's messages
+    are right-aligned bubbles at most 80% wide, replies run full width, and
+    conversation rows drop their header — the clock moves to the action row.
+    Group rooms keep the transcript layout; diagnostic rows keep theirs."""
+    body = _body()
+    assert "return !!r && (r.room_type === 'direct' || r.member_count === 2);" in body
+    assert "log.classList.toggle('one-to-one', isOneToOneRoom());" in body
+    assert body.count("syncRoomLayout();") >= 2
+    assert ".chat-log.one-to-one .msg:not(.msg-debug) > .msg-head{display:none}" in body
+    assert ('.chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug)'
+            '{align-self:flex-end;max-width:80%;') in body
+    assert "msg.dataset.senderType = m.sender_type || '';" in body
+    assert "clock.className = 'msg-clock';" in body
+    assert "msgEl.classList.add('msg-editing');" in body
+
+
 def test_direct_room_stop_button():
     """A Stop button beside Send, shown only while a direct room's turn is in
     flight — read off the log (a progress row or a streaming row), and

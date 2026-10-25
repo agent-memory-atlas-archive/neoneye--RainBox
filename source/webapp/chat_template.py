@@ -228,6 +228,21 @@ CHAT_TEMPLATE: str = """
   .msg-reasoning + .msg.msg-joined{margin-top:-0.7em}
   .msg.msg-joined > .msg-head{display:none}
   .msg.msg-superseded{display:none}
+  /* One-to-one rooms (one person, one model — syncRoomLayout): a text-message
+     layout. The person's messages are right-aligned bubbles at most 80% wide,
+     replies run full width, and conversation rows drop the name/badge/time
+     header (each side is obvious from where it sits); the clock moves into the
+     action row and shows on hover. Diagnostic rows (notices, working bubbles,
+     debug) keep their header and bubble. */
+  .msg-clock{display:none;font-size:0.78rem;color:#9ca3af;margin-left:0.4em;cursor:help;font-variant-numeric:tabular-nums}
+  .chat-log.one-to-one .msg:not(.msg-debug) > .msg-head{display:none}
+  .chat-log.one-to-one .msg:not(.msg-debug) .msg-clock{display:inline;visibility:hidden}
+  .chat-log.one-to-one .msg:not(.msg-debug):hover .msg-clock{visibility:visible}
+  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug){align-self:flex-end;max-width:80%;
+      display:flex;flex-direction:column;align-items:flex-end}
+  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text{background:#e7efff;color:#1a1a2e;
+      border-radius:18px;padding:0.55em 1em}
+  .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing{width:80%;align-items:stretch}
   /* An over-long message is clamped to its opening. A pasted document or log
      otherwise owns the whole pane, and scrolling back through the conversation
      means scrolling through all of it. The fade says there is more below
@@ -842,6 +857,18 @@ function currentRoomObj(){
 function currentRoomIsDirect(){
   const r = currentRoomObj();
   return !!(r && r.room_type === 'direct');
+}
+
+// One person talking to one model: every direct room, and an agents room
+// whose only member besides the person is a single agent. Those read as a
+// text-message thread (the one-to-one CSS); a group room keeps the
+// name-on-every-row transcript, since there the speaker isn't implied.
+function isOneToOneRoom(){
+  const r = currentRoomObj();
+  return !!r && (r.room_type === 'direct' || r.member_count === 2);
+}
+function syncRoomLayout(){
+  log.classList.toggle('one-to-one', isOneToOneRoom());
 }
 
 // Send an up/down rating on a single agent message. The button row's data
@@ -1468,6 +1495,7 @@ function makeMessage(m){
   msg.dataset.renderKey = messageRenderKey(m);
   msg.dataset.kind = m.kind || 'message';  // what syncStopButton reads
   msg.dataset.sender = m.sender_uuid || '';  // what syncReasoningRows pairs on
+  msg.dataset.senderType = m.sender_type || '';  // which side a one-to-one room puts it on
   // The day this row belongs to, so appending the next one can tell whether a
   // divider is due without re-parsing dates already computed here.
   msg.dataset.day = messageDayKey(m);
@@ -1622,6 +1650,12 @@ function makeMessage(m){
   actions.appendChild(buildMessageMenu(m));
   const gen = (m.meta || {}).generation;
   if (gen && !m.streaming) actions.appendChild(buildGenerationBadge(gen));
+  // The header's clock, for layouts that hide the header (one-to-one rooms).
+  const clock = document.createElement('span');
+  clock.className = 'msg-clock';
+  clock.textContent = formatClock(m);
+  clock.title = formatFullStamp(m);
+  actions.appendChild(clock);
   msg.appendChild(actions);
   // A working bubble backed by a run takes a click anywhere on it to that
   // run's trace: the operator watching the seconds tick is exactly the one who
@@ -1695,6 +1729,9 @@ function makeMessage(m){
 // state can linger.
 function startEditMessage(m, msgEl, bodyEl, actionsEl){
   const room = currentRoom;
+  // A one-to-one bubble is only as wide as its text; the editor needs room.
+  // Both ways out rebuild the row, which drops the class again.
+  msgEl.classList.add('msg-editing');
   bodyEl.style.display = 'none';
   actionsEl.style.display = 'none';
   // A long message is being edited whole in the textarea, so its show-all /
@@ -2571,6 +2608,7 @@ async function selectRoom(uuid, scrollMsgId){
   syncSidebarModeOptions();
   log.innerHTML = '';
   syncStopButton();  // the previous room's button must not survive the switch
+  syncRoomLayout();
   input.focus();
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=0');
   if (uuid !== currentRoom) return;  // room switched while loading
@@ -3225,6 +3263,7 @@ async function toggleMember(room, agentUuid, cb){
     // Reflect the new count in the left room list locally (no full reload).
     const r = rooms.find(x => x.uuid === room);
     if (r){ r.member_count += wantMember ? 1 : -1; renderRooms(); }
+    if (room === currentRoom) syncRoomLayout();  // joining/leaving can make it one-to-one
     // Rebuild the panel so the heading count stays accurate (also re-enables).
     if (room === currentRoom && activeSidebarMode() === 'members') renderMembers();
   } catch (e) {
