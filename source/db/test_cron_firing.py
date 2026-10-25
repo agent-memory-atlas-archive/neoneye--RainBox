@@ -99,6 +99,27 @@ def test_compute_next_run_utc_and_local(app_ctx):
     assert db.cron_compute_next_run("not a cron", "UTC", after=now) is None
 
 
+@pytest.mark.parametrize("after, expected", [
+    # Clocks go back on 1999-10-31: 04:00 that day is CET (+01:00), not the
+    # CEST (+02:00) in force when the next run is computed the day before.
+    (datetime(1999, 10, 30, 3, 0, tzinfo=UTC), datetime(1999, 10, 31, 3, 0, tzinfo=UTC)),
+    # Clocks go forward on 1999-03-28: 04:00 that day is CEST, not CET.
+    (datetime(1999, 3, 27, 3, 0, tzinfo=UTC), datetime(1999, 3, 28, 2, 0, tzinfo=UTC)),
+])
+def test_localtime_next_run_crosses_a_dst_change(monkeypatch, after, expected):
+    monkeypatch.setenv("TZ", "Europe/Copenhagen")
+    assert db.cron_compute_next_run("0 4 * * *", "localtime", after=after) == expected
+
+
+def test_host_zone_prefers_tz_and_follows_dst(monkeypatch):
+    from db.cron import _host_zone
+
+    monkeypatch.setenv("TZ", "Europe/Copenhagen")
+    zone = _host_zone()
+    assert datetime(1999, 7, 1, tzinfo=zone).utcoffset() == timedelta(hours=2)
+    assert datetime(1999, 12, 1, tzinfo=zone).utcoffset() == timedelta(hours=1)
+
+
 def test_fire_message_job_posts_to_cron_room(firing):
     job = firing(action_type="message", target="", message="hello from cron", name="Greeter")
     run = db.fire_cron_job(job, trigger="manual")

@@ -14,10 +14,11 @@ import os
 import re
 import shlex
 import threading
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import sqlalchemy as sa
 
@@ -213,9 +214,9 @@ def cron_tree_version() -> str:
 # semantic validation; the real parser (croniter) arrives with the scheduler.
 _CRON_FIELD_RE = re.compile(r"^[0-9*/,\-]+$")
 
-# Which clock a job's cron is evaluated against. 'localtime' = the host's local
-# timezone at fire time (so it follows the machine when it travels); 'UTC' =
-# fixed. The scheduler honors this when it computes next_run_at (future).
+# Which clock a job's cron is evaluated against when next_run_at is computed.
+# 'localtime' = the host's time zone with its DST rules (`_host_zone`, looked up
+# each time, so it follows the machine when it travels); 'UTC' = fixed.
 CRON_TIMEZONES = ("localtime", "UTC")
 
 # Upper bound for a job's max_retries — enough for transient flakiness, low
@@ -767,17 +768,38 @@ def _spawn_script_thread(run_uuid: UUID, argv: list[str]) -> None:
     ).start()
 
 
+def _host_zone() -> tzinfo:
+    """The host's time zone with its DST rules, looked up on every call (so it
+    follows the machine when it travels): $TZ, else the IANA name the
+    /etc/localtime link points at. Only when neither names a known zone does it
+    fall back to the current fixed UTC offset, which is wrong across a DST
+    change."""
+    keys = [os.environ.get("TZ", "").lstrip(":")]
+    target = os.path.realpath("/etc/localtime")
+    if "/zoneinfo/" in target:
+        keys.append(target.split("/zoneinfo/", 1)[1])
+    for key in keys:
+        if key:
+            try:
+                return ZoneInfo(key)
+            except (ZoneInfoNotFoundError, ValueError):
+                continue
+    zone = datetime.now().astimezone().tzinfo
+    assert zone is not None
+    return zone
+
+
 def cron_compute_next_run(
     cron_expr: str, tz_choice: str = "localtime", after: datetime | None = None
 ) -> datetime | None:
     """Next fire time (as a tz-aware UTC instant) for a cron expression evaluated
-    against the job's clock: 'UTC' uses UTC, 'localtime' uses the host's local
-    timezone *at this moment* (so it follows the machine when it travels).
-    Returns None if the expression can't be parsed (so a bad row just never
-    fires rather than crashing the scheduler)."""
+    against the job's clock: 'UTC' uses UTC, 'localtime' the host's time zone
+    (`_host_zone`), so "27 2 * * *" means 02:27 on the wall clock on both sides
+    of a DST change. Returns None if the expression can't be parsed (so a bad
+    row just never fires rather than crashing the scheduler)."""
     if after is None:
         after = datetime.now(UTC)
-    base = after.astimezone(UTC) if tz_choice == "UTC" else after.astimezone()
+    base = after.astimezone(UTC) if tz_choice == "UTC" else after.astimezone(_host_zone())
     try:
         from croniter import croniter
 
