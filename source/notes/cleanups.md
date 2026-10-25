@@ -102,6 +102,17 @@ append-only tables into fixed id ranges would make those nights tiny too, but
 needs a dump format other than one pg_dump file per table. Deferred: ~1–4 MB a
 night is fine for now.
 
+### The service venvs have no pytest, so their documented test runs fail
+
+`notes/testing.md` ("Service suites") runs each standalone service's tests
+with `cd <service> && venv/bin/python -m pytest -q`, but none of the six
+service venvs (`reranker`, `voice_stt_whisper`, `voice_tts_kokoro`,
+`voice_tts_dotstts`, `discord_service`, `telegram_service`) has pytest
+installed, so every one of those commands fails with "No module named
+pytest". Fix: add pytest to each service's dev requirements (or have the
+doc install it). Found 2026-10-25; the services themselves start and answer
+real requests.
+
 ### There is no backup prune tool
 
 Parts are shared between backups (a manifest names parts written on many
@@ -130,6 +141,17 @@ GitHub rejected (137–155 MB each, embeddings included) are in
 on this machine only. They are the only backups of those days; GitHub's
 nearest are 2026-10-15 and the deduplicated ones from 2026-10-25 on. Keep,
 copy somewhere off-machine, or delete.
+
+**The reranker runs as an unmanaged, hand-started process.** The core sends
+reranking to `http://127.0.0.1:5008` (`agents/recall_reranker.py`), and what
+answers there is a `reranker/server.py` started by hand on 2026-08-25 and
+orphaned since (parent is `launchd`). `services.reranker.enabled` is unset
+(default off), so the launcher shows the reranker `stopped` and would not
+start one after a reboot. That process also still runs on Python 3.12.12,
+whose files the 2026-10-21 upgrade deleted (only 3.12.15 is installed): it
+keeps working on what it has loaded, but a module it has not imported yet
+would fail. Either enable the reranker on `/settings` (stop the orphan first,
+it holds the port) or decide it is meant to be optional.
 
 **A retention policy for the backup repo.** Deduplication slowed the growth
 but git still keeps every part forever. Something like daily for two weeks,
