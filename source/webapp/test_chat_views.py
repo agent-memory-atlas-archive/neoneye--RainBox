@@ -569,6 +569,8 @@ def test_one_to_one_rooms_render_as_text_messages():
             '{align-self:flex-end;max-width:80%;') in body
     assert "msg.dataset.senderType = m.sender_type || '';" in body
     assert "clock.className = 'msg-clock';" in body
+    assert ('.chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock'
+            '{order:-1;') in body
     assert "msgEl.classList.add('msg-editing');" in body
 
 

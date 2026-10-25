@@ -243,6 +243,8 @@ CHAT_TEMPLATE: str = """
   .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text{background:#e7efff;color:#1a1a2e;
       border-radius:18px;padding:0.55em 1em}
   .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing{width:80%;align-items:stretch}
+  /* A right-aligned row reads from its outer edge in: the clock leads. */
+  .chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock{order:-1;margin-left:0;margin-right:0.4em}
   /* An over-long message is clamped to its opening. A pasted document or log
      otherwise owns the whole pane, and scrolling back through the conversation
      means scrolling through all of it. The fade says there is more below
