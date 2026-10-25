@@ -5,19 +5,37 @@
 Back up the rainbox Postgres database to a compressed, **public-key-encrypted**,
 timestamped file — on demand from the CLI or on a schedule via the cron system.
 
-A backup is a `pg_dump` plain-SQL dump, compressed with **zstd**, then encrypted
-to a recipient's **public key** with [`age`](https://age-encryption.org):
+A backup is a `pg_dump` **directory-format** dump, stored **deduplicated per
+file**: each file of the dump (one per table's data, plus `toc.dat` with the
+schema) is compressed with **zstd** and encrypted to a recipient's **public
+key** with [`age`](https://age-encryption.org) — but only when no earlier
+backup already stored that exact content. A small encrypted **manifest** per
+backup names, for every dump file, the part that holds it:
 
 ```text
-pg_dump <dsn> | zstd | age -r <recipient>   ->   FILE.zstd.age
+pg_dump --format=directory <dsn>              ->  toc.dat, 4872.dat, 4874.dat, …  (plaintext, temp dir)
+each file whose SHA-256 isn't stored yet:
+    zstd | age -r <recipient>                 ->  <ts>Z/<file>.zstd.age             (a "part")
+{file -> part, sha256, bytes} as JSON | age   ->  <ts>Z.manifest.age                (one per backup)
 ```
 
+Most of the database changes rarely (the diary is updated about once a month),
+so a typical night stores only the few tables that changed — chat, the
+assistant and model-call logs, cron runs — plus `toc.dat` when the schema
+changed. A month's backups cost a few full copies of the busy tables instead of
+thirty copies of everything. The dump of an unchanged table is byte-identical
+from one night to the next (`pg_dump` writes rows in physical order and the
+directory format has no timestamps), which is what the deduplication relies on;
+a table that merely *looks* changed costs one extra part, never a wrong restore.
+
 **Derived tables are left out.** The dump keeps the schema of the tables in
-`DERIVED_TABLES` (`backup/dump.py`) but not their rows: `diary_embedding` and
-`memory_embedding`. They are vector caches computed from rows the dump does
-keep (diary passages, memory claims), and vectors barely compress — the diary
-embeddings alone were about 90% of a full dump and pushed every file past
-GitHub's 100 MiB limit. After a restore they are rebuilt; see
+`DERIVED_TABLES` (`backup/dump.py`) but not their rows: `diary_embedding`,
+`memory_embedding` and `diary_word`. The two embedding tables are vector caches
+computed from rows the dump does keep (diary passages, memory claims), and
+vectors barely compress — the diary embeddings alone were about 90% of a full
+dump and pushed every file past GitHub's 100 MiB limit. `diary_word` is the
+diary's word index, which Diary sync deletes and rebuilds on every run, so it
+would also look changed every night. After a restore all three are rebuilt; see
 [Restore from a backup](#restore-from-a-backup).
 
 ### Threat model — why encrypt to a public key
@@ -44,6 +62,17 @@ are stored sealed (AES-GCM under a key derived from `RAINBOX_CREDENTIAL_KEY`
 in `.env`), so a dump carries only ciphertext — and a restore needs that
 `.env` line, or the tokens must be pasted again on `/bridges`.
 
+**What deduplication reveals.** Contents stay encrypted, but anyone who can
+read the backup repo sees which dump files changed on which night and how big
+each part is — table-level activity and size, not data. The SHA-256 of each
+plaintext file is kept only in two places: inside the encrypted manifest, and
+in the **local index** on the host (`.git/rainbox-backup-index.json`, never
+committed — see File layout). A plaintext hash in the repo would let a reader
+confirm a guess about a small table's exact contents. While a backup runs,
+`pg_dump` writes the plaintext dump into a private (`0700`) temporary directory
+on the host, which is deleted when the run ends; the host already holds the
+database, so this widens nothing beyond that window.
+
 ### Limits of the threat model — the control plane
 
 The encrypt-only design holds only as long as the *recipient configuration* is
@@ -63,8 +92,11 @@ local-machine compromise as full control-plane compromise. The "Verify a
 backup" check below doubles as tamper detection — a backup that no longer
 decrypts with **your** identity means the recipient was changed under you.
 
-Code: `backup/dump.py` (the dump + encryption), `backup/remote.py` (git
-upload), and `db/cron.py` (the `backup` cron action + the seeded daily job).
+Code: `backup/dump.py` (the dump + CLI), `backup/store.py` (deduplicated parts,
+manifest, local index), `backup/restore.py` (reassembling a dump from a
+manifest), `backup/pipeline.py` (the shell-less `zstd`/`age` pipelines),
+`backup/remote.py` (git upload), and `db/cron.py` (the `backup` cron action +
+the seeded daily job).
 
 ## One-time key setup (do this offline)
 
@@ -99,7 +131,7 @@ export RAINBOX_BACKUP_REPO=/Users/Username/git/rainbox-backup
 export RAINBOX_BACKUP_AGE_RECIPIENT=age1...      # your age public key
 export RAINBOX_BACKUP_GIT_PUSH=1                 # commit + push to GitHub
 
-# one-off backup (writes the encrypted file, commits it, pushes):
+# one-off backup (writes the new parts + manifest, commits them, pushes):
 venv/bin/python -m backup.dump
 
 # or scheduled: set those three vars in the app's environment, run
@@ -110,32 +142,79 @@ Restore (on a machine that has the offline age private key):
 
 ```bash
 git clone git@github.com:Username/rainbox-backup.git
-age -d -i backup-identity.txt \
-  rainbox-backup/rainbox_database/<yyyy>-<mm>-xx/<file>.zstd.age \
-  | zstd -dc | psql postgresql://localhost/rainbox_restore
+venv/bin/python -m backup.restore \
+  rainbox-backup/rainbox_database/<yyyy>-<mm>-xx/<ts>Z.manifest.age \
+  -i backup-identity.txt -o restore-dump
+createdb rainbox_restore && pg_restore -d rainbox_restore restore-dump
+rm -rf restore-dump          # plaintext
 ```
 
 The sections below explain each piece in detail.
 
 ## File layout
 
-Backups are written under a **backup-repo** directory you choose:
+Backups are written under a **backup-repo** directory you choose. Each backup
+writes one manifest, plus a directory holding the parts it was first to store:
 
 ```text
-<repo>/rainbox_database/<yyyy>-<mm>-xx/<yyyy>-<mm>-<dd>T<hh>-<mm>-<ss>Z.zstd.age
+<repo>/rainbox_database/<yyyy>-<mm>-xx/<yyyy>-<mm>-<dd>T<hh>-<mm>-<ss>Z.manifest.age
+<repo>/rainbox_database/<yyyy>-<mm>-xx/<yyyy>-<mm>-<dd>T<hh>-<mm>-<ss>Z/<dump file>.zstd.age
 ```
 
-Example — a backup taken 2026-01-01 22:39:06 UTC:
+Example — a backup taken 1999-12-31 03:30:00 UTC that found two dump files
+changed:
 
 ```text
-<repo>/rainbox_database/2026-01-xx/2026-01-01T22-39-06Z.zstd.age
+<repo>/rainbox_database/1999-12-xx/1999-12-31T03-30-00Z.manifest.age
+<repo>/rainbox_database/1999-12-xx/1999-12-31T03-30-00Z/toc.dat.zstd.age
+<repo>/rainbox_database/1999-12-xx/1999-12-31T03-30-00Z/4893.dat.zstd.age
 ```
 
 - The `<yyyy>-<mm>-xx` directory buckets a whole month's backups together.
 - The timestamp is **UTC** (the trailing `Z`).
 - Month/day/time are zero-padded (January is `01`).
 - `:` is replaced with `-` because macOS paths can't contain a colon.
-- `.zstd.age` = zstd-compressed, then age-encrypted.
+- `.zstd.age` = zstd-compressed, then age-encrypted; the manifest is small JSON,
+  age-encrypted only.
+- A part's name is the dump file it holds (`toc.dat`, or `<dump id>.dat` for a
+  table's rows). Dump ids can shift when the schema changes; the manifest is
+  what maps them, so a part stored under one id is reused under another.
+- Parts are **shared**: a manifest usually names parts from many earlier
+  backups. Never delete a backup's part directory by hand — later manifests may
+  still need it. Prune by deleting manifests first, then only the parts no
+  remaining manifest names.
+
+The manifest, decrypted, is:
+
+```json
+{
+  "format": "rainbox-backup-manifest/1",
+  "created_at": "1999-12-31T03:30:00Z",
+  "files": [
+    {"name": "4872.dat", "part": "rainbox_database/1999-12-xx/1999-12-01T03-30-00Z/4872.dat.zstd.age",
+     "sha256": "…", "bytes": 1234},
+    {"name": "toc.dat", "part": "rainbox_database/1999-12-xx/1999-12-31T03-30-00Z/toc.dat.zstd.age",
+     "sha256": "…", "bytes": 567}
+  ]
+}
+```
+
+`files` lists every file of the dump, sorted by name; `part` is relative to the
+backup repo; `sha256` and `bytes` describe the plaintext, so a restore verifies
+each file it reassembles.
+
+**The local index** — which plaintext SHA-256 is already stored in which part —
+lives at `<repo>/.git/rainbox-backup-index.json` (or
+`<repo>/.rainbox-backup-index.json` when the backup repo is not a git repo). It
+never leaves the host: git never pushes `.git/`, and the upload stages only
+the files a backup wrote. A part is reused only while its file still exists
+and — in a git repo — is committed, so resetting or pruning the repo never
+yields a manifest naming a part that isn't there. Deleting the index costs one
+full-size backup, nothing else.
+
+**Older single-file backups** (`<ts>Z.zstd.age` next to the manifests, from
+before deduplication) are complete plain-SQL dumps; they stay where they are and
+restore as described under [Restore from a backup](#restore-from-a-backup).
 
 ## Configuration
 
@@ -218,17 +297,21 @@ export RAINBOX_BACKUP_AGE_RECIPIENT=age1ql3z7h9...
 venv/bin/python -m backup.dump
 ```
 
-On success it prints the path of the file it wrote. Tune compression with
-`--zstd-level N` (default 19; lower is faster and larger).
+On success it prints the manifest's path. Tune compression with
+`--zstd-level N` (default 19; lower is faster and larger); it applies to the
+parts written by that run.
 
 The CLI reads its config from **flags and env vars only** — it does not consult
 the `app_setting` DB settings (it builds no app context). Settings edited in the
 UI drive the scheduled cron backup, not a manual `python -m backup.dump` run; pass the
 flags/env explicitly here.
 
-The dump streams into a temporary `.part` file in the destination directory and
-is **atomically renamed** into place only when the whole pipeline succeeds, so an
-interrupted run never leaves a truncated file that looks like a finished backup.
+Every part and the manifest stream into a temporary `.part` file next to their
+destination and are **atomically renamed** into place when their pipeline
+succeeds. The manifest is written last, so a manifest exists only once every
+part it names is in place; a run that fails removes the parts it wrote and
+leaves no manifest, so an interrupted run never looks like a finished backup.
+The local index is updated only after the manifest is in place.
 
 ## Scheduled backup (cron)
 
@@ -261,7 +344,7 @@ Every fire — scheduled, "Run now", or "Run debug" — records a `cron_run` row
 the **`cron`** chatroom:
 
 ```text
-▶ backed up "Database backup" (scheduled) → /path/.../2026-01-01T03-30-00Z.zstd.age (822382 bytes)
+▶ backed up "Database backup" (scheduled) → /path/.../1999-12-31T03-30-00Z.manifest.age (2 new parts, 60 reused; 3912345 bytes written)
 ```
 
 On failure it posts an error line instead (and does not stop the scheduler),
@@ -289,12 +372,13 @@ git init && git remote add origin git@github.com:you/rainbox-backup.git
 # then, per backup:
 export RAINBOX_BACKUP_GIT_PUSH=1
 venv/bin/python -m backup.dump /path/to/backup-repo -r age1ql3z7h9...
-#   …writes the file, then: git add <file> && git commit && git push
+#   …writes the parts + manifest, then: git add <them> && git commit && git push
 ```
 
-It stages **only the new backup file** (unrelated working-tree changes are left
-alone), commits it as `backup <relpath>`, and pushes the current branch to
-`origin`. Code: `backup/remote.py`.
+It stages **only the files this backup wrote** — its new parts and its
+manifest (unrelated working-tree changes are left alone) — commits them as one
+`backup <manifest relpath>`, and pushes the current branch to `origin`. Code:
+`backup/remote.py`.
 
 - The push uses whatever credentials the running process has. For an
   `git@github.com:` remote that means an SSH key/agent reachable by the app (and
@@ -304,57 +388,81 @@ alone), commits it as `backup <relpath>`, and pushes the current branch to
   (`↑ pushed …` on success, `✖ upload failed: …` on failure) without failing
   the fire; the CLI logs the error and exits non-zero so a caller notices.
 - A file over GitHub's per-file limit (`MAX_FILE_BYTES`, 100 MiB) is **never
-  committed**: the upload fails with `✖ upload failed: … over the remote's …
-  file limit; not committed`, and the file stays on disk as a local-only
-  backup. Committing it would block this push and every later one, because an
-  unpushed commit with an oversize file can never reach GitHub.
-- Restoring is unchanged — pull/clone the backup repo, then decrypt as below.
+  committed**, and neither is the rest of that backup: the upload fails with
+  `✖ upload failed: … over the remote's … file limit; not committed`, and the
+  files stay on disk as a local-only backup. Committing it would block this push
+  and every later one, because an unpushed commit with an oversize file can
+  never reach GitHub. Each part holds one table, so only a single table over
+  100 MiB compressed hits this.
+- Because a part is reused only once it is committed, a backup that couldn't be
+  committed is not built upon: the next run stores those tables again.
+- If the backup repo is a git repo but pushing is off, nothing gets
+  committed, so nothing is ever reused and every backup is full-size.
+- Restoring — pull/clone the backup repo, then reassemble as below.
 
-> Caveat: git keeps every pushed backup forever, so the repo grows without
-> bound. Prune old backups (rewrite history) or use a retention policy if size
-> becomes a problem; git is convenient transport, not a deduplicating store.
+> Caveat: git keeps every pushed backup forever, so the repo still grows — by
+> the parts each backup adds. Prune old backups (rewrite history, keeping every
+> part a remaining manifest names) or use a retention policy if size becomes a
+> problem.
 
 ## Restore from a backup
 
-You need the **private identity** file (`backup-identity.txt`) you generated.
-Decrypt → decompress → load into `psql`. Do this on a trusted machine where the
-identity lives.
+You need the **private identity** file (`backup-identity.txt`) you generated
+and a checkout of the backup repo (`git clone`/`git pull`). Do this on a trusted
+machine where the identity lives, from `source/` of a rainbox checkout.
+
+A restore has two steps: `backup.restore` decrypts the manifest, decrypts and
+decompresses every part it names back into a `pg_dump` directory, and checks
+each file's SHA-256 and size against the manifest (it stops on any missing part
+or mismatch); then `pg_restore` loads that directory, putting the rows in before
+the constraints just like a single-file dump.
 
 **Into a fresh, empty database** (recommended — avoids "already exists"
 errors):
 
 ```bash
-# 1. Create an empty target database (example name shown):
-createdb rainbox_restore
+# 1. Reassemble the dump (the output directory must not exist yet):
+venv/bin/python -m backup.restore \
+  /path/to/backup-repo/rainbox_database/1999-12-xx/1999-12-31T03-30-00Z.manifest.age \
+  -i backup-identity.txt -o restore-dump
 
-# 2. Decrypt + decompress + load:
-age -d -i backup-identity.txt \
-  /path/.../rainbox_database/2026-01-xx/2026-01-01T03-30-00Z.zstd.age \
-  | zstd -dc \
-  | psql postgresql://localhost/rainbox_restore
+# 2. Create an empty target database and load it:
+createdb rainbox_restore
+pg_restore -d rainbox_restore restore-dump
+rm -rf restore-dump          # it is the plaintext database
 
 # 3. Point the app at it to verify, then promote when satisfied:
 DATABASE_URL=postgresql+psycopg://localhost/rainbox_restore python main.py
 ```
+
+`backup.restore` finds the parts relative to the backup repo that holds the
+manifest (`<repo>/rainbox_database/<bucket>/<manifest>`); pass `--repo DIR` if
+the manifest was copied elsewhere.
 
 **Overwrite the live `rainbox_production` database** (destructive — drops and
 recreates it; stop the app first):
 
 ```bash
 dropdb rainbox_production && createdb rainbox_production
-age -d -i backup-identity.txt FILE.zstd.age | zstd -dc | psql postgresql://localhost/rainbox_production
+pg_restore -d rainbox_production restore-dump
 ```
 
-> A plain-SQL dump restored on top of an existing populated database will emit
-> "relation already exists" / duplicate-key errors. Restore into an empty
-> database.
+> Restoring on top of an existing populated database emits "relation already
+> exists" / duplicate-key errors. Restore into an empty database.
+
+**An older single-file backup** (`<ts>Z.zstd.age`) is one plain-SQL dump:
+
+```bash
+age -d -i backup-identity.txt FILE.zstd.age | zstd -dc | psql postgresql://localhost/rainbox_restore
+```
 
 After restoring, the app's `init_db()` runs its idempotent migrations on the
 next start, so an older dump is brought up to the current schema automatically.
 
 The derived tables come back empty and refill on their own: the nightly
-"Diary sync" job resumes every missing diary vector, and "Memory embedding
-sync" backfills memory-claim vectors (fire either from `/cron` to do it now).
+"Diary sync" job rebuilds the word index and resumes every missing diary vector,
+and "Memory embedding sync" backfills memory-claim vectors (fire either from
+`/cron` to do it now).
 Until then diary search falls back to its lexical routes. If the embedding
 model changed since the backup, Diary sync reports `embedder model changed`;
 run `embed` by hand then:
@@ -365,17 +473,20 @@ python -m tools.diary --database-url postgresql+psycopg://localhost/rainbox_rest
 
 ## Verify a backup
 
-Confirm a file decrypts and is a real dump (needs the identity; no full restore):
+Confirm a backup reassembles and is a real dump (needs the identity; no
+database restore). Step 1 of the restore already verifies every file against
+the manifest; `pg_restore --list` then reads the reassembled table of contents:
 
 ```bash
-age -d -i backup-identity.txt FILE.zstd.age | zstd -dc | head -c 200
-# -> should start with: "-- PostgreSQL database dump"
+venv/bin/python -m backup.restore MANIFEST.manifest.age -i backup-identity.txt -o check-dump
+pg_restore --list check-dump | head     # -> ";" header lines, then one line per object
+rm -rf check-dump
 ```
 
-Confirm it's an age file at all (no key needed):
+Confirm a file is an age file at all (no key needed):
 
 ```bash
-head -c 21 FILE.zstd.age   # -> "age-encryption.org/v1"
+head -c 21 FILE.manifest.age   # -> "age-encryption.org/v1"
 ```
 
 ## Troubleshooting
@@ -441,6 +552,11 @@ worker; see the note in `fire_cron_job` (`db/cron.py`).
   configure and fire backups are unauthenticated, so the recipient and
   destination can be redirected by any local caller — see "Limits of the
   threat model" above and the security-review mitigation plan.
+- **No prune tool.** Parts are shared between backups, so pruning by hand
+  must keep every part a remaining manifest names (see File layout).
+- **Whole tables, not rows.** A table that gains one row is stored again in
+  full that night; deduplication is per dump file, so the append-only logs
+  (`assistant_step`, `llm_call`) are the bulk of a quiet night.
 - **Remote upload is git-only.** Off-machine upload is done by committing into a
   git repo and pushing (see Remote upload). There's no direct rsync/S3/rclone
   target; point git at whatever remote you like, or add another uploader.
@@ -464,5 +580,7 @@ worker; see the note in `fire_cron_job` (`db/cron.py`).
 - `notes/proposals/2026-06-07-user-configuration-in-postgres.md` — the
   `app_setting` design the backup settings live in.
 - [age-encryption.org](https://age-encryption.org) — the encryption tool/format.
-- Tests: `backup/test_dump.py` (the dump + encryption), `backup/test_remote.py`
-  (the git upload), `db/test_cron_backup.py` (the cron action).
+- Tests: `backup/test_store.py` (deduplication, manifest, local index),
+  `backup/test_dump.py` (the dump end to end, through restore),
+  `backup/test_remote.py` (the git upload), `db/test_cron_backup.py` (the cron
+  action).
