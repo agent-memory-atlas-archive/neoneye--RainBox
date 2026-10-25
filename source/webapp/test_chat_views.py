@@ -516,10 +516,21 @@ def test_direct_room_history_window_setting():
     assert "history_window:" in body
 
 
-def test_direct_room_bridge_troubleshooting():
+def test_direct_room_bridge_panel():
+    """Troubleshooting lives in its own Bridge panel, not under Settings, and
+    the option is direct-room only (agents rooms fall back to Settings)."""
     body = _body()
-    assert "Bridge troubleshooting" in body
-    assert "/troubleshooting-post" in body
+    assert '<option value="bridge">Bridge</option>' in body
+    assert "function renderBridgePanel()" in body
+    assert "else if (mode === 'bridge') renderBridgePanel();" in body
+    assert "if (!direct && sidebarMode === 'bridge') return 'settings';" in body
+    assert "Bridge troubleshooting" not in body
+    bridge = body[body.index("function renderBridgePanel()"):]
+    bridge = bridge[:bridge.index("\nasync function renderMembers(")]
+    assert "/troubleshooting-post" in bridge
+    settings = body[body.index("async function renderDirectSettings()"):]
+    settings = settings[:settings.index("\nfunction renderBridgePanel(")]
+    assert "ds-trouble" not in settings
     for marker in ("ds-trouble-text", "ds-trouble-progress",
                    "ds-trouble-reply", "ds-trouble-notice"):
         assert marker in body

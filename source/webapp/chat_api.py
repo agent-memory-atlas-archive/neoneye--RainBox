@@ -511,7 +511,7 @@ TROUBLESHOOTING_KINDS: tuple[str, ...] = ("message", "progress", "notice")
 @app.route("/chat/api/rooms/<room_uuid>/troubleshooting-post", methods=["POST"])
 def troubleshooting_post(room_uuid: str) -> tuple[Response, int]:
     """Post into a direct room AS its responder, with no model turn — the
-    sidebar's "Bridge troubleshooting" section. The rows are ordinary
+    Bridge sidebar panel's troubleshooting section. The rows are ordinary
     progress/message/notice rows, so the web UI shows them and the bridges
     (Discord, Telegram) forward them exactly as they would a real turn: that
     is how an operator watches the far-side bot post several messages, and

@@ -152,7 +152,7 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-save{margin-top:0.8em;padding:0.4em 1em;font:inherit;font-size:0.85rem;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#374151;cursor:pointer}
   .room-sidebar .ds-save:hover{background:#f1f5f9}
   .room-sidebar .ds-save:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
-  /* Bridge troubleshooting: post as the responder, no model turn. */
+  /* Bridge panel troubleshooting: post as the responder, no model turn. */
   .room-sidebar .ds-trouble-help{margin:0.25em 0 0.4em;font-size:0.8rem;color:#6b7280;line-height:1.35}
   .room-sidebar textarea.ds-trouble-text{width:100%;box-sizing:border-box;font:inherit;font-size:0.85rem;line-height:1.4;padding:0.4em;border:1px solid #ccc;border-radius:6px;resize:vertical;min-height:4em}
   .room-sidebar .ds-trouble-row{display:flex;gap:0.4em;flex-wrap:wrap;margin-top:0.4em}
@@ -349,6 +349,7 @@ CHAT_TEMPLATE: str = """
         <option value="members">Members</option>
         <option value="stats">Stats</option>
         <option value="settings">Settings</option>
+        <option value="bridge">Bridge</option>
         <option value="export">Export</option>
       </select>
     </div>
@@ -545,12 +546,12 @@ let agentsLoaded = false;
 // panel doesn't apply — never loses the panel choice.
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
 const SIDEBAR_VISIBLE_KEY = 'chat.sidebarVisible';
-let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'export'
+let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'export'
 let sidebarVisible = false;
 try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
   if (saved === 'members' || saved === 'stats' || saved === 'settings'
-      || saved === 'export'){
+      || saved === 'bridge' || saved === 'export'){
     sidebarMode = saved;
     sidebarVisible = true;  // single-key era stored 'hidden' for off; a panel meant shown
   }
@@ -2638,14 +2639,16 @@ document.getElementById('chat-rename-input').addEventListener('keydown', (e) => 
   }
 });
 
-// Members lists agents, so it's meaningless in a direct LLM room; Settings
 // Members lists agents, so it's meaningless in a direct LLM room: map it to
-// Settings there. Settings itself now exists for both room types — the model
-// picker + system prompt for a direct room, the persona picker for an agents
-// room — so it is never mapped away. Stats/Export are shared.
+// Settings there. Bridge posts as the direct-chat responder, which only a
+// direct room has: map it to Settings in an agents room. Settings itself
+// exists for both room types — the model picker + system prompt for a direct
+// room, the persona picker for an agents room — so it is never mapped away.
+// Stats/Export are shared.
 function effectiveSidebarMode(){
   const direct = currentRoomIsDirect();
   if (direct && sidebarMode === 'members') return 'settings';
+  if (!direct && sidebarMode === 'bridge') return 'settings';
   return sidebarMode;
 }
 // What the right pane is actually showing: the mapped mode, or 'hidden' when
@@ -2661,16 +2664,19 @@ function persistSidebarPrefs(){
 }
 // Keep the select honest for the open room: hide the option that doesn't
 // apply to its type, and point the value at what is actually displayed.
-// Members is meaningless in a direct room (no agents to list) so it's hidden
-// there; Settings applies to both room types now, so it's always shown.
+// Members is meaningless in a direct room (no agents to list) and Bridge in an
+// agents room (no responder to post as), so each is hidden there; Settings
+// applies to both room types, so it's always shown.
 function syncSidebarModeOptions(){
   const direct = currentRoomIsDirect();
   const membersOpt = sidebarModeSel.querySelector('option[value="members"]');
   membersOpt.hidden = membersOpt.disabled = direct;
+  const bridgeOpt = sidebarModeSel.querySelector('option[value="bridge"]');
+  bridgeOpt.hidden = bridgeOpt.disabled = !direct;
   sidebarModeSel.value = activeSidebarMode();
 }
 
-// Right sidebar: hidden / members / stats / settings / export.
+// Right sidebar: hidden / members / stats / settings / bridge / export.
 async function renderSidebar(){
   const mode = activeSidebarMode();
   if (mode === 'hidden'){
@@ -2682,6 +2688,7 @@ async function renderSidebar(){
   if (mode === 'members') await renderMembers();
   else if (mode === 'stats') renderStats();
   else if (mode === 'settings') await renderSettingsPanel();
+  else if (mode === 'bridge') renderBridgePanel();
   else if (mode === 'export') renderExport();
 }
 
@@ -3002,7 +3009,18 @@ async function renderDirectSettings(){
     }
   });
   sidebarEl.appendChild(save);
-  // Bridge troubleshooting: post into this room AS the responder, with no
+}
+
+// Bridge panel (direct rooms only): tools for the Discord/Telegram bridges
+// that forward this room.
+function renderBridgePanel(){
+  const room = currentRoom;
+  sidebarEl.innerHTML = '';
+  const h = document.createElement('h3');
+  h.className = 'sidebar-title';
+  h.textContent = 'Bridge';
+  sidebarEl.appendChild(h);
+  // Troubleshooting: post into this room AS the responder, with no
   // model turn. The rows are ordinary progress/message/notice rows, so the
   // bridges (Discord, Telegram) forward them like a real turn — press
   // progress a few times, then reply, and watch the far side edit one bubble
@@ -3010,7 +3028,7 @@ async function renderDirectSettings(){
   // answering a message.
   const troubleHead = document.createElement('span');
   troubleHead.className = 'ds-label';
-  troubleHead.textContent = 'Bridge troubleshooting';
+  troubleHead.textContent = 'Troubleshooting';
   sidebarEl.appendChild(troubleHead);
   const troubleHelp = document.createElement('div');
   troubleHelp.className = 'ds-trouble-help';
