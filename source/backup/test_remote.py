@@ -57,7 +57,7 @@ def test_push_commits_and_uploads(backup_repo):
     f.parent.mkdir(parents=True)
     f.write_bytes(b"age-encryption.org/v1\nciphertext")
 
-    note = backup_remote.git_push_backup(repo, f)
+    note = backup_remote.git_push_backup(repo, [f])
     assert "pushed" in note and "2026-01-01T03-30-00Z.zstd.age" in note
 
     # The file is committed locally…
@@ -73,8 +73,8 @@ def test_push_same_file_twice_is_noop(backup_repo):
     f = repo / "rainbox_database" / "2026-01-xx" / "x.zstd.age"
     f.parent.mkdir(parents=True)
     f.write_bytes(b"data")
-    backup_remote.git_push_backup(repo, f)
-    note = backup_remote.git_push_backup(repo, f)
+    backup_remote.git_push_backup(repo, [f])
+    note = backup_remote.git_push_backup(repo, [f])
     assert "nothing to push" in note
 
 
@@ -87,7 +87,7 @@ def test_push_oversize_file_is_never_committed(backup_repo):
         fh.truncate(backup_remote.MAX_FILE_BYTES + 1)
 
     with pytest.raises(RuntimeError, match="file limit"):
-        backup_remote.git_push_backup(repo, f)
+        backup_remote.git_push_backup(repo, [f])
 
     # Nothing committed or staged, so later pushes are not blocked by it.
     assert _git(repo, "rev-parse", "HEAD").stdout == head
@@ -100,7 +100,53 @@ def test_push_file_at_the_limit_is_pushed(backup_repo):
     f.parent.mkdir(parents=True)
     with open(f, "wb") as fh:
         fh.truncate(backup_remote.MAX_FILE_BYTES)
-    assert "pushed" in backup_remote.git_push_backup(repo, f)
+    assert "pushed" in backup_remote.git_push_backup(repo, [f])
+
+
+def test_push_several_files_as_one_commit_named_by_the_last(backup_repo):
+    repo, remote = backup_repo
+    bucket = repo / "rainbox_database" / "1999-12-xx"
+    (bucket / "1999-12-31T03-30-00Z").mkdir(parents=True)
+    part = bucket / "1999-12-31T03-30-00Z" / "toc.dat.zstd.age"
+    manifest = bucket / "1999-12-31T03-30-00Z.manifest.age"
+    part.write_bytes(b"part")
+    manifest.write_bytes(b"manifest")
+
+    note = backup_remote.git_push_backup(repo, [part, manifest])
+    assert "pushed 2 files" in note and "1999-12-31T03-30-00Z.manifest.age" in note
+    assert _git(repo, "log", "-1", "--format=%s").stdout.strip() == \
+        "backup rainbox_database/1999-12-xx/1999-12-31T03-30-00Z.manifest.age"
+    tree = _git(remote, "ls-tree", "-r", "--name-only", "HEAD").stdout
+    assert "rainbox_database/1999-12-xx/1999-12-31T03-30-00Z/toc.dat.zstd.age" in tree
+    assert "rainbox_database/1999-12-xx/1999-12-31T03-30-00Z.manifest.age" in tree
+
+
+def test_one_oversize_file_keeps_the_whole_backup_uncommitted(backup_repo):
+    repo, _ = backup_repo
+    head = _git(repo, "rev-parse", "HEAD").stdout
+    small = repo / "small.zstd.age"
+    small.write_bytes(b"part")
+    big = repo / "big.zstd.age"
+    with open(big, "wb") as fh:
+        fh.truncate(backup_remote.MAX_FILE_BYTES + 1)
+    with pytest.raises(RuntimeError, match="file limit"):
+        backup_remote.git_push_backup(repo, [small, big])
+    assert _git(repo, "rev-parse", "HEAD").stdout == head
+    assert _git(repo, "diff", "--cached", "--name-only").stdout == ""
+
+
+def test_tracked_files(backup_repo, tmp_path):
+    repo, _ = backup_repo
+    f = repo / "rainbox_database" / "1999-12-xx" / "x.zstd.age"
+    f.parent.mkdir(parents=True)
+    f.write_bytes(b"data")
+    assert backup_remote.tracked_files(repo) == {"README.md"}
+    backup_remote.git_push_backup(repo, [f])
+    assert backup_remote.tracked_files(repo) == {
+        "README.md", "rainbox_database/1999-12-xx/x.zstd.age"}
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    assert backup_remote.tracked_files(plain) is None
 
 
 def test_push_file_outside_repo_raises(backup_repo, tmp_path):
@@ -108,7 +154,7 @@ def test_push_file_outside_repo_raises(backup_repo, tmp_path):
     outside = tmp_path / "elsewhere.zstd.age"
     outside.write_bytes(b"data")
     with pytest.raises(RuntimeError, match="not inside the git repo"):
-        backup_remote.git_push_backup(repo, outside)
+        backup_remote.git_push_backup(repo, [outside])
 
 
 def test_push_no_remote_raises(tmp_path):
@@ -119,4 +165,4 @@ def test_push_no_remote_raises(tmp_path):
     f = repo / "b.zstd.age"
     f.write_bytes(b"data")
     with pytest.raises(RuntimeError, match="git push failed"):
-        backup_remote.git_push_backup(repo, f)
+        backup_remote.git_push_backup(repo, [f])

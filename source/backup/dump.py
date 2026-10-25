@@ -1,35 +1,27 @@
-"""Back up the rainbox Postgres database to a zstd-compressed, public-key-encrypted dump.
+"""Back up the rainbox Postgres database as deduplicated, public-key-encrypted parts.
 
-Dumps postgres to zstd, encrypted to a recipient's *public* key with `age`
-(see notes/backup.md for the full operator guide). The pipeline is:
+Dumps postgres in pg_dump's directory format (one file per table's rows, plus
+`toc.dat`) into a private temp directory, then hands it to backup.store, which
+writes each file not already stored as a zstd-compressed part encrypted to a
+recipient's *public* key with `age`, plus one encrypted manifest naming every
+part (see notes/backup.md for the full operator guide):
 
-    pg_dump <dsn> | zstd | age -r <recipient>   ->   FILE.zstd.age
+    pg_dump --format=directory <dsn>        ->  toc.dat, <id>.dat, …
+    each file not stored yet: zstd | age    ->  <ts>Z/<file>.zstd.age
+    manifest (JSON) | age                   ->  <ts>Z.manifest.age
 
-The rows of DERIVED_TABLES (vector caches) are left out; the nightly sync jobs
-rebuild them after a restore.
+The rows of DERIVED_TABLES are left out; the nightly sync jobs rebuild them
+after a restore.
 
 Encryption is **mandatory and fail-closed**: a backup is only ever written
 encrypted. rainbox holds only the recipient's public key, so a compromised host
 can produce backups but cannot read them — the matching age *identity* (private
-key) stays offline and is needed to restore:
-
-    age -d -i identity.txt FILE.zstd.age | zstd -dc | psql <dsn>
+key) stays offline and is needed to restore (backup.restore reassembles the
+dump directory; pg_restore loads it).
 
 Generate a keypair once, offline, with `age-keygen -o identity.txt`; give
 rainbox only the printed `age1…` public key (via RAINBOX_BACKUP_AGE_RECIPIENT or
 --recipient) and keep identity.txt off the machine.
-
-Backups are laid out under a backup-repo directory as:
-
-    <repo>/rainbox_database/<yyyy>-<mm>-xx/<yyyy>-<mm>-<dd>T<hh>-<mm>-<ss>Z.zstd.age
-
-e.g. a backup taken 2026-01-01 22:39:06 UTC lands at:
-
-    <repo>/rainbox_database/2026-01-xx/2026-01-01T22-39-06Z.zstd.age
-
-The month-bucket directory keeps a month's worth of backups together. The
-timestamp is UTC (the trailing `Z`); `:` is replaced with `-` because it is not
-allowed in macOS paths.
 
 Usage:
     python -m backup.dump <backup-repo> -r age1...   # or set the env vars below
@@ -38,25 +30,26 @@ import argparse
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from backup import store
+from backup.pipeline import resolve_tool, run_pipeline
 from db.models import psycopg_dsn
 
 logger = logging.getLogger(__name__)
 
-DB_SUBDIR = "rainbox_database"
-BACKUP_SUFFIX = ".zstd.age"
 DEFAULT_ZSTD_LEVEL = 19
 
-# Tables whose rows are left out of every dump (their schema stays): vector
-# caches the nightly sync jobs rebuild from rows the dump does keep. Vectors
-# barely compress, and diary_embedding alone is most of a full dump.
-DERIVED_TABLES = ("diary_embedding", "memory_embedding")
+# Tables whose rows are left out of every dump (their schema stays): data the
+# nightly sync jobs rebuild from rows the dump does keep. The embedding tables
+# are vector caches (vectors barely compress, and diary_embedding alone was
+# most of a full dump); diary_word is the word index Diary sync rebuilds on
+# every run, so its dump would never deduplicate.
+DERIVED_TABLES = ("diary_embedding", "memory_embedding", "diary_word")
 
 # Env vars for the recipient public key(s). RECIPIENT holds one or more inline
 # `age1…`/`ssh-…` recipients (whitespace/comma separated); RECIPIENTS_FILE points
@@ -68,32 +61,6 @@ ENV_RECIPIENTS_FILE = "RAINBOX_BACKUP_AGE_RECIPIENTS_FILE"
 class NoRecipientError(RuntimeError):
     """No age recipient (public key) was configured. Backups are fail-closed:
     rather than write a plaintext dump, we refuse to back up at all."""
-
-
-def backup_relative_path(now: datetime) -> Path:
-    """Path of one backup relative to the backup repo, for a UTC `now`.
-
-    Naive datetimes are assumed to already be UTC; aware ones are converted.
-    Month/day/time components are zero-padded by strftime (so January is `01`).
-    """
-    if now.tzinfo is not None:
-        now = now.astimezone(timezone.utc)
-    bucket = now.strftime("%Y-%m-xx")
-    filename = now.strftime(f"%Y-%m-%dT%H-%M-%SZ{BACKUP_SUFFIX}")
-    return Path(DB_SUBDIR) / bucket / filename
-
-
-def _resolve_tool(env_var: str, name: str) -> str:
-    """Locate an external tool, preferring an explicit env override."""
-    override = os.environ.get(env_var)
-    if override:
-        return override
-    found = shutil.which(name)
-    if not found:
-        raise FileNotFoundError(
-            f"{name!r} not found on PATH; set {env_var} to its full path"
-        )
-    return found
 
 
 def split_recipients(value: str | None) -> list[str]:
@@ -127,35 +94,6 @@ def resolve_recipients(
     return recipients, (str(recipients_file) if recipients_file else None)
 
 
-def _run_pipeline(stages: list[list[str]], out) -> None:
-    """Run `stages` as a shell-less pipeline (stage N's stdout → stage N+1's
-    stdin), the last writing to the open file `out`. Raises RuntimeError naming
-    the first failing stage and its stderr."""
-    procs: list[subprocess.Popen] = []
-    for i, argv in enumerate(stages):
-        is_last = i == len(stages) - 1
-        p = subprocess.Popen(
-            argv,
-            stdin=procs[-1].stdout if procs else None,
-            stdout=out if is_last else subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        if procs:
-            # Close the parent's copy of the upstream pipe so the upstream stage
-            # gets SIGPIPE if a downstream stage dies early.
-            assert procs[-1].stdout is not None
-            procs[-1].stdout.close()
-        procs.append(p)
-
-    # communicate() downstream-first; each call collects that stage's stderr and
-    # waits for it to exit.
-    errs = {id(p): p.communicate()[1] for p in reversed(procs)}
-    for argv, p in zip(stages, procs):
-        if p.returncode != 0:
-            err = errs[id(p)].decode(errors="replace").strip()
-            raise RuntimeError(f"{argv[0]} failed (exit {p.returncode}): {err}")
-
-
 def backup_database(
     backup_repo: str | os.PathLike[str],
     *,
@@ -164,14 +102,14 @@ def backup_database(
     zstd_level: int = DEFAULT_ZSTD_LEVEL,
     recipients: list[str] | None = None,
     recipients_file: str | os.PathLike[str] | None = None,
-) -> Path:
-    """Dump the database to an encrypted file under `backup_repo`, return its path.
+) -> store.StoreResult:
+    """Back up the database into `backup_repo` and return what was written.
 
-    Streams `pg_dump | zstd | age -r <recipient>…` into a temp file in the
-    destination directory, then atomically renames it into place, so an
-    interrupted backup never leaves a truncated file looking complete. Encryption
-    is mandatory: raises NoRecipientError before touching pg_dump if no recipient
-    public key is configured.
+    pg_dump writes its directory-format dump into a private (0700) temp
+    directory that is deleted when this returns; backup.store then stores it
+    deduplicated and encrypted. Encryption is mandatory: raises
+    NoRecipientError before touching pg_dump if no recipient public key is
+    configured.
     """
     recips, recips_file = resolve_recipients(recipients, recipients_file)
 
@@ -179,9 +117,9 @@ def backup_database(
     if now is None:
         now = datetime.now(timezone.utc)
 
-    pg_dump = _resolve_tool("PG_DUMP", "pg_dump")
-    zstd = _resolve_tool("ZSTD", "zstd")
-    age = _resolve_tool("AGE", "age")
+    pg_dump = resolve_tool("PG_DUMP", "pg_dump")
+    zstd = resolve_tool("ZSTD", "zstd")
+    age = resolve_tool("AGE", "age")
 
     age_argv = [age]
     for r in recips:
@@ -189,31 +127,22 @@ def backup_database(
     if recips_file:
         age_argv += ["-R", recips_file]
 
-    stages = [
-        [pg_dump, *(f"--exclude-table-data={t}" for t in DERIVED_TABLES), dsn],
-        [zstd, f"-{zstd_level}", "-c"],
-        age_argv,  # reads stdin, writes ciphertext to stdout
-    ]
-
-    dest = Path(backup_repo) / backup_relative_path(now)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-
-    fd, tmp_name = tempfile.mkstemp(
-        dir=dest.parent, prefix=dest.name + ".", suffix=".part"
-    )
-    tmp = Path(tmp_name)
     logger.info("backing up %s -> %s (encrypted to %d recipient(s))",
-                dsn, dest, len(recips) + (1 if recips_file else 0))
-    try:
-        with os.fdopen(fd, "wb") as out:
-            _run_pipeline(stages, out)
-        os.replace(tmp, dest)
-    except BaseException:
-        tmp.unlink(missing_ok=True)
-        raise
+                dsn, backup_repo, len(recips) + (1 if recips_file else 0))
+    with tempfile.TemporaryDirectory(prefix="rainbox-backup-") as tmp:
+        dump_dir = Path(tmp) / "dump"
+        run_pipeline([[
+            pg_dump, "--format=directory", "--compress=0", f"--file={dump_dir}",
+            *(f"--exclude-table-data={t}" for t in DERIVED_TABLES), dsn,
+        ]], subprocess.DEVNULL)
+        result = store.store_dump(
+            backup_repo, dump_dir, now=now,
+            encrypt_argv=age_argv, zstd=zstd, zstd_level=zstd_level,
+        )
 
-    logger.info("backup complete: %s (%d bytes)", dest, dest.stat().st_size)
-    return dest
+    logger.info("backup complete: %s (%d new parts, %d reused, %d bytes written)",
+                result.manifest, len(result.new_parts), result.reused, result.bytes_written)
+    return result
 
 
 def main() -> None:
@@ -222,7 +151,7 @@ def main() -> None:
     )
     parser = argparse.ArgumentParser(
         prog="python -m backup.dump",
-        description="Back up the rainbox database to a zstd+age-encrypted file."
+        description="Back up the rainbox database as deduplicated zstd+age-encrypted parts."
     )
     parser.add_argument(
         "backup_repo",
@@ -253,8 +182,8 @@ def main() -> None:
         "--git-push",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="After writing the backup, commit it into the backup-repo git repo "
-        "and push (default: RAINBOX_BACKUP_GIT_PUSH).",
+        help="After writing the backup, commit its files into the backup-repo git "
+        "repo and push (default: RAINBOX_BACKUP_GIT_PUSH).",
     )
     args = parser.parse_args()
 
@@ -262,7 +191,7 @@ def main() -> None:
         parser.error("backup_repo is required (pass it or set RAINBOX_BACKUP_REPO)")
 
     try:
-        dest = backup_database(
+        result = backup_database(
             args.backup_repo,
             zstd_level=args.zstd_level,
             recipients=args.recipients,
@@ -270,7 +199,7 @@ def main() -> None:
         )
     except NoRecipientError as exc:
         parser.error(str(exc))
-    print(dest)
+    print(result.manifest)
 
     from backup import remote as backup_remote
 
@@ -279,7 +208,7 @@ def main() -> None:
         # The local backup already succeeded; an upload failure shouldn't discard
         # it, but it should still be a non-zero exit so a caller notices.
         try:
-            logger.info("%s", backup_remote.git_push_backup(args.backup_repo, dest))
+            logger.info("%s", backup_remote.git_push_backup(args.backup_repo, result.files()))
         except Exception as exc:  # noqa: BLE001
             logger.error("upload failed: %s", exc)
             sys.exit(1)

@@ -3,7 +3,8 @@
 The backup-repo directory (where `backup.dump` writes `…Z.zstd.age` files) can
 itself be a git repo with a remote — e.g.
 `git@github.com:Username/rainbox-backup.git`. "Upload to remote" then
-means: stage just the new backup file, commit it, and `git push`. Because the
+means: stage just the files the new backup wrote (its new parts and its
+manifest), commit them, and `git push`. Because the
 files are already public-key-encrypted ciphertext (see `backup.dump`), pushing
 them to untrusted storage like GitHub is safe.
 
@@ -15,6 +16,7 @@ import logging
 import os
 import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -60,45 +62,62 @@ def _check(cp: subprocess.CompletedProcess, what: str) -> None:
         raise RuntimeError(f"{what} failed (exit {cp.returncode}): {cp.stderr.strip()}")
 
 
+def tracked_files(repo: str | os.PathLike[str]) -> set[str] | None:
+    """Paths git tracks (committed or staged) under `repo`, relative to it, or
+    None when `repo` is not a git work tree."""
+    if not is_git_repo(repo):
+        return None
+    cp = _git(Path(repo), ["ls-files", "-z"])
+    _check(cp, "git ls-files")
+    return {p for p in cp.stdout.split("\0") if p}
+
+
 def git_push_backup(
     repo: str | os.PathLike[str],
-    file: str | os.PathLike[str],
+    files: Sequence[str | os.PathLike[str]],
     *,
     remote: str = "origin",
 ) -> str:
-    """Commit `file` (which must live under `repo`) and push to `remote`.
+    """Commit `files` (all under `repo`) as one commit and push to `remote`.
 
-    Stages only that file (so unrelated working-tree changes are left alone),
-    commits, and pushes the current branch. Returns a short human summary.
-    Raises RuntimeError on any git failure (no remote, auth, non-fast-forward,
-    network/timeout), and before staging anything when `file` is over
+    Stages only those files (so unrelated working-tree changes are left alone),
+    commits them as `backup <last file>` — callers pass the manifest last — and
+    pushes the current branch. Returns a short human summary. Raises
+    RuntimeError on any git failure (no remote, auth, non-fast-forward,
+    network/timeout), and before staging anything when any file is over
     MAX_FILE_BYTES."""
     repo = Path(repo).resolve()
-    file = Path(file).resolve()
-    try:
-        rel = file.relative_to(repo).as_posix()
-    except ValueError as e:
-        raise RuntimeError(
-            f"backup file {file} is not inside the git repo {repo}"
-        ) from e
+    rels = []
+    for f in files:
+        path = Path(f).resolve()
+        try:
+            rel = path.relative_to(repo).as_posix()
+        except ValueError as e:
+            raise RuntimeError(
+                f"backup file {path} is not inside the git repo {repo}"
+            ) from e
+        size = path.stat().st_size
+        if size > MAX_FILE_BYTES:
+            raise RuntimeError(
+                f"{rel} is {size} bytes, over the remote's {MAX_FILE_BYTES}-byte file "
+                "limit; not committed (the local backup is kept)"
+            )
+        rels.append(rel)
+    if not rels:
+        raise ValueError("no backup files to push")
 
     if not is_git_repo(repo):
         raise RuntimeError(f"{repo} is not a git repository")
 
-    size = file.stat().st_size
-    if size > MAX_FILE_BYTES:
-        raise RuntimeError(
-            f"{rel} is {size} bytes, over the remote's {MAX_FILE_BYTES}-byte file "
-            "limit; not committed (the local backup is kept)"
-        )
+    _check(_git(repo, ["add", "--", *rels]), "git add")
 
-    _check(_git(repo, ["add", "--", rel]), "git add")
-
-    # Commit only if staging produced a change (a re-pushed identical path is a
+    # Commit only if staging produced a change (re-pushing identical paths is a
     # no-op rather than an error). `diff --cached --quiet` exits 1 when staged.
-    if _git(repo, ["diff", "--cached", "--quiet", "--", rel]).returncode == 0:
-        return f"{rel}: already committed, nothing to push"
+    name = rels[-1]
+    if _git(repo, ["diff", "--cached", "--quiet", "--", *rels]).returncode == 0:
+        return f"{name}: already committed, nothing to push"
 
-    _check(_git(repo, ["commit", "-m", f"backup {rel}", "--", rel]), "git commit")
+    _check(_git(repo, ["commit", "-m", f"backup {name}", "--", *rels]), "git commit")
     _check(_git(repo, ["push", remote, "HEAD"]), "git push")
-    return f"pushed {rel} to {remote}"
+    count = f"{len(rels)} files" if len(rels) > 1 else "1 file"
+    return f"pushed {count} for {name} to {remote}"

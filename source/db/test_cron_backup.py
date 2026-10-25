@@ -113,10 +113,12 @@ def test_fire_backup_job_writes_file_to_command_path(
 
     assert run.cron_uuid == job.uuid
     assert job.last_fired_at is not None
-    # A real encrypted dump landed under the configured destination.
-    backups = list((tmp_path / "rainbox_database").rglob("*.zstd.age"))
-    assert len(backups) == 1 and backups[0].stat().st_size > 0
-    assert backups[0].read_bytes().startswith(b"age-encryption.org/")
+    # A real encrypted backup (one manifest + its parts) landed under the
+    # configured destination.
+    manifests = list((tmp_path / "rainbox_database").rglob("*.manifest.age"))
+    assert len(manifests) == 1 and manifests[0].stat().st_size > 0
+    assert manifests[0].read_bytes().startswith(b"age-encryption.org/")
+    assert list((tmp_path / "rainbox_database").rglob("toc.dat.zstd.age"))
     assert any('▶ backed up "Nightly"' in t for t in _cron_texts())
 
 
@@ -124,7 +126,7 @@ def test_fire_backup_job_uses_env_when_command_empty(firing, tmp_path, monkeypat
     monkeypatch.setenv("RAINBOX_BACKUP_REPO", str(tmp_path))
     job = firing(command="", name="EnvBackup")
     db.fire_cron_job(job, trigger="scheduled")
-    assert list((tmp_path / "rainbox_database").rglob("*.zstd.age"))
+    assert list((tmp_path / "rainbox_database").rglob("*.manifest.age"))
 
 
 def test_fire_backup_job_without_destination_posts_error(firing, monkeypatch, settings_unset):
@@ -174,9 +176,9 @@ def test_cron_backup_uses_db_settings_not_just_env(firing, tmp_path, tmp_path_fa
     try:
         job = firing(command="", name="DbCfg")          # no per-job override
         db.fire_cron_job(job, trigger="manual")
-        backups = list((tmp_path / "rainbox_database").rglob("*.zstd.age"))
-        assert len(backups) == 1
-        assert backups[0].read_bytes().startswith(b"age-encryption.org/")
+        manifests = list((tmp_path / "rainbox_database").rglob("*.manifest.age"))
+        assert len(manifests) == 1
+        assert manifests[0].read_bytes().startswith(b"age-encryption.org/")
     finally:
         for row in db.session.query(db.AppSetting).filter(
                 db.AppSetting.key.in_(keys)).all():
@@ -192,7 +194,7 @@ def test_cron_tick_fires_due_backup(
     job = firing(command=str(tmp_path), next_run_at=past, name="DueBackup")
     fired = db.cron_tick()
     assert fired >= 1
-    assert list((tmp_path / "rainbox_database").rglob("*.zstd.age"))
+    assert list((tmp_path / "rainbox_database").rglob("*.manifest.age"))
 
 
 def test_validate_and_save_tree_accepts_backup(app_ctx):

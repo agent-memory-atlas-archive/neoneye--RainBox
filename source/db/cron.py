@@ -899,19 +899,21 @@ def fire_cron_job(job: "CronJob", trigger: str = "scheduled", debug: bool = Fals
                 run.finished_at = datetime.now(UTC)
                 db.session.commit()
                 return run
-            dest = backup_db.backup_database(repo, recipients=recips)
+            result = backup_db.backup_database(repo, recipients=recips)
             post_cron_event(
-                f'▶ backed up "{label}" ({trigger}) → {dest} '
-                f"({dest.stat().st_size} bytes)"
+                f'▶ backed up "{label}" ({trigger}) → {result.manifest} '
+                f"({len(result.new_parts)} new parts, {result.reused} reused; "
+                f"{result.bytes_written} bytes written)"
             )
-            # Optional remote upload: commit+push the (encrypted) file into the
-            # backup-repo git repo. The local backup already succeeded, so an
-            # upload failure is reported but doesn't fail the fire.
+            # Optional remote upload: commit+push the (encrypted) parts and
+            # manifest into the backup-repo git repo. The local backup already
+            # succeeded, so an upload failure is reported but doesn't fail the fire.
             from backup import remote as backup_remote
 
             if get_setting("backup.git_push"):
                 try:
-                    post_cron_event(f"  ↑ {backup_remote.git_push_backup(repo, dest)}")
+                    post_cron_event(
+                        f"  ↑ {backup_remote.git_push_backup(repo, result.files())}")
                 except Exception as exc:  # noqa: BLE001
                     post_cron_event(f"  ✖ upload failed: {exc}")
             # The local backup succeeded (an upload failure doesn't fail the fire).

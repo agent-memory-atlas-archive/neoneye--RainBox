@@ -1,10 +1,11 @@
 """Tests for backup.dump.
 
-The path-layout tests are pure (no DB). test_backup_database_roundtrip hits the
-live local Postgres (db.psycopg_dsn()) but writes only into pytest's tmp_path,
-so it leaves no artifacts behind. Backups are encrypt-only (age), so the
-round-trip generates a throwaway keypair, encrypts to its public key, then
-decrypts with the private identity to verify.
+The round-trip tests hit the live local Postgres (db.psycopg_dsn(), which the
+conftest points at rainbox_claude) but write only into pytest's tmp_path, so
+they leave no artifacts behind. Backups are encrypt-only (age), so they
+generate a throwaway keypair, encrypt to its public key, then reassemble the
+dump with the private identity (backup.restore) and read it back with
+`pg_restore -f -`.
 """
 import re
 import subprocess
@@ -13,6 +14,8 @@ from datetime import datetime, timezone
 import pytest
 
 from backup import dump as backup_db
+from backup import restore, store
+from backup.pipeline import resolve_tool
 
 
 @pytest.fixture
@@ -28,35 +31,13 @@ def age_keypair(tmp_path):
     return m.group(1), identity
 
 
-def test_backup_relative_path_example():
-    # The example from the spec: Jan 1 2026 22:39:06 UTC.
-    now = datetime(2026, 1, 1, 22, 39, 6)
-    rel = backup_db.backup_relative_path(now)
-    assert rel.as_posix() == "rainbox_database/2026-01-xx/2026-01-01T22-39-06Z.zstd.age"
-
-
-def test_backup_relative_path_zero_pads_single_digit_month_and_day():
-    rel = backup_db.backup_relative_path(datetime(2026, 3, 7, 4, 5, 6))
-    assert rel.as_posix() == "rainbox_database/2026-03-xx/2026-03-07T04-05-06Z.zstd.age"
-
-
-def test_backup_relative_path_two_digit_month():
-    rel = backup_db.backup_relative_path(datetime(2026, 12, 31, 23, 59, 59))
-    assert rel.as_posix() == "rainbox_database/2026-12-xx/2026-12-31T23-59-59Z.zstd.age"
-
-
-def test_backup_relative_path_no_colon_in_name():
-    rel = backup_db.backup_relative_path(datetime(2026, 1, 1, 22, 39, 6))
-    assert ":" not in rel.as_posix()
-
-
-def test_backup_relative_path_converts_aware_to_utc():
-    from datetime import timedelta
-
-    tz = timezone(timedelta(hours=2))  # 00:30 local == 22:30 UTC previous day
-    aware = datetime(2026, 1, 2, 0, 30, 0, tzinfo=tz)
-    rel = backup_db.backup_relative_path(aware)
-    assert rel.as_posix() == "rainbox_database/2026-01-xx/2026-01-01T22-30-00Z.zstd.age"
+def _restored_sql(manifest, identity, tmp_path) -> bytes:
+    out = tmp_path / "restored"
+    restore.assemble(manifest, identity, out)
+    return subprocess.run(
+        [resolve_tool("PG_RESTORE", "pg_restore"), "-f", "-", str(out)],
+        capture_output=True, check=True,
+    ).stdout
 
 
 def test_resolve_recipients_inline_and_env(monkeypatch):
@@ -77,58 +58,55 @@ def test_resolve_recipients_missing_raises(monkeypatch):
 
 
 def test_backup_database_roundtrip(tmp_path, age_keypair):
-    """Take a real encrypted backup, then decrypt+decompress and verify it is a
-    valid pg_dump (standard header)."""
+    """Take a real encrypted backup, reassemble it, and read it back as a
+    valid pg_dump; derived tables keep their schema but not their rows."""
     recipient, identity = age_keypair
-    now = datetime(2026, 1, 1, 22, 39, 6, tzinfo=timezone.utc)
-    dest = backup_db.backup_database(
-        tmp_path, now=now, zstd_level=1, recipients=[recipient]
-    )
-
-    assert dest == tmp_path / "rainbox_database/2026-01-xx/2026-01-01T22-39-06Z.zstd.age"
-    assert dest.is_file() and dest.stat().st_size > 0
-    # No leftover temp/part files in the bucket dir.
-    assert sorted(p.name for p in dest.parent.iterdir()) == [dest.name]
-
-    # Ciphertext is an age file, not raw zstd.
-    assert dest.read_bytes().startswith(b"age-encryption.org/")
-
-    # Decrypt with the private identity, then decompress, and check the header.
-    decrypted = subprocess.run(
-        ["age", "-d", "-i", str(identity), str(dest)],
-        capture_output=True, check=True,
-    ).stdout
-    zstd = backup_db._resolve_tool("ZSTD", "zstd")
-    plain = subprocess.run(
-        [zstd, "-dc"], input=decrypted, capture_output=True, check=True
-    ).stdout
-    assert b"PostgreSQL database dump" in plain
-
-
-def test_backup_database_leaves_out_derived_table_rows(tmp_path, age_keypair):
-    """Derived vector caches keep their schema but not their rows; ordinary
-    tables keep both. rainbox_claude's diary_embedding has rows, so a COPY
-    for it would appear without the exclusion."""
-    recipient, identity = age_keypair
+    repo = tmp_path / "repo"
     now = datetime(1999, 12, 31, 3, 30, 0, tzinfo=timezone.utc)
-    dest = backup_db.backup_database(tmp_path, now=now, zstd_level=1, recipients=[recipient])
-    decrypted = subprocess.run(
-        ["age", "-d", "-i", str(identity), str(dest)], capture_output=True, check=True,
-    ).stdout
-    zstd = backup_db._resolve_tool("ZSTD", "zstd")
-    plain = subprocess.run([zstd, "-dc"], input=decrypted, capture_output=True, check=True).stdout
+    res = backup_db.backup_database(repo, now=now, zstd_level=1, recipients=[recipient])
 
+    assert res.manifest == repo / "rainbox_database/1999-12-xx/1999-12-31T03-30-00Z.manifest.age"
+    assert res.manifest.read_bytes().startswith(b"age-encryption.org/")
+    assert any(p.name == "toc.dat.zstd.age" for p in res.new_parts)
+
+    plain = _restored_sql(res.manifest, identity, tmp_path)
+    assert b"PostgreSQL database dump" in plain
     for table in backup_db.DERIVED_TABLES:
         assert f"CREATE TABLE public.{table} ".encode() in plain
         assert f"COPY public.{table} ".encode() not in plain
     assert b"COPY public.chat_message " in plain
 
 
+def test_second_backup_of_an_unchanged_database_reuses_parts(tmp_path, age_keypair):
+    recipient, _ = age_keypair
+    repo = tmp_path / "repo"
+    first = backup_db.backup_database(
+        repo, now=datetime(1999, 12, 30, 3, 30, tzinfo=timezone.utc),
+        zstd_level=1, recipients=[recipient])
+    second = backup_db.backup_database(
+        repo, now=datetime(1999, 12, 31, 3, 30, tzinfo=timezone.utc),
+        zstd_level=1, recipients=[recipient])
+    # The sandbox can change between the two dumps, but nearly all of it can't.
+    assert second.reused >= len(first.new_parts) - 3
+    assert len(second.new_parts) <= 3
+
+
+def test_backup_database_writes_no_plaintext_into_the_repo(tmp_path, age_keypair):
+    recipient, _ = age_keypair
+    repo = tmp_path / "repo"
+    backup_db.backup_database(
+        repo, now=datetime(1999, 12, 31, 3, 30, tzinfo=timezone.utc),
+        zstd_level=1, recipients=[recipient])
+    for p in repo.rglob("*"):
+        if p.is_file() and p != store.index_path(repo):
+            assert p.read_bytes().startswith(b"age-encryption.org/"), p
+
+
 def test_backup_database_without_recipient_raises(tmp_path, monkeypatch):
     """Fail-closed: no recipient configured -> refuse to back up (no plaintext)."""
     monkeypatch.delenv(backup_db.ENV_RECIPIENT, raising=False)
     monkeypatch.delenv(backup_db.ENV_RECIPIENTS_FILE, raising=False)
-    now = datetime(2026, 1, 1, 22, 39, 6, tzinfo=timezone.utc)
+    now = datetime(1999, 12, 31, 3, 30, 0, tzinfo=timezone.utc)
     with pytest.raises(backup_db.NoRecipientError):
         backup_db.backup_database(tmp_path, now=now)
     # Nothing was written.
@@ -138,9 +116,9 @@ def test_backup_database_without_recipient_raises(tmp_path, monkeypatch):
 def test_backup_database_missing_tool_raises(tmp_path, monkeypatch, age_keypair):
     recipient, _ = age_keypair
     monkeypatch.setenv("PG_DUMP", "/nonexistent/definitely-not-pg_dump-binary")
-    now = datetime(2026, 1, 1, 22, 39, 6, tzinfo=timezone.utc)
+    now = datetime(1999, 12, 31, 3, 30, 0, tzinfo=timezone.utc)
     with pytest.raises(Exception):
         backup_db.backup_database(tmp_path, now=now, recipients=[recipient])
     # A failed backup leaves nothing behind.
-    bucket = tmp_path / "rainbox_database/2026-01-xx"
+    bucket = tmp_path / "rainbox_database/1999-12-xx"
     assert not bucket.exists() or list(bucket.iterdir()) == []

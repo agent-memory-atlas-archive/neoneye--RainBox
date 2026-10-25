@@ -308,8 +308,9 @@ venv/bin/python -m evals.monitor --recent-chat --limit 50
 
 ## Database Backup
 
-Back up the Postgres database to a compressed, **public-key-encrypted**,
-timestamped `.zstd.age` file, on demand or on a schedule. rainbox holds only the
+Back up the Postgres database as compressed, **public-key-encrypted** parts plus
+a timestamped `.manifest.age`, on demand or on a schedule; tables that didn't
+change since an earlier backup aren't stored again. rainbox holds only the
 public key, so a compromised host can write backups but never decrypt them.
 
 ```bash
