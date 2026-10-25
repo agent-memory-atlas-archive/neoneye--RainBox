@@ -191,7 +191,7 @@ somewhere non-standard (e.g. the cron environment's `PATH` doesn't include
 Homebrew), point at it explicitly:
 
 ```bash
-export PG_DUMP=/opt/homebrew/opt/postgresql@16/bin/pg_dump
+export PG_DUMP=/opt/homebrew/opt/postgresql@17/bin/pg_dump
 export ZSTD=/opt/homebrew/bin/zstd
 export AGE=/opt/homebrew/bin/age
 ```
