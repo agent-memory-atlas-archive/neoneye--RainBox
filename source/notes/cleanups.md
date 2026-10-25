@@ -43,6 +43,19 @@ did succeed), so the fix is a third state — e.g. `degraded`, or `ok` plus a
 recorded upload error the health column shows — not flipping it to `error`.
 Deferred because it touches the `cron_run` status vocabulary every page reads.
 
+### A skipped scheduled fire leaves no trace in `cron_run`
+
+`db/cron.py`, `cron_tick` — when a job's previous fire is still in flight,
+the tick skips that slot, posts `⏭ "<job>" skipped: previous run still in
+flight` to the cron room, and advances `next_run_at`, but records no
+`cron_run` row. `/cron`'s health column and run history then show nothing
+for that slot, as if the night simply had no scheduled run: the scheduled
+"Database backup" of 2026-10-25 02:27 was skipped this way (a manual run was
+still pushing) and is visible only as that chat line. Fix: record a
+`cron_run` with a `skipped` status (trigger `scheduled`, the reason in
+`error`) so the history shows the slot. Deferred because, like the upload
+entry above, it adds a status the pages that read `cron_run` must render.
+
 ### Nothing notices when Postgres loses the `vector` library
 
 Homebrew's `pgvector` bottle ships only for the two newest Postgres majors.
@@ -80,6 +93,20 @@ foresee:
   into the dotfiles repo). A launcher started from a shell opened before the
   PATH change keeps the old `pg_dump`, which refuses a newer server; restart
   the launcher from a fresh shell after the upgrade.
+
+### `source/language_tags.py` shadows the PyPI package of the same name
+
+Rainbox's own module (`language_tags.py` at `source/`, imported by
+`db/profile_languages.py` and `user_profile/formatting.py`) has the same name
+as the PyPI `language_tags` package. Anything run with `source/` on
+`sys.path` gets Rainbox's module instead: e.g. `python -c "import kokoro"`
+from `source/` with the Kokoro venv fails with `cannot import name 'tags'
+from 'language_tags'`, because Kokoro's dependency `csvw` needs the PyPI one.
+The services themselves are unaffected (started as scripts, their own
+directory comes first), and the main venv does not install the PyPI package
+today. It would bite the day the main venv gains a dependency that imports
+`language_tags`. Fix: move the module into a package (e.g. under
+`user_profile/`) or rename it. Deferred: no failure outside ad-hoc checks.
 
 ### `test_cron_tick_global_pause` fails on the night clocks go back
 
