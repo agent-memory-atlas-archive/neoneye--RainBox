@@ -1152,6 +1152,25 @@ def post_progress(room_uuid: UUID, sender_uuid: UUID, text: str) -> ChatMessage:
     return post_chat_message(room_uuid, sender_uuid, text, kind="progress")
 
 
+def progress_started_at(room_uuid: UUID, sender_uuid: UUID) -> datetime | None:
+    """When the sender's live working bubble in this room started — its
+    created_at, which upsert_progress(restart=True) resets at the start of
+    each turn — or None when it has none. The turn's start as the operator
+    saw it: the moment they sent, before the responder spawned or the model
+    loaded."""
+    row = (
+        db.session.query(ChatMessage.created_at)
+        .filter(
+            ChatMessage.room_uuid == room_uuid,
+            ChatMessage.sender_uuid == sender_uuid,
+            ChatMessage.kind == "progress",
+        )
+        .order_by(ChatMessage.id.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
 def upsert_progress(
     room_uuid: UUID,
     sender_uuid: UUID,

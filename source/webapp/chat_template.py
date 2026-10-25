@@ -245,6 +245,16 @@ CHAT_TEMPLATE: str = """
   .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing{width:80%;align-items:stretch}
   /* A right-aligned row reads from its outer edge in: the clock leads. */
   .chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock{order:-1;margin-left:0;margin-right:0.4em}
+  /* The working bubble in a one-to-one room is the same quiet "Worked for 2s"
+     line the reasoning row takes over from — no bubble, badge, header or
+     buttons — so the hand-off is seamless rather than a flash of a bubble.
+     Any status text the turn writes (the assistant's steps) stays readable. */
+  .chat-log.one-to-one .msg[data-kind="progress"]{opacity:1;background:none;border:none;padding:0}
+  .chat-log.one-to-one .msg[data-kind="progress"] > .msg-head,
+  .chat-log.one-to-one .msg[data-kind="progress"] > .msg-actions{display:none}
+  .chat-log.one-to-one .msg[data-kind="progress"] .msg-text:empty{display:none}
+  .chat-log.one-to-one .msg[data-kind="progress"] .msg-worked{font-size:0.85rem;color:#8b8b95;margin:0}
+  .chat-log.one-to-one .msg-progress-linked:hover{background:none}
   /* An over-long message is clamped to its opening. A pasted document or log
      otherwise owns the whole pane, and scrolling back through the conversation
      means scrolling through all of it. The fade says there is more below
@@ -1340,7 +1350,7 @@ function formatWorkedFor(seconds){
 }
 
 // A reasoning row's toggle label. Once the reply that follows it exists, the
-// time from the first reasoning token to the reply's first token (each row is
+// time from the turn's start to the reply's first token (the reply row is
 // created on its stream's first token, chat/streaming.py) — frozen. Before
 // that, while the row streams, it counts up live off the shared ticker. A
 // settled row with no reply after it (a stopped turn) has no end to measure.
@@ -1348,7 +1358,10 @@ function setReasoningLabel(node, reply){
   const label = node.querySelector('.reasoning-label');
   if (!label) return;
   const row = node._row || {};
-  const start = Date.parse(row.created_at || '');
+  // The turn's start (its working bubble, stamped on the row by the direct
+  // chat agent), so the count carries on from the bubble's instead of
+  // restarting; a row without it counts from its own first token.
+  const start = Date.parse((row.meta || {}).turn_started_at || row.created_at || '');
   const end = reply ? Date.parse((reply._row || {}).created_at || '') : NaN;
   if (!isNaN(start) && !isNaN(end)){
     delete label.dataset.workedSince;

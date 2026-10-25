@@ -413,3 +413,31 @@ def test_settled_reply_carries_generation_stats(direct_room, monkeypatch):
         db, "resolved_model_kwargs", lambda target: ("lm_studio", "m", {}))
     agent._stream_reply(room_uuid, uuid4(), [])
     assert sent["kwargs"] == {"stream_options": {"include_usage": True}}
+
+
+def test_thinking_row_carries_the_turns_start(direct_room, monkeypatch):
+    """The reasoning row is stamped with when the turn's working bubble
+    started, so the chat's "Worked for" line keeps counting from the send
+    after the bubble is reaped; the answer row carries no such stamp."""
+    import agents.direct_chat as direct_chat_mod
+
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "hello?")
+    started = db.upsert_progress(
+        room_uuid, DIRECT_CHAT_UUID, "", restart=True).created_at.isoformat()
+
+    class FakeLLM:
+        def stream_chat(self, messages, **kwargs):
+            yield SimpleNamespace(delta="", raw=None,
+                                  additional_kwargs={"thinking_delta": "hmm"})
+            yield _chunk("Hi")
+
+    monkeypatch.setattr(direct_chat_mod, "prepare_llm", lambda p, m, a: FakeLLM())
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs", lambda target: ("ollama", "m", {}))
+    _agent()._stream_reply(room_uuid, uuid4(), [])
+    rows = {r["kind"]: r for r in db.list_room_messages(room_uuid)
+            if r["sender_uuid"] == str(DIRECT_CHAT_UUID)}
+    assert rows["thinking"]["meta"]["turn_started_at"] == started
+    assert "turn_started_at" not in rows["message"]["meta"]
+    assert "progress" not in rows   # reaped by the answer

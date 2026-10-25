@@ -572,6 +572,10 @@ def test_one_to_one_rooms_render_as_text_messages():
     assert ('.chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock'
             '{order:-1;') in body
     assert "msgEl.classList.add('msg-editing');" in body
+    # The working bubble is the same quiet line the reasoning row takes over
+    # from, and the reasoning counts on from the turn's start.
+    assert '.chat-log.one-to-one .msg[data-kind="progress"]{opacity:1;background:none;border:none;padding:0}' in body
+    assert "(row.meta || {}).turn_started_at || row.created_at" in body
 
 
 def test_direct_room_stop_button():

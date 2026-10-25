@@ -19,6 +19,7 @@ turn on.
 import logging
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -89,11 +90,22 @@ class DirectChatAgent(Agent):
     def _make_writer(self, room_uuid: UUID) -> StreamingReplyWriter:
         """A StreamingReplyWriter creating/updating this agent's rows in the
         room: kind="thinking" for reasoning, kind="message" for the answer
-        (same shape as the unstructured chat agent)."""
+        (same shape as the unstructured chat agent).
+
+        The thinking row carries meta["turn_started_at"]: when the turn's
+        working bubble started (the operator's send), read now, because that
+        bubble is reaped once the reply lands. The chat's "Worked for" line
+        counts from it, so it doesn't restart at zero when the reasoning row
+        takes over from the bubble."""
+        started = db.progress_started_at(room_uuid, self.agent_uuid) \
+            or datetime.now(UTC)
+
         def create(kind: str, streaming: bool) -> int:
+            meta = {"turn_started_at": started.isoformat()} \
+                if kind == "thinking" else None
             return db.post_chat_message(
                 room_uuid, self.agent_uuid, "", content_type="markdown",
-                kind=kind, streaming=streaming,
+                kind=kind, streaming=streaming, meta=meta,
             ).id
 
         def update(message_id: int, text: str, streaming: bool) -> None:
@@ -175,8 +187,8 @@ class DirectChatAgent(Agent):
             # when asked; native Ollama always does, and rejects unknown args.
             stream_kwargs: dict[str, Any] = {} if provider_id == "ollama" \
                 else {"stream_options": {"include_usage": True}}
+            stats = GenerationStats()
             with watch:
-                stats = GenerationStats()
                 with watch.interruptible():
                     stream = the_llm.stream_chat(messages, **stream_kwargs)
                 deadline = time.monotonic() + timeout_s
