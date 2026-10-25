@@ -12,6 +12,14 @@ to a recipient's **public key** with [`age`](https://age-encryption.org):
 pg_dump <dsn> | zstd | age -r <recipient>   ->   FILE.zstd.age
 ```
 
+**Derived tables are left out.** The dump keeps the schema of the tables in
+`DERIVED_TABLES` (`backup/dump.py`) but not their rows: `diary_embedding` and
+`memory_embedding`. They are vector caches computed from rows the dump does
+keep (diary passages, memory claims), and vectors barely compress — the diary
+embeddings alone were about 90% of a full dump and pushed every file past
+GitHub's 100 MiB limit. After a restore they are rebuilt; see
+[Restore from a backup](#restore-from-a-backup).
+
 ### Threat model — why encrypt to a public key
 
 rainbox holds only the **public** key, so it can *write* backups but cannot
@@ -295,6 +303,11 @@ alone), commits it as `backup <relpath>`, and pushes the current branch to
   written. A cron fire posts the push result to the `cron` room as its own line
   (`↑ pushed …` on success, `✖ upload failed: …` on failure) without failing
   the fire; the CLI logs the error and exits non-zero so a caller notices.
+- A file over GitHub's per-file limit (`MAX_FILE_BYTES`, 100 MiB) is **never
+  committed**: the upload fails with `✖ upload failed: … over the remote's …
+  file limit; not committed`, and the file stays on disk as a local-only
+  backup. Committing it would block this push and every later one, because an
+  unpushed commit with an oversize file can never reach GitHub.
 - Restoring is unchanged — pull/clone the backup repo, then decrypt as below.
 
 > Caveat: git keeps every pushed backup forever, so the repo grows without
@@ -338,6 +351,17 @@ age -d -i backup-identity.txt FILE.zstd.age | zstd -dc | psql postgresql://local
 
 After restoring, the app's `init_db()` runs its idempotent migrations on the
 next start, so an older dump is brought up to the current schema automatically.
+
+The derived tables come back empty and refill on their own: the nightly
+"Diary sync" job resumes every missing diary vector, and "Memory embedding
+sync" backfills memory-claim vectors (fire either from `/cron` to do it now).
+Until then diary search falls back to its lexical routes. If the embedding
+model changed since the backup, Diary sync reports `embedder model changed`;
+run `embed` by hand then:
+
+```bash
+python -m tools.diary --database-url postgresql+psycopg://localhost/rainbox_restore --production embed --source <name>
+```
 
 ## Verify a backup
 

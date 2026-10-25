@@ -78,6 +78,31 @@ def test_push_same_file_twice_is_noop(backup_repo):
     assert "nothing to push" in note
 
 
+def test_push_oversize_file_is_never_committed(backup_repo):
+    repo, _ = backup_repo
+    head = _git(repo, "rev-parse", "HEAD").stdout
+    f = repo / "rainbox_database" / "1999-12-xx" / "1999-12-31T03-30-00Z.zstd.age"
+    f.parent.mkdir(parents=True)
+    with open(f, "wb") as fh:   # sparse: costs no disk
+        fh.truncate(backup_remote.MAX_FILE_BYTES + 1)
+
+    with pytest.raises(RuntimeError, match="file limit"):
+        backup_remote.git_push_backup(repo, f)
+
+    # Nothing committed or staged, so later pushes are not blocked by it.
+    assert _git(repo, "rev-parse", "HEAD").stdout == head
+    assert _git(repo, "diff", "--cached", "--name-only").stdout == ""
+
+
+def test_push_file_at_the_limit_is_pushed(backup_repo):
+    repo, _ = backup_repo
+    f = repo / "rainbox_database" / "1999-12-xx" / "1999-12-31T03-30-00Z.zstd.age"
+    f.parent.mkdir(parents=True)
+    with open(f, "wb") as fh:
+        fh.truncate(backup_remote.MAX_FILE_BYTES)
+    assert "pushed" in backup_remote.git_push_backup(repo, f)
+
+
 def test_push_file_outside_repo_raises(backup_repo, tmp_path):
     repo, _ = backup_repo
     outside = tmp_path / "elsewhere.zstd.age"

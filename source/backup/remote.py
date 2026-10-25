@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 # How long to allow each git invocation (the push talks to the network).
 GIT_TIMEOUT = 180
 
+# GitHub rejects a push containing any file over 100 MiB, and an unpushed
+# commit holding one blocks every later push too — so such a file is never
+# committed; it stays on disk as a local-only backup.
+MAX_FILE_BYTES = 100 * 1024 * 1024
+
 _TRUTHY = {"1", "true", "yes", "on"}
 
 
@@ -66,7 +71,8 @@ def git_push_backup(
     Stages only that file (so unrelated working-tree changes are left alone),
     commits, and pushes the current branch. Returns a short human summary.
     Raises RuntimeError on any git failure (no remote, auth, non-fast-forward,
-    network/timeout)."""
+    network/timeout), and before staging anything when `file` is over
+    MAX_FILE_BYTES."""
     repo = Path(repo).resolve()
     file = Path(file).resolve()
     try:
@@ -78,6 +84,13 @@ def git_push_backup(
 
     if not is_git_repo(repo):
         raise RuntimeError(f"{repo} is not a git repository")
+
+    size = file.stat().st_size
+    if size > MAX_FILE_BYTES:
+        raise RuntimeError(
+            f"{rel} is {size} bytes, over the remote's {MAX_FILE_BYTES}-byte file "
+            "limit; not committed (the local backup is kept)"
+        )
 
     _check(_git(repo, ["add", "--", rel]), "git add")
 

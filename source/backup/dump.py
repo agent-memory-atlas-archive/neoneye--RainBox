@@ -5,6 +5,9 @@ Dumps postgres to zstd, encrypted to a recipient's *public* key with `age`
 
     pg_dump <dsn> | zstd | age -r <recipient>   ->   FILE.zstd.age
 
+The rows of DERIVED_TABLES (vector caches) are left out; the nightly sync jobs
+rebuild them after a restore.
+
 Encryption is **mandatory and fail-closed**: a backup is only ever written
 encrypted. rainbox holds only the recipient's public key, so a compromised host
 can produce backups but cannot read them — the matching age *identity* (private
@@ -49,6 +52,11 @@ logger = logging.getLogger(__name__)
 DB_SUBDIR = "rainbox_database"
 BACKUP_SUFFIX = ".zstd.age"
 DEFAULT_ZSTD_LEVEL = 19
+
+# Tables whose rows are left out of every dump (their schema stays): vector
+# caches the nightly sync jobs rebuild from rows the dump does keep. Vectors
+# barely compress, and diary_embedding alone is most of a full dump.
+DERIVED_TABLES = ("diary_embedding", "memory_embedding")
 
 # Env vars for the recipient public key(s). RECIPIENT holds one or more inline
 # `age1…`/`ssh-…` recipients (whitespace/comma separated); RECIPIENTS_FILE points
@@ -182,7 +190,7 @@ def backup_database(
         age_argv += ["-R", recips_file]
 
     stages = [
-        [pg_dump, dsn],
+        [pg_dump, *(f"--exclude-table-data={t}" for t in DERIVED_TABLES), dsn],
         [zstd, f"-{zstd_level}", "-c"],
         age_argv,  # reads stdin, writes ciphertext to stdout
     ]

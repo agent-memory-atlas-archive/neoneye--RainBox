@@ -105,6 +105,25 @@ def test_backup_database_roundtrip(tmp_path, age_keypair):
     assert b"PostgreSQL database dump" in plain
 
 
+def test_backup_database_leaves_out_derived_table_rows(tmp_path, age_keypair):
+    """Derived vector caches keep their schema but not their rows; ordinary
+    tables keep both. rainbox_claude's diary_embedding has rows, so a COPY
+    for it would appear without the exclusion."""
+    recipient, identity = age_keypair
+    now = datetime(1999, 12, 31, 3, 30, 0, tzinfo=timezone.utc)
+    dest = backup_db.backup_database(tmp_path, now=now, zstd_level=1, recipients=[recipient])
+    decrypted = subprocess.run(
+        ["age", "-d", "-i", str(identity), str(dest)], capture_output=True, check=True,
+    ).stdout
+    zstd = backup_db._resolve_tool("ZSTD", "zstd")
+    plain = subprocess.run([zstd, "-dc"], input=decrypted, capture_output=True, check=True).stdout
+
+    for table in backup_db.DERIVED_TABLES:
+        assert f"CREATE TABLE public.{table} ".encode() in plain
+        assert f"COPY public.{table} ".encode() not in plain
+    assert b"COPY public.chat_message " in plain
+
+
 def test_backup_database_without_recipient_raises(tmp_path, monkeypatch):
     """Fail-closed: no recipient configured -> refuse to back up (no plaintext)."""
     monkeypatch.delenv(backup_db.ENV_RECIPIENT, raising=False)
