@@ -361,30 +361,51 @@ def edit_chat_message(message_id: int, text: str) -> ChatMessage:
     return msg
 
 
-def delete_chat_message(message_id: int) -> None:
+def delete_chat_message(message_id: int) -> list[int]:
     """Delete a message row (direct-room message deletion) and NOTIFY so open
     tabs drop the bubble live. Reuses the deleted_progress_ids mechanism — the
     client removes DOM nodes by id regardless of kind — with message_id=0
     marking a pure deletion (no new message), so background rooms don't count
     it as unread. Every kind is deletable (the operator owns a direct room's
     whole transcript — notices and thinking rows included); only a row still
-    streaming is refused (its writer is still updating it by id). Raises
-    LookupError if the row is gone, ValueError while streaming."""
+    streaming is refused (its writer is still updating it by id).
+
+    A reply goes together with its reasoning: deleting a kind="message" row
+    also deletes the thinking row directly before it from the same sender —
+    the reasoning that turn streamed before answering (chat/streaming.py
+    writes the two back to back). Deleting the thinking row alone leaves the
+    reply. Returns the deleted ids, oldest first. Raises LookupError if the
+    row is gone, ValueError while streaming."""
     msg = db.session.get(ChatMessage, message_id)
     if msg is None:
         raise LookupError(f"chat message {message_id} not found")
     if msg.streaming:
         raise ValueError("cannot delete a message that is still streaming")
+    rows = [msg]
+    if msg.kind == "message":
+        prev = (
+            db.session.query(ChatMessage)
+            .filter(ChatMessage.room_uuid == msg.room_uuid,
+                    ChatMessage.id < msg.id)
+            .order_by(ChatMessage.id.desc())
+            .first()
+        )
+        if (prev is not None and prev.kind == "thinking"
+                and prev.sender_uuid == msg.sender_uuid and not prev.streaming):
+            rows.insert(0, prev)
     room_uuid = msg.room_uuid
-    db.session.delete(msg)
+    ids = [r.id for r in rows]
+    for r in rows:
+        db.session.delete(r)
     db.session.flush()
     _chat_notify(
         room_uuid=room_uuid,
         message_id=0,
         event="delete",
-        deleted_progress_ids=[message_id],
+        deleted_progress_ids=ids,
     )
     db.session.commit()
+    return ids
 
 
 def delete_room_messages_from(room_uuid: UUID, from_id: int) -> list[int]:

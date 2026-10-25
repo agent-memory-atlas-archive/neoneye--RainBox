@@ -229,7 +229,7 @@ def test_delete_message_in_direct_room(client, direct_room):
         msg_id = msg.id
     resp = test_client.delete(f"/chat/api/rooms/{room_uuid}/messages/{msg_id}")
     assert resp.status_code == 200
-    assert resp.get_json() == {"id": msg_id, "deleted": True}
+    assert resp.get_json() == {"id": msg_id, "deleted": True, "deleted_ids": [msg_id]}
     with app.app_context():
         assert db.get_room_message(room_uuid, msg_id) is None
 
@@ -250,7 +250,7 @@ def test_delete_notice_message_in_direct_room(client, direct_room):
         f"/chat/api/rooms/{room_uuid}/messages/{notice_id}"
     )
     assert resp.status_code == 200
-    assert resp.get_json() == {"id": notice_id, "deleted": True}
+    assert resp.get_json() == {"id": notice_id, "deleted": True, "deleted_ids": [notice_id]}
     with app.app_context():
         assert db.get_room_message(room_uuid, notice_id) is None
 

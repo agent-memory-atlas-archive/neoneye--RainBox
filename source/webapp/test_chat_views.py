@@ -46,7 +46,7 @@ def test_messages_wrap_long_unbroken_text():
     wraps too. The assistant trace rows wrap their pre-wrap tool output."""
     body = _body()
     assert ".msg-text{line-height:1.5;overflow-wrap:anywhere;word-break:break-word}" in body
-    assert ".msg-debug .msg-text pre{white-space:pre-wrap;overflow-wrap:anywhere;" in body
+    assert ".msg-debug .msg-text pre,.msg-reasoning .msg-text pre{white-space:pre-wrap;overflow-wrap:anywhere;" in body
     assert "word-break:break-word;overflow-x:hidden" in body
     assert "white-space:pre-wrap;overflow-wrap:anywhere" in body
 
@@ -264,7 +264,7 @@ def test_working_bubbles_count_up():
     assert "return 'Worked for ' + s + 's';" in body
     assert "return 'Worked for ' + m + 'm ' + rs + 's';" in body
     assert "line.dataset.workedSince = String(since);" in body
-    assert "log.querySelectorAll('.msg-worked[data-worked-since]')" in body
+    assert "log.querySelectorAll('.msg-worked[data-worked-since], .reasoning-label[data-worked-since]')" in body
     assert "if (m.kind === 'progress') msg.appendChild(workedForLine(m));" in body
 
 
@@ -534,6 +534,24 @@ def test_direct_room_bridge_panel():
     for marker in ("ds-trouble-text", "ds-trouble-progress",
                    "ds-trouble-reply", "ds-trouble-notice"):
         assert marker in body
+
+
+def test_reasoning_renders_as_worked_for_line_joined_to_its_reply():
+    """A thinking row is the turn's quiet "Worked for 9s ›" toggle, not a
+    diagnostic bubble; the reply right after it from the same sender drops
+    its header, and the pairing is re-run on every add, rebuild and removal.
+    The toggle keeps the row's own copy/delete/menu buttons behind it."""
+    body = _body()
+    assert "msg.className = isReasoning ? 'msg msg-reasoning'" in body
+    assert "if (isDebug && !isReasoning){" in body
+    assert "function syncReasoningRows()" in body
+    assert "a.dataset.sender === b.dataset.sender" in body
+    assert body.count("syncReasoningRows();") >= 3
+    assert "function setReasoningLabel(node, reply)" in body
+    assert ".msg.msg-joined > .msg-head{display:none}" in body
+    assert "prev.dataset.kind === 'progress') prev.classList.add('msg-superseded')" in body
+    assert ".reasoning-label[data-worked-since]" in body
+    assert "removeDeletedMessages(d.deleted_ids || [m.id])" in body
 
 
 def test_direct_room_stop_button():

@@ -215,6 +215,19 @@ CHAT_TEMPLATE: str = """
   .thinking-toggle{margin:2px 0 0;padding:0;background:none;border:none;cursor:pointer;font:inherit;
                    font-size:0.8rem;color:#6d28d9;text-decoration:underline;text-underline-offset:2px}
   .thinking-toggle:hover{color:#4c1d95}
+  /* Reasoning ("thinking") rows: no bubble, just "Worked for 9s ›" under the
+     turn's header; the reply that follows drops its own header and tucks in
+     underneath (syncReasoningRows), so a turn reads as one message. Expanded,
+     the thoughts sit behind a quiet rule, smaller and greyer than the reply. */
+  .reasoning-toggle{display:inline-flex;align-items:center;gap:0.3em;margin:0;padding:0;background:none;border:none;
+                    cursor:pointer;font:inherit;font-size:0.85rem;color:#8b8b95;font-variant-numeric:tabular-nums}
+  .reasoning-toggle:hover{color:#4b5563}
+  .reasoning-chevron{display:inline-block;transition:transform 0.15s}
+  .msg-reasoning.open .reasoning-chevron{transform:rotate(90deg)}
+  .msg-reasoning .msg-text{font-size:0.85rem;color:#6b7280;border-left:2px solid #e5e7eb;padding-left:0.8em;margin:0.35em 0 0}
+  .msg-reasoning + .msg.msg-joined{margin-top:-0.7em}
+  .msg.msg-joined > .msg-head{display:none}
+  .msg.msg-superseded{display:none}
   /* An over-long message is clamped to its opening. A pasted document or log
      otherwise owns the whole pane, and scrolling back through the conversation
      means scrolling through all of it. The fade says there is more below
@@ -239,8 +252,8 @@ CHAT_TEMPLATE: str = """
   /* Diagnostic output is often JSON, reasoning, or tool output with long
      unbroken values. Ordinary chat code blocks stay horizontally scrollable
      (per-block), but debug/thinking pre content wraps to the chat width. */
-  .msg-debug .msg-text{min-width:0}
-  .msg-debug .msg-text pre{white-space:pre-wrap;overflow-wrap:anywhere;
+  .msg-debug .msg-text,.msg-reasoning .msg-text{min-width:0}
+  .msg-debug .msg-text pre,.msg-reasoning .msg-text pre{white-space:pre-wrap;overflow-wrap:anywhere;
                           word-break:break-word;overflow-x:hidden}
   .msg-text a{color:#0653a8}
   /* Single container that holds the copy button + feedback row. Owns the
@@ -642,6 +655,7 @@ function appendMessageNode(node, m){
   }
   log.appendChild(node);
   syncStopButton();
+  syncReasoningRows();
 }
 
 // A divider earns its place only while a message of its day follows it and
@@ -679,6 +693,7 @@ function removeDeletedMessages(ids){
   });
   pruneDaySeparators();
   syncStopButton();
+  syncReasoningRows();
 }
 
 // How close to the bottom still counts as "following the conversation". This
@@ -726,6 +741,7 @@ function upsertMessage(m){
   if (existing){
     existing.replaceWith(node);
     syncStopButton();  // a row settling is how a turn ends on screen
+    syncReasoningRows();
   } else {
     renderedIds.add(m.id);
     lastId = Math.max(lastId, m.id);
@@ -1294,6 +1310,52 @@ function formatWorkedFor(seconds){
   return 'Worked for ' + Math.floor(m / 60) + 'h ' + (m % 60) + 'm ' + rs + 's';
 }
 
+// A reasoning row's toggle label. Once the reply that follows it exists, the
+// time from the first reasoning token to the reply's first token (each row is
+// created on its stream's first token, chat/streaming.py) — frozen. Before
+// that, while the row streams, it counts up live off the shared ticker. A
+// settled row with no reply after it (a stopped turn) has no end to measure.
+function setReasoningLabel(node, reply){
+  const label = node.querySelector('.reasoning-label');
+  if (!label) return;
+  const row = node._row || {};
+  const start = Date.parse(row.created_at || '');
+  const end = reply ? Date.parse((reply._row || {}).created_at || '') : NaN;
+  if (!isNaN(start) && !isNaN(end)){
+    delete label.dataset.workedSince;
+    label.textContent = formatWorkedFor(Math.max(0, end - start) / 1000);
+  } else if (!reply && row.streaming && !isNaN(start)){
+    label.dataset.workedSince = String(start);
+    label.textContent = formatWorkedFor((Date.now() - start) / 1000);
+  } else {
+    delete label.dataset.workedSince;
+    label.textContent = 'Thoughts';
+  }
+}
+
+// Pair each reasoning row with the reply its turn streamed right after it (the
+// next row in the log, a kind 'message' from the same sender): the reasoning
+// takes the reply's duration for its label, and the reply drops its header so
+// the two read as one message. A working bubble right before its own reasoning
+// is hidden — the reasoning line counts up in its place, and the bubble is
+// deleted once the reply lands anyway. Re-run after anything adds, rebuilds or
+// removes rows — pairing is by adjacency, so any of those can make or break a
+// pair.
+function syncReasoningRows(){
+  log.querySelectorAll('.msg.msg-joined, .msg.msg-superseded').forEach(
+    (n) => n.classList.remove('msg-joined', 'msg-superseded'));
+  const sameSender = (a, b) => a && a.classList.contains('msg')
+    && a.dataset.sender === b.dataset.sender;
+  log.querySelectorAll('.msg[data-kind="thinking"]').forEach((node) => {
+    const next = node.nextElementSibling;
+    const reply = sameSender(next, node) && next.dataset.kind === 'message' ? next : null;
+    if (reply) reply.classList.add('msg-joined');
+    const prev = node.previousElementSibling;
+    if (sameSender(prev, node) && prev.dataset.kind === 'progress') prev.classList.add('msg-superseded');
+    setReasoningLabel(node, reply);
+  });
+}
+
 // The "Worked for 21s" line on a working bubble. It counts from the row's own
 // created_at, not from when this page happened to see it: a reload, a second
 // tab, or a browser opened mid-turn all have to show the same elapsed time.
@@ -1312,7 +1374,7 @@ function workedForLine(m){
 // to be cancelled at exactly the moments a rebuild makes easy to miss. This
 // reads the DOM instead, so a bubble that is gone simply stops being counted.
 setInterval(() => {
-  const lines = log.querySelectorAll('.msg-worked[data-worked-since]');
+  const lines = log.querySelectorAll('.msg-worked[data-worked-since], .reasoning-label[data-worked-since]');
   lines.forEach((line) => {
     line.textContent = formatWorkedFor(
       (Date.now() - Number(line.dataset.workedSince)) / 1000);
@@ -1387,7 +1449,10 @@ function makeMessage(m){
   // or in-flight "progress") renders as a muted debug bubble with a kind
   // badge.
   const isDebug = m.kind && m.kind !== 'message';
-  msg.className = isDebug ? 'msg msg-debug' : 'msg';
+  // Reasoning is the exception: it belongs to the reply that follows it, so it
+  // renders as that turn's quiet "Worked for" line, not a diagnostic bubble.
+  const isReasoning = m.kind === 'thinking';
+  msg.className = isReasoning ? 'msg msg-reasoning' : isDebug ? 'msg msg-debug' : 'msg';
   // Collapsible rows and the noun used in their toggle labels: reasoning rows
   // collapse "thoughts", any debug-* row collapses "debug". Other kinds
   // (message, progress) aren't collapsible.
@@ -1402,6 +1467,7 @@ function makeMessage(m){
   msg.dataset.messageId = String(m.id);
   msg.dataset.renderKey = messageRenderKey(m);
   msg.dataset.kind = m.kind || 'message';  // what syncStopButton reads
+  msg.dataset.sender = m.sender_uuid || '';  // what syncReasoningRows pairs on
   // The day this row belongs to, so appending the next one can tell whether a
   // divider is due without re-parsing dates already computed here.
   msg.dataset.day = messageDayKey(m);
@@ -1422,7 +1488,7 @@ function makeMessage(m){
   head.appendChild(s);
   head.appendChild(badge);
   head.appendChild(t);
-  if (isDebug){
+  if (isDebug && !isReasoning){
     const k = document.createElement('span');
     k.className = 'msg-kind';
     k.textContent = m.kind;
@@ -1442,7 +1508,19 @@ function makeMessage(m){
   if (collapseNoun){
     toggleTop = document.createElement('button');
     toggleTop.type = 'button';
-    toggleTop.className = 'thinking-toggle';
+    toggleTop.className = isReasoning ? 'reasoning-toggle' : 'thinking-toggle';
+    if (isReasoning){
+      // The label is filled by setReasoningLabel: live while thinking, then
+      // frozen at the duration once the reply starts.
+      const label = document.createElement('span');
+      label.className = 'reasoning-label';
+      const chevron = document.createElement('span');
+      chevron.className = 'reasoning-chevron';
+      chevron.textContent = '›';
+      toggleTop.appendChild(label);
+      toggleTop.appendChild(chevron);
+      setReasoningLabel(msg, null);
+    }
     msg.appendChild(toggleTop);
   }
   msg.appendChild(body);
@@ -1566,7 +1644,12 @@ function makeMessage(m){
   }
   if (toggleTop){
     const apply = (expanded) => {
-      toggleTop.textContent = expanded ? ('Collapse to hide ' + collapseNoun) : ('Expand to view ' + collapseNoun);
+      if (isReasoning){
+        msg.classList.toggle('open', expanded);
+        toggleTop.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      } else {
+        toggleTop.textContent = expanded ? ('Collapse to hide ' + collapseNoun) : ('Expand to view ' + collapseNoun);
+      }
       toggleBottom.textContent = 'Collapse to hide ' + collapseNoun;
       body.style.display = expanded ? '' : 'none';
       actions.style.display = expanded ? '' : 'none';
@@ -1676,7 +1759,9 @@ async function deleteMessage(m, btn){
   try {
     const r = await fetch('/chat/api/rooms/' + room + '/messages/' + m.id, {method: 'DELETE'});
     if (!r.ok) throw new Error('DELETE -> ' + r.status);
-    if (room === currentRoom) removeDeletedMessages([m.id]);
+    // A reply takes its reasoning row with it; the server names both.
+    const d = await r.json();
+    if (room === currentRoom) removeDeletedMessages(d.deleted_ids || [m.id]);
   } catch (e) {
     btn.disabled = false;
     alert('Delete failed: ' + e.message);

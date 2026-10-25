@@ -415,10 +415,12 @@ def edit_chat_room_message(room_uuid: str, message_id: int) -> Response:
         abort(404, "message not found")
     if request.method == "DELETE":
         try:
-            db.delete_chat_message(message_id)
+            deleted = db.delete_chat_message(message_id)
         except ValueError as exc:
             abort(409, str(exc))
-        return jsonify({"id": message_id, "deleted": True})
+        # A reply takes its reasoning row with it; deleted_ids names both.
+        return jsonify({"id": message_id, "deleted": True,
+                        "deleted_ids": deleted})
     data = request.get_json(silent=True) or {}
     text = (data.get("text") or "").strip()
     if not text:

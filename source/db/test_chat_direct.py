@@ -189,6 +189,31 @@ def test_delete_chat_message_any_settled_kind(direct_room):
         assert db.get_room_message(room_uuid, row.id) is None
 
 
+def test_delete_reply_takes_its_reasoning(direct_room):
+    """A reply and the thinking row its turn streamed just before it go
+    together; deleting the thinking row alone leaves the reply."""
+    room_uuid, human_uuid = direct_room
+    agent_uuid = uuid4()
+    db.post_chat_message(room_uuid, human_uuid, "question")
+    thinking = db.post_chat_message(room_uuid, agent_uuid, "hmm", kind="thinking")
+    reply = db.post_chat_message(room_uuid, agent_uuid, "answer")
+    assert db.delete_chat_message(reply.id) == [thinking.id, reply.id]
+    assert [r["text"] for r in db.list_room_messages(room_uuid)] == ["question"]
+
+    thinking = db.post_chat_message(room_uuid, agent_uuid, "hmm", kind="thinking")
+    reply = db.post_chat_message(room_uuid, agent_uuid, "answer")
+    assert db.delete_chat_message(thinking.id) == [thinking.id]
+    assert db.get_room_message(room_uuid, reply.id) is not None
+
+
+def test_delete_reply_leaves_reasoning_of_another_sender(direct_room):
+    room_uuid, human_uuid = direct_room
+    thinking = db.post_chat_message(room_uuid, uuid4(), "hmm", kind="thinking")
+    reply = db.post_chat_message(room_uuid, uuid4(), "answer")
+    assert db.delete_chat_message(reply.id) == [reply.id]
+    assert db.get_room_message(room_uuid, thinking.id) is not None
+
+
 def test_edit_chat_message_guards(direct_room):
     room_uuid, human_uuid = direct_room
     with pytest.raises(LookupError):
