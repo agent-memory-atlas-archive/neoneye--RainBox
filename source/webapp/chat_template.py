@@ -258,6 +258,17 @@ CHAT_TEMPLATE: str = """
   .fb-btn.fb-selected-down{color:#b91c1c;border-color:#b91c1c}
   .fb-btn:disabled{opacity:0.6;cursor:default}
   .copy-btn svg, .fb-btn svg{display:block}
+  /* Generation speed under a direct-chat reply; hover/focus opens the
+     detailed stats popover (buildGenerationBadge). */
+  .gen-badge{font-family:ui-monospace,monospace;font-size:0.8rem;color:#6c757d;padding:3px 8px;margin-left:0.3em;
+             border:1px solid transparent;border-radius:999px;cursor:default;white-space:nowrap}
+  .gen-badge:hover,.gen-badge:focus{color:#1a1a2e;border-color:#cbd5e1;outline:none}
+  .gen-pop{position:fixed;z-index:1000;background:#1f2937;color:#e5e7eb;border-radius:10px;padding:0.6em 0.9em;
+           box-shadow:0 6px 20px rgba(0,0,0,0.25);font-size:0.85rem;min-width:13em}
+  .gen-pop .row{display:flex;justify-content:space-between;gap:1.5em;line-height:1.7}
+  .gen-pop .label{color:#9ca3af}
+  .gen-pop .value{font-family:ui-monospace,monospace;color:#f9fafb}
+  .gen-pop hr{border:none;border-top:1px solid #374151;margin:0.35em 0}
 
   .compose{display:flex;gap:0.5em;align-items:flex-end;padding:0.75em 1em;background:#fff;border-top:1px solid #e5e7eb}
   /* Auto-grows with content (see autoGrow): one line by default, up to 10 rows
@@ -1018,6 +1029,81 @@ function placeMenu(menu, anchorRect, alignRight){
   menu.style.top = top + 'px';
 }
 
+// A duration for the stats popover: "398ms", "5.09s", "1m 05s".
+function formatDurationMs(ms){
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  const s = ms / 1000;
+  if (s < 10) return s.toFixed(2) + 's';
+  if (s < 60) return s.toFixed(1) + 's';
+  const whole = Math.round(s);
+  return Math.floor(whole / 60) + 'm ' + String(whole % 60).padStart(2, '0') + 's';
+}
+
+// The "85.4 tok/s" badge for a reply carrying meta.generation (stored by the
+// direct chat agent, chat/generation_stats.py), with a popover of the detailed
+// stats on hover or keyboard focus. Rows whose value the server didn't report
+// are left out. A speed counted from chunks rather than reported tokens is
+// marked ≈. The popover is position:fixed so the log's scroll box can't clip
+// it, placed above the badge unless that would leave the viewport.
+function buildGenerationBadge(gen){
+  const badge = document.createElement('span');
+  badge.className = 'gen-badge';
+  badge.tabIndex = 0;
+  const approx = gen.tokens_estimated ? '≈' : '';
+  badge.textContent = gen.tokens_per_second != null
+    ? approx + gen.tokens_per_second.toFixed(1) + ' tok/s'
+    : formatDurationMs(gen.total_ms);
+  const pop = document.createElement('div');
+  pop.className = 'gen-pop';
+  pop.setAttribute('role', 'tooltip');
+  pop.hidden = true;
+  const row = (label, value) => {
+    if (value == null) return;
+    const r = document.createElement('div');
+    r.className = 'row';
+    const l = document.createElement('span');
+    l.className = 'label';
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'value';
+    v.textContent = value;
+    r.appendChild(l);
+    r.appendChild(v);
+    pop.appendChild(r);
+  };
+  const ms = (x) => x == null ? null : formatDurationMs(x);
+  const rate = (x) => x == null ? null : x.toFixed(1) + ' tok/s';
+  row('Prompt tokens', gen.prompt_tokens);
+  row('Prompt eval', ms(gen.prompt_ms));
+  row('Prompt speed', rate(gen.prompt_tokens_per_second));
+  row('Generation', ms(gen.generation_ms));
+  row('Speed', gen.tokens_per_second == null ? null : approx + rate(gen.tokens_per_second));
+  row('Tokens', gen.completion_tokens != null ? gen.completion_tokens
+                : (gen.chunks ? '≈' + gen.chunks : null));
+  row('First token', ms(gen.first_token_ms));
+  pop.appendChild(document.createElement('hr'));
+  row('Total', ms(gen.total_ms));
+  row('Chunks', gen.chunks);
+  const show = () => {
+    pop.hidden = false;
+    const a = badge.getBoundingClientRect();
+    const margin = 6;
+    let left = a.left + a.width / 2 - pop.offsetWidth / 2;
+    left = Math.max(margin, Math.min(left, window.innerWidth - pop.offsetWidth - margin));
+    let top = a.top - pop.offsetHeight - 6;
+    if (top < margin) top = a.bottom + 6;  // no room above: drop below
+    pop.style.left = left + 'px';
+    pop.style.top = top + 'px';
+  };
+  const hide = () => { pop.hidden = true; };
+  badge.addEventListener('mouseenter', show);
+  badge.addEventListener('mouseleave', hide);
+  badge.addEventListener('focus', show);
+  badge.addEventListener('blur', hide);
+  badge.appendChild(pop);
+  return badge;
+}
+
 // The message overflow (...) menu. Reuses the .room-menu styling + the global
 // click/Escape dismiss handler (see below), and anchors as position:fixed under
 // the kebab like the room/folder menus. Items: copy the message UUID, and (in
@@ -1453,6 +1539,8 @@ function makeMessage(m){
   // Overflow (...) menu, always present: "Copy message id" copies the UUID;
   // direct rooms also get "Retry" (re-ask the model from this turn).
   actions.appendChild(buildMessageMenu(m));
+  const gen = (m.meta || {}).generation;
+  if (gen && !m.streaming) actions.appendChild(buildGenerationBadge(gen));
   msg.appendChild(actions);
   // A working bubble backed by a run takes a click anywhere on it to that
   // run's trace: the operator watching the seconds tick is exactly the one who

@@ -1064,6 +1064,27 @@ def update_chat_message(
     db.session.commit()
 
 
+def set_chat_message_generation(message_id: int, stats: dict[str, Any]) -> None:
+    """Attach a settled reply's generation stats (chat/generation_stats.py)
+    as meta["generation"], leaving other meta keys alone, and NOTIFY so open
+    tabs refetch the row and show its tok/s badge. The NOTIFY is a streaming
+    'update' with no text — the browser's signal to fetch the row by id. No-op
+    if the row is gone."""
+    msg = db.session.get(ChatMessage, message_id)
+    if msg is None:
+        return
+    msg.meta = {**(msg.meta or {}), "generation": stats}
+    db.session.flush()
+    _chat_notify(
+        room_uuid=msg.room_uuid,
+        message_id=msg.id,
+        event="update",
+        kind=msg.kind,
+        streaming=msg.streaming,
+    )
+    db.session.commit()
+
+
 def settle_streaming_rows(room_uuid: UUID, sender_uuid: UUID) -> list[int]:
     """Flip every row `sender_uuid` still has streaming in the room to
     settled, NOTIFYing each so open tabs drop the cursor. The Stop button's

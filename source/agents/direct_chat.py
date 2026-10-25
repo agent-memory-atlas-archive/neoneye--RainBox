@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 import db
 from agents.base import Agent
 from agents.turn_stop import StopRequested, StopWatch, TurnStopped
+from chat.generation_stats import GenerationStats
 from chat.streaming import StreamingReplyWriter, extract_stream_deltas
 from llm import prepare_llm
 
@@ -170,9 +171,14 @@ class DirectChatAgent(Agent):
             # windows: opening the stream (a cold model sends nothing until
             # it has loaded) and each read. Between reads — the writer's
             # database flushes — a stop waits for the next boundary.
+            # OpenAI-compatible servers report token usage on a stream only
+            # when asked; native Ollama always does, and rejects unknown args.
+            stream_kwargs: dict[str, Any] = {} if provider_id == "ollama" \
+                else {"stream_options": {"include_usage": True}}
             with watch:
+                stats = GenerationStats()
                 with watch.interruptible():
-                    stream = the_llm.stream_chat(messages)
+                    stream = the_llm.stream_chat(messages, **stream_kwargs)
                 deadline = time.monotonic() + timeout_s
                 chunks = iter(stream)
                 while True:
@@ -187,6 +193,7 @@ class DirectChatAgent(Agent):
                             "(model still generating)"
                         )
                     reasoning_delta, content_delta = extract_stream_deltas(chunk)
+                    stats.observe(chunk, bool(reasoning_delta or content_delta))
                     reasoning_text += reasoning_delta
                     writer.add_reasoning(reasoning_delta)
                     writer.add_answer(content_delta)
@@ -197,6 +204,16 @@ class DirectChatAgent(Agent):
                 "agent %s: model %s finished in %.1fs (%d reply chars)",
                 self.name, model_name, time.monotonic() - t0, len(reply),
             )
+            if writer.answer_id is not None:
+                # The tok/s badge under the reply. Best-effort: the reply
+                # has landed, and a stats write must not turn it into a failure.
+                try:
+                    db.set_chat_message_generation(
+                        writer.answer_id, stats.result())
+                except Exception:
+                    db.session.rollback()
+                    logger.exception(
+                        "agent %s: could not store generation stats", self.name)
             return reply
         except StopRequested:
             # The operator pressed Stop. Close the generator (its HTTP

@@ -210,7 +210,7 @@ def test_stream_reply_timeout_override_reaches_client_args(direct_room, monkeypa
     captured = {}
 
     class _NoStream:
-        def stream_chat(self, messages):
+        def stream_chat(self, messages, **kwargs):
             return iter(())
 
     def fake_prepare(provider_id, model_name, args):
@@ -325,7 +325,7 @@ def test_stop_mid_stream_keeps_partial_settles_rows_and_posts_notice(direct_room
     closed = {"n": 0}
 
     class FakeLLM:
-        def stream_chat(self, messages):
+        def stream_chat(self, messages, **kwargs):
             try:
                 yield _chunk("Hel")
                 yield _chunk("lo")
@@ -361,7 +361,7 @@ def test_stop_before_the_first_token_posts_only_the_notice(direct_room, monkeypa
     flag = {"stop": True}
 
     class ColdLLM:
-        def stream_chat(self, messages):
+        def stream_chat(self, messages, **kwargs):
             time.sleep(5)              # "loading"; nothing streams
             yield _chunk("late")
 
@@ -372,3 +372,44 @@ def test_stop_before_the_first_token_posts_only_the_notice(direct_room, monkeypa
     rows = db.list_room_messages(room_uuid)
     assert [r["kind"] for r in rows] == ["message", "notice"]
     assert "Stopped" in rows[-1]["text"]
+
+
+def test_settled_reply_carries_generation_stats(direct_room, monkeypatch):
+    """A finished stream stores the provider's counts on the answer row as
+    meta["generation"] — what the tok/s badge reads. OpenAI-compat requests
+    ask for the usage chunk; native Ollama is never sent that argument."""
+    import agents.direct_chat as direct_chat_mod
+
+    room_uuid, human_uuid = direct_room
+    db.post_chat_message(room_uuid, human_uuid, "hello?")
+    sent = {}
+
+    class FakeLLM:
+        def stream_chat(self, messages, **kwargs):
+            sent["kwargs"] = kwargs
+            yield _chunk("Hi")
+            yield _chunk(" there")
+            yield SimpleNamespace(delta="", additional_kwargs={}, raw={
+                "done": True, "prompt_eval_count": 7,
+                "prompt_eval_duration": 70_000_000,
+                "eval_count": 2, "eval_duration": 40_000_000,
+            })
+
+    monkeypatch.setattr(direct_chat_mod, "prepare_llm", lambda p, m, a: FakeLLM())
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs", lambda target: ("ollama", "m", {}))
+    agent = _agent()
+    assert agent._stream_reply(room_uuid, uuid4(), []) == "Hi there"
+    assert sent["kwargs"] == {}
+    answer = [r for r in db.list_room_messages(room_uuid)
+              if r["sender_uuid"] == str(DIRECT_CHAT_UUID)][-1]
+    gen = answer["meta"]["generation"]
+    assert gen["completion_tokens"] == 2
+    assert gen["tokens_per_second"] == 50.0
+    assert gen["prompt_tokens_per_second"] == 100.0
+    assert gen["chunks"] == 2
+
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs", lambda target: ("lm_studio", "m", {}))
+    agent._stream_reply(room_uuid, uuid4(), [])
+    assert sent["kwargs"] == {"stream_options": {"include_usage": True}}
