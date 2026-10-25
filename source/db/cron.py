@@ -789,6 +789,11 @@ def _host_zone() -> tzinfo:
     return zone
 
 
+# How far before `after` the local-time search starts: longer than any DST
+# jump, so a wall-clock time a jump moved past `after` is still found.
+_DST_LOOKBACK = timedelta(hours=3)
+
+
 def cron_compute_next_run(
     cron_expr: str, tz_choice: str = "localtime", after: datetime | None = None
 ) -> datetime | None:
@@ -796,17 +801,35 @@ def cron_compute_next_run(
     against the job's clock: 'UTC' uses UTC, 'localtime' the host's time zone
     (`_host_zone`), so "27 2 * * *" means 02:27 on the wall clock on both sides
     of a DST change. Returns None if the expression can't be parsed (so a bad
-    row just never fires rather than crashing the scheduler)."""
+    row just never fires rather than crashing the scheduler).
+
+    Every wall-clock time the expression names maps to exactly one instant —
+    the time read with the offset in force *before* any DST change (PEP 495
+    fold=0): when the clocks go back, a time in the repeated hour runs at its
+    first occurrence only; when they go forward, a time in the skipped hour
+    runs after the jump, moved forward by it (02:30 → 03:30), and times that
+    land on the same instant run once."""
     if after is None:
         after = datetime.now(UTC)
-    base = after.astimezone(UTC) if tz_choice == "UTC" else after.astimezone(_host_zone())
+    after = after.astimezone(UTC)
     try:
         from croniter import croniter
 
-        nxt = croniter(cron_expr, base).get_next(datetime)
+        if tz_choice == "UTC":
+            return croniter(cron_expr, after).get_next(datetime).astimezone(UTC)
+        zone = _host_zone()
+        # Walk naive wall-clock times; the instant of each is non-decreasing
+        # in the wall time, so the first one past `after` is the next run.
+        start = (after - _DST_LOOKBACK).astimezone(zone).replace(tzinfo=None)
+        it = croniter(cron_expr, start)
+        for _ in range(10_000):
+            wall = it.get_next(datetime)
+            instant = wall.replace(tzinfo=zone, fold=0).astimezone(UTC)
+            if instant > after:
+                return instant
     except Exception:
         return None
-    return nxt.astimezone(UTC)
+    return None
 
 
 def _cron_job_effective_enabled(

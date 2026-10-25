@@ -111,6 +111,37 @@ def test_localtime_next_run_crosses_a_dst_change(monkeypatch, after, expected):
     assert db.cron_compute_next_run("0 4 * * *", "localtime", after=after) == expected
 
 
+@pytest.mark.parametrize("expr, after, expected", [
+    # Clocks go back at 03:00 CEST on 1999-10-31 (01:00 UTC), so 02:00–02:59
+    # happens twice. A job runs at the first occurrence and not again.
+    ("27 2 * * *", datetime(1999, 10, 30, 12, 0, tzinfo=UTC),
+     datetime(1999, 10, 31, 0, 27, tzinfo=UTC)),
+    ("27 2 * * *", datetime(1999, 10, 31, 0, 27, tzinfo=UTC),
+     datetime(1999, 11, 1, 1, 27, tzinfo=UTC)),
+    # A frequent job counts each wall-clock time once too: the repeated hour
+    # runs nothing it already ran.
+    ("*/15 * * * *", datetime(1999, 10, 31, 0, 45, tzinfo=UTC),
+     datetime(1999, 10, 31, 2, 0, tzinfo=UTC)),
+    ("*/15 * * * *", datetime(1999, 10, 31, 1, 10, tzinfo=UTC),
+     datetime(1999, 10, 31, 2, 0, tzinfo=UTC)),
+    # Clocks go forward at 02:00 CET on 1999-03-28 (01:00 UTC), so 02:00–02:59
+    # never happens. Those times move forward by the jump: 02:30 runs at 03:30.
+    ("30 2 * * *", datetime(1999, 3, 27, 12, 0, tzinfo=UTC),
+     datetime(1999, 3, 28, 1, 30, tzinfo=UTC)),
+    # …also when the next run is computed after the jump but before 03:30.
+    ("30 2 * * *", datetime(1999, 3, 28, 1, 15, tzinfo=UTC),
+     datetime(1999, 3, 28, 1, 30, tzinfo=UTC)),
+    # Moved times that land on a real one run once: 02:30 and 03:30 are both 03:30.
+    ("*/30 * * * *", datetime(1999, 3, 28, 1, 0, tzinfo=UTC),
+     datetime(1999, 3, 28, 1, 30, tzinfo=UTC)),
+    ("*/30 * * * *", datetime(1999, 3, 28, 1, 30, tzinfo=UTC),
+     datetime(1999, 3, 28, 2, 0, tzinfo=UTC)),
+])
+def test_localtime_runs_each_wall_clock_time_once(monkeypatch, expr, after, expected):
+    monkeypatch.setenv("TZ", "Europe/Copenhagen")
+    assert db.cron_compute_next_run(expr, "localtime", after=after) == expected
+
+
 def test_host_zone_prefers_tz_and_follows_dst(monkeypatch):
     from db.cron import _host_zone
 

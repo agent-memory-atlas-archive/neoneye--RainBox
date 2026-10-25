@@ -103,7 +103,14 @@ One `cron_tick` pass:
    - **Due** (`next_run_at <= now`): a **draft** rolls forward silently; a job whose **previous run is still in flight** (latest run `pending`) skips the slot — `next_run_at` advances, no run row, a `⏭ "X" skipped: previous run still in flight` note in the cron room (no runaway pile-ups). Otherwise **fire** (`trigger='scheduled'`) and advance `next_run_at` to the next *future* slot — missed slots are **not replayed** (catch-up = fire at most once, the launchd behavior). A fired one-shot (empty expr) is retired instead of rescheduled.
    - **Not due but recently failed** → **retry** (below).
 
-**Computing "due":** `next_run_at` is stored as a tz-aware UTC instant, computed by `croniter` against the job's `timezone` choice — `'UTC'`, or `'localtime'` = the host's local tz *at that moment* (so a "09:00 local" job follows the machine when it travels). An unparseable expression yields `None` — a bad row just never fires rather than crashing the scheduler. The UI grammar only produces `*`, `*/N`, and specific values, but the backend parses general 5-field cron so hand-edited rows still work.
+**Computing "due":** `next_run_at` is stored as a tz-aware UTC instant, computed by `croniter` against the job's `timezone` choice — `'UTC'`, or `'localtime'` = the host's IANA zone with its DST rules (`$TZ`, else where `/etc/localtime` points), looked up each time (so a "09:00 local" job follows the machine when it travels).
+
+**DST nights: one instant per wall-clock time.** For `'localtime'`, each wall-clock time an expression names runs exactly once, at the instant that time has under the offset in force *before* the change (PEP 495 `fold=0`):
+
+- **Clocks go back** (02:00–02:59 happens twice): a time in that hour runs at its **first** occurrence, in summer time, and not again. This holds for frequent jobs too — `*/15 * * * *` runs nothing in the repeated hour that it already ran, so it pauses for that hour once a year.
+- **Clocks go forward** (02:00–02:59 never happens): a time in that hour is **moved forward by the jump** and runs after it — 02:30 runs at 03:30 — so a daily job there is never skipped. Times that land on the same instant (a moved 02:30 and a real 03:30) run once.
+
+`cron_compute_next_run` walks naive wall-clock times from a few hours before `after` and returns the first whose instant is later, which also finds a moved time when the next run is computed between the jump and that time. An unparseable expression yields `None` — a bad row just never fires rather than crashing the scheduler. The UI grammar only produces `*`, `*/N`, and specific values, but the backend parses general 5-field cron so hand-edited rows still work.
 
 **Retries.** Per-job `max_retries` (0 = off, capped at 10; the "Retry on failure" select on the builder and Edit-action overlay). A run that resolved to `error` within `CRON_RETRY_WINDOW` (10 min — so restarts never refire ancient failures) refires as `trigger='retry'` between slots, until the *trailing chain* of retry-trigger runs reaches the budget. A success or the next scheduled fire resets the chain; a pending run blocks it; drafts are excluded.
 
@@ -206,7 +213,7 @@ The three tables are registered under an **Admin → Cron** category (`CronFolde
 ## Open questions
 
 - **Agent-inbox message targeting.** Message jobs post to chatrooms; delegating directly into an agent's inbox (`enqueue(agent_uuid, …)` — the brief's "placing a task in their inbox") is unbuilt. In practice, posting to a room an agent watches covers the need.
-- **Named IANA timezones.** `Europe/Copenhagen`-style zones beyond the local/UTC pair, and DST edge cases (a `croniter`/tz concern).
+- **Named IANA timezones per job.** A job can't pick `Europe/Copenhagen`-style zones beyond the local/UTC pair (`localtime` itself resolves to the host's IANA zone, DST rules included).
 - **Multi-user ownership.** The original project plan wants multi-user; `user_id` on `cron_folder`/`cron_job` (and scoping every query + the tick by it) is still deferred.
 - **Folder = project binding.** Should a folder pin a workspace/repo path for command confinement (PlanExe folder → PlanExe repo), making it both an on/off group *and* an execution context?
 - **Cron-room noise.** Every fire posts an event line. Fine at current volume; a high-frequency job would want a failures-only or per-folder-room policy.
