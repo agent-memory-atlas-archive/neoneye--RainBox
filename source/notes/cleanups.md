@@ -34,11 +34,11 @@ so this is a labelling question, not a logic one.
 
 `db/cron.py`, the `backup` action — an upload failure posts
 `✖ upload failed: …` to the cron room but the run still records `ok`, so the
-`/cron` health column stays green while nothing reaches the remote. That is
-how GitHub rejected every push from 2026-10-16 to 2026-10-25 (files over
-100 MiB) without anyone noticing, and a failing `pg_dump` (2026-10-21 to
-2026-10-25, see the next entry) was visible only as a line in the cron room
-too. The upload is deliberately not a failure of the fire (the local backup
+`/cron` health column stays green while nothing reaches the remote. GitHub
+rejected every push from 2026-10-16 to 2026-10-25 (files over 100 MiB) with
+the health column green throughout; the operator caught it from the push
+errors, not from `/cron`. A failing `pg_dump` (2026-10-21 to 2026-10-25, see
+the next entry) did turn the run `error`, but showed up nowhere else. The upload is deliberately not a failure of the fire (the local backup
 did succeed), so the fix is a third state — e.g. `degraded`, or `ok` plus a
 recorded upload error the health column shows — not flipping it to `error`.
 Deferred because it touches the `cron_run` status vocabulary every page reads.
