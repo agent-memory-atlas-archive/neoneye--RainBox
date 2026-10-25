@@ -263,12 +263,14 @@ CHAT_TEMPLATE: str = """
   .gen-badge{font-family:ui-monospace,monospace;font-size:0.8rem;color:#6c757d;padding:3px 8px;margin-left:0.3em;
              border:1px solid transparent;border-radius:999px;cursor:default;white-space:nowrap}
   .gen-badge:hover,.gen-badge:focus{color:#1a1a2e;border-color:#cbd5e1;outline:none}
-  .gen-pop{position:fixed;z-index:1000;background:#1f2937;color:#e5e7eb;border-radius:10px;padding:0.6em 0.9em;
-           box-shadow:0 6px 20px rgba(0,0,0,0.25);font-size:0.85rem;min-width:13em}
+  /* Same surface as .room-menu (the … menus), so it reads as one of them. */
+  .gen-pop{position:fixed;z-index:1000;background:#fff;color:#333;border:1px solid #d1d5db;border-radius:8px;
+           box-shadow:0 6px 18px rgba(0,0,0,0.14);padding:0.5em 0.85em;font-size:0.85rem;min-width:13em;
+           font-family:system-ui,sans-serif}
   .gen-pop .row{display:flex;justify-content:space-between;gap:1.5em;line-height:1.7}
-  .gen-pop .label{color:#9ca3af}
-  .gen-pop .value{font-family:ui-monospace,monospace;color:#f9fafb}
-  .gen-pop hr{border:none;border-top:1px solid #374151;margin:0.35em 0}
+  .gen-pop .label{color:#6c757d}
+  .gen-pop .value{font-family:ui-monospace,monospace;color:#1a1a2e}
+  .gen-pop hr{border:none;border-top:1px solid #e5e7eb;margin:0.35em 0}
 
   .compose{display:flex;gap:0.5em;align-items:flex-end;padding:0.75em 1em;background:#fff;border-top:1px solid #e5e7eb}
   /* Auto-grows with content (see autoGrow): one line by default, up to 10 rows
