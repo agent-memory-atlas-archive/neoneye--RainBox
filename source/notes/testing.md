@@ -12,8 +12,8 @@ venv/bin/python -m pytest -q \
 
 The `--ignore` flags are required: a bare `pytest` **fails at collection**
 because the standalone services' `test_server.py` files share a basename
-(those directories have no `__init__.py` and are meant to be tested inside
-their own venvs — see below). The full main suite runs in the low tens of
+(those directories have no `__init__.py` and are tested one directory at a
+time — see below). The full main suite runs in the low tens of
 minutes; the progress line below says how long this run will take.
 
 Targeted runs need no flags: `venv/bin/python -m pytest db/ memory/ -q`.
@@ -122,17 +122,26 @@ local services are running changes what the retrieval tests observe.
 
 ## Service suites
 
-The standalone services test inside their own directories (their
-suites mock the heavy dependencies, but their runtime deps live in their own
-venvs):
+The standalone services test inside their own directories, with the **main**
+venv. Their suites fake the heavy dependencies (faster-whisper, torch, Kokoro,
+dots.tts) and each server imports those lazily, so they need only Flask and
+requests; the service venvs hold the runtime deps and have no pytest. All five
+together take about ten seconds (Discord is nearly all of it):
 
 ```bash
-cd voice_stt_whisper && venv/bin/python -m pytest -q
-cd voice_tts_kokoro && venv/bin/python -m pytest -q
-cd voice_tts_dotstts && venv/bin/python -m pytest -q
-cd telegram_service && venv/bin/python -m pytest -q
-cd discord_service && venv/bin/python -m pytest -q
+cd telegram_service && ../venv/bin/python -m pytest -q
+cd discord_service && ../venv/bin/python -m pytest -q
+cd voice_stt_whisper && ../venv/bin/python -m pytest -q   # voice: experimental
+cd voice_tts_kokoro && ../venv/bin/python -m pytest -q
+cd voice_tts_dotstts && ../venv/bin/python -m pytest -q
 ```
+
+The reranker's tests (`reranker/test_reranker_server.py`, a fake scorer) have
+a unique basename, so the main suite above already runs them.
+
+Because the heavy dependencies are faked, these suites cannot catch a broken
+torch or CTranslate2 after an upgrade; only starting the service and sending
+it a real request does.
 
 ## What tests can and cannot catch
 

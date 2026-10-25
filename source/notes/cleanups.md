@@ -102,17 +102,6 @@ append-only tables into fixed id ranges would make those nights tiny too, but
 needs a dump format other than one pg_dump file per table. Deferred: ~1–4 MB a
 night is fine for now.
 
-### The service venvs have no pytest, so their documented test runs fail
-
-`notes/testing.md` ("Service suites") runs each standalone service's tests
-with `cd <service> && venv/bin/python -m pytest -q`, but none of the six
-service venvs (`reranker`, `voice_stt_whisper`, `voice_tts_kokoro`,
-`voice_tts_dotstts`, `discord_service`, `telegram_service`) has pytest
-installed, so every one of those commands fails with "No module named
-pytest". Fix: add pytest to each service's dev requirements (or have the
-doc install it). Found 2026-10-25; the services themselves start and answer
-real requests.
-
 ### There is no backup prune tool
 
 Parts are shared between backups (a manifest names parts written on many
