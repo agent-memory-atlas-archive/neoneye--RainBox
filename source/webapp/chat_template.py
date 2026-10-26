@@ -280,11 +280,13 @@ CHAT_TEMPLATE: str = """
     .chat-log.one-to-one .msg:not(.msg-debug):hover > .msg-actions,
     .chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions{opacity:1}
   }
-  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug){align-self:flex-end;max-width:80%;
-      display:flex;flex-direction:column;align-items:flex-end}
-  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text{background:#e7efff;color:#1a1a2e;
-      border-radius:18px;padding:0.55em 1em}
-  .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing{width:80%;align-items:stretch}
+  /* The row spans the full width, like a reply's, so hovering anywhere beside
+     the bubble reveals its action row; the bubble itself is what is capped at
+     80% and pushed to the right. */
+  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug){display:flex;flex-direction:column;align-items:flex-end}
+  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text{max-width:80%;box-sizing:border-box;
+      background:#e7efff;color:#1a1a2e;border-radius:18px;padding:0.55em 1em}
+  .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing > .msg-edit-area{width:80%}
   /* A right-aligned row reads from its outer edge in: the clock leads. */
   .chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock{order:-1;margin-left:0;margin-right:0.4em}
   /* The working bubble in a one-to-one room is the same quiet "Worked for 2s"
