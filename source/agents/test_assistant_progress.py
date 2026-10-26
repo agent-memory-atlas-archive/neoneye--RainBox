@@ -261,3 +261,34 @@ def test_the_reply_keeps_a_pointer_to_the_run_that_produced_it(app_ctx):
             AssistantRun.room_uuid == chatroom.uuid).delete()
         db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
         db.session.commit()
+
+
+def test_the_reply_keeps_the_turns_cost(app_ctx):
+    """The working bubble shows what the run has cost and is reaped by the
+    reply, so the reply keeps the numbers as meta["run_stats"] — what the
+    chat's "Worked for" line under it opens to. The duration runs from the
+    bubble posted on send, not from when the agent process got going."""
+    human = db.get_human_user()
+    chatroom = db.create_chatroom(f"prog-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    db.post_chat_message(chatroom.uuid, human.uuid, "how many kanban boards?")
+    db.upsert_progress(chatroom.uuid, ASSISTANT_UUID, "", restart=True)
+    db.set_setting("qa.facts_invalidated_at", None)
+    agent = AssistantAgent(agent_uuid=ASSISTANT_UUID, name="assistant", send=lambda _: None)
+    agent._decide_next_step = lambda **_: AssistantStepDecision(
+        reason="answer", action=AssistantActionName.REPLY,
+        args={"message": "You have 3 kanban boards."})
+    try:
+        agent.handle(uuid4(), {"room_uuid": str(chatroom.uuid)})
+        reply = [m for m in db.list_room_messages(chatroom.uuid)
+                 if m["sender_type"] == "agent" and m["kind"] == "message"][-1]
+        stats = reply["meta"]["run_stats"]
+        assert set(stats) == {"steps", "llm_calls", "input_tokens", "output_tokens",
+                              "tokens_per_second", "duration_ms"}
+        assert stats["steps"] >= 1
+        assert stats["duration_ms"] >= 0
+        assert _progress_count(chatroom.uuid) == 0
+    finally:
+        db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == chatroom.uuid).delete()
+        db.session.query(db.Chatroom).filter(db.Chatroom.uuid == chatroom.uuid).delete()
+        db.session.commit()

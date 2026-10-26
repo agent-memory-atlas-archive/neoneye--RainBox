@@ -263,9 +263,26 @@ def test_working_bubbles_count_up():
     assert "function formatWorkedFor" in body
     assert "return 'Worked for ' + s + 's';" in body
     assert "return 'Worked for ' + m + 'm ' + rs + 's';" in body
-    assert "line.dataset.workedSince = String(since);" in body
-    assert "log.querySelectorAll('.msg-worked[data-worked-since], .reasoning-label[data-worked-since]')" in body
-    assert "if (m.kind === 'progress') msg.appendChild(workedForLine(m));" in body
+    assert "label.dataset.workedSince = String(since);" in body
+    assert "log.querySelectorAll('.reasoning-label[data-worked-since]')" in body
+    assert "if (m.kind === 'progress') addWorkingToggle(msg, body, m);" in body
+
+
+def test_working_bubble_opens_by_default_and_reply_keeps_a_closed_worked_line():
+    """While the turn works its "Worked for" toggle starts open on the step,
+    cost and inspect link (closing it hides them); the reply that replaces
+    the bubble carries a "Worked for 1m 2s" line that starts closed and opens
+    to the turn's KPIs and an Inspect link. All three toggles share one
+    builder."""
+    body = _body()
+    assert "function buildWorkedToggle()" in body
+    assert "apply(!collapsedSections.has(m.id));" in body        # working: open
+    assert "function addRunStatsToggle(msg, body, m)" in body
+    assert "const stats = (m.meta || {}).run_stats;" in body
+    assert "apply(expandedSections.has(m.id));" in body          # finished: closed
+    assert "a.textContent = 'Inspect ↗';" in body
+    assert ".reasoning-toggle[aria-expanded=\"true\"] .reasoning-chevron{transform:rotate(90deg)}" in body
+    assert "collapsedSections = new Set();" in body
 
 
 def test_working_bubble_opens_its_run():

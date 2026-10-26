@@ -4190,7 +4190,7 @@ class AssistantAgent(ModelGroupAgent):
                         text = self._append_result_links(text, result_links)
                     db.post_chat_message(room_uuid, self.agent_uuid, text,
                                          kind="message",
-                                         meta=self._run_meta(pending_proposal))
+                                         meta=self._final_meta(pending_proposal))
                     db.finish_run(run, "finished", final_summary=text[:200])
                     logger.info(
                         "assistant finished run %s in room %s at step %d",
@@ -4398,7 +4398,7 @@ class AssistantAgent(ModelGroupAgent):
                 f"Inspect the run: [{run_link}]({run_link})"
             )
             db.post_chat_message(room_uuid, self.agent_uuid, msg, kind="message",
-                                 meta=self._run_meta())
+                                 meta=self._final_meta())
             db.finish_run(run, "stopped", final_summary="step limit reached")
             logger.warning(
                 "assistant run %s hit step limit (%d) in room %s",
@@ -7224,6 +7224,40 @@ class AssistantAgent(ModelGroupAgent):
             meta["assistant_run_uuid"] = str(self._run.uuid)
         return meta
 
+    def _final_meta(self, base: dict[str, Any] | None = None) -> dict[str, Any]:
+        """`_run_meta` for the post that ends the turn, plus the turn's numbers
+        as meta["run_stats"].
+
+        The working bubble shows the run's cost while it works, and this very
+        post reaps it — so the reply keeps the numbers instead. The chat draws
+        a "Worked for 1m 2s" line on the reply that opens to them and to the
+        trace. `duration_ms` runs from the turn's start as the operator saw it
+        (the working bubble posted on send, before this process even spawned)
+        to now; a run with no bubble falls back to its own start. Best-effort:
+        the reply must land even if its stats can't be read."""
+        meta = self._run_meta(base)
+        if self._run is None:
+            return meta
+        try:
+            steps = db.list_assistant_steps(self._run.uuid)
+            stats = db.assistant_run_stats(
+                steps, db.list_second_opinion_reviews(self._run.uuid))
+            started = db.progress_started_at(
+                self._run.room_uuid, self.agent_uuid) or self._run.started_at
+            meta["run_stats"] = {
+                "steps": len(steps),
+                "llm_calls": stats["calls"],
+                "input_tokens": stats["input_tokens"],
+                "output_tokens": stats["output_tokens"],
+                "tokens_per_second": stats["tps"],
+                "duration_ms": round(
+                    (datetime.now(UTC) - started).total_seconds() * 1000),
+            }
+        except Exception:
+            logger.warning("assistant: run stats for the reply failed",
+                           exc_info=True)
+        return meta
+
     def _set_activity(self, activity: str) -> None:
         """Say what the run is doing now — to the supervisor's watchdog (via
         the heartbeat) and to the operator (via the room's progress row). One
@@ -7301,7 +7335,7 @@ class AssistantAgent(ModelGroupAgent):
             self._activity = "stopped"
             db.post_chat_message(
                 run.room_uuid, self.agent_uuid, "Stopped at your request.",
-                kind="message", meta=self._run_meta(),
+                kind="message", meta=self._final_meta(),
             )
             db.finish_run(run, "stopped",
                           final_summary=f"stopped by operator at step {step_index}")

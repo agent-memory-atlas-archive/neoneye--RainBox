@@ -193,9 +193,6 @@ CHAT_TEMPLATE: str = """
   .msg-debug{opacity:0.8;background:#f6f4fb;border:1px dashed #c4b5e0;border-radius:8px;padding:6px 10px}
   .msg-debug .msg-text{font-size:0.85rem;color:#555}
   .msg-kind{font-size:0.66rem;text-transform:uppercase;letter-spacing:0.03em;padding:1px 6px;border-radius:999px;margin-left:0.5em;vertical-align:middle;background:#fde68a;color:#92400e}
-  /* "Worked for 21s" on a working bubble, counting up in the browser. Its own
-     line under the status text, quieter than the status itself. */
-  .msg-worked{font-size:0.78rem;color:#6b6280;font-variant-numeric:tabular-nums;margin-top:4px}
   /* A working bubble whose turn has a run to inspect: the whole bubble goes
      to /assistant, so the operator doesn't have to hit the inline link. */
   .msg-progress-linked{cursor:pointer}
@@ -223,7 +220,15 @@ CHAT_TEMPLATE: str = """
                     cursor:pointer;font:inherit;font-size:0.85rem;color:#8b8b95;font-variant-numeric:tabular-nums}
   .reasoning-toggle:hover{color:#4b5563}
   .reasoning-chevron{display:inline-block;transition:transform 0.15s}
-  .msg-reasoning.open .reasoning-chevron{transform:rotate(90deg)}
+  .reasoning-toggle[aria-expanded="true"] .reasoning-chevron{transform:rotate(90deg)}
+  /* A working bubble with no status text has nothing to open. */
+  .reasoning-toggle.no-details{cursor:default}
+  .reasoning-toggle.no-details .reasoning-chevron{display:none}
+  /* What a finished assistant turn cost, behind its "Worked for" line. */
+  .run-stats{display:grid;grid-template-columns:max-content max-content;gap:0 1.5em;font-size:0.85rem;color:#6b7280;
+             border-left:2px solid #e5e7eb;padding-left:0.8em;margin:0.35em 0 0.5em}
+  .run-stats .value{font-family:ui-monospace,monospace;color:#374151;text-align:right}
+  .run-stats a{grid-column:1 / -1;color:#0653a8;margin-top:0.2em}
   .msg-reasoning .msg-text{font-size:0.85rem;color:#6b7280;border-left:2px solid #e5e7eb;padding-left:0.8em;margin:0.35em 0 0}
   .msg-reasoning + .msg.msg-joined{margin-top:-0.7em}
   .msg.msg-joined > .msg-head{display:none}
@@ -253,7 +258,6 @@ CHAT_TEMPLATE: str = """
   .chat-log.one-to-one .msg[data-kind="progress"] > .msg-head,
   .chat-log.one-to-one .msg[data-kind="progress"] > .msg-actions{display:none}
   .chat-log.one-to-one .msg[data-kind="progress"] .msg-text:empty{display:none}
-  .chat-log.one-to-one .msg[data-kind="progress"] .msg-worked{font-size:0.85rem;color:#8b8b95;margin:0}
   .chat-log.one-to-one .msg-progress-linked:hover{background:none}
   /* An over-long message is clamped to its opening. A pasted document or log
      otherwise owns the whole pane, and scrolling back through the conversation
@@ -577,6 +581,7 @@ let lastId = 0;                 // highest message id rendered in currentRoom
 let renderedIds = new Set();    // message ids already in the log (dedup)
 let streamingBase = {};         // message id -> last full row dict (for live in-place updates)
 let expandedSections = new Set(); // collapsible-row ids (thinking/debug) the user expanded
+let collapsedSections = new Set(); // working-bubble ids the user closed (they start open)
 const unread = {};              // room uuid -> unread count (rooms not open)
 let deferredDeletedMessageIds = new Set();
 let agentsLoaded = false;
@@ -1398,17 +1403,108 @@ function syncReasoningRows(){
   });
 }
 
-// The "Worked for 21s" line on a working bubble. It counts from the row's own
+// A "Worked for 9s ›" toggle: a label (filled by the caller, or counted up
+// by the ticker below when it carries data-worked-since) and a chevron that
+// turns while the toggle is open (aria-expanded). The reasoning line, the
+// working bubble and a finished assistant turn all use it, so the three read
+// as one control.
+function buildWorkedToggle(){
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'reasoning-toggle';
+  btn.setAttribute('aria-expanded', 'false');
+  const label = document.createElement('span');
+  label.className = 'reasoning-label';
+  const chevron = document.createElement('span');
+  chevron.className = 'reasoning-chevron';
+  chevron.textContent = '›';
+  btn.appendChild(label);
+  btn.appendChild(chevron);
+  return btn;
+}
+
+// A working bubble's "Worked for 21s" toggle, counting from the row's own
 // created_at, not from when this page happened to see it: a reload, a second
 // tab, or a browser opened mid-turn all have to show the same elapsed time.
-function workedForLine(m){
-  const line = document.createElement('div');
-  line.className = 'msg-worked';
+// The bubble's status text (the assistant's step, cost and inspect link) is
+// what it opens to — open by default while the turn works; the reply that
+// replaces the bubble starts closed. A bubble with no status has nothing to
+// open, so it is just the count.
+function addWorkingToggle(msg, body, m){
+  const toggle = buildWorkedToggle();
+  const label = toggle.querySelector('.reasoning-label');
   const since = Date.parse(m.created_at || '');
-  if (isNaN(since)) return line;  // no clock to count from; render nothing
-  line.dataset.workedSince = String(since);
-  line.textContent = formatWorkedFor((Date.now() - since) / 1000);
-  return line;
+  if (!isNaN(since)){
+    label.dataset.workedSince = String(since);
+    label.textContent = formatWorkedFor((Date.now() - since) / 1000);
+  }
+  msg.insertBefore(toggle, body);
+  if (!(m.text || '').trim()){
+    toggle.classList.add('no-details');
+    toggle.disabled = true;
+    return;
+  }
+  const apply = (open) => {
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    body.style.display = open ? '' : 'none';
+  };
+  apply(!collapsedSections.has(m.id));
+  toggle.addEventListener('click', () => {
+    const open = collapsedSections.has(m.id);
+    if (open) collapsedSections.delete(m.id); else collapsedSections.add(m.id);
+    apply(open);
+  });
+}
+
+// A finished assistant turn's "Worked for 1m 2s ›" line above its reply,
+// from meta.run_stats (agents/assistant.py _final_meta): closed by default,
+// opening to what the turn cost and a link to its trace.
+function addRunStatsToggle(msg, body, m){
+  const stats = (m.meta || {}).run_stats;
+  if (!stats || m.streaming) return;
+  const toggle = buildWorkedToggle();
+  toggle.querySelector('.reasoning-label').textContent = stats.duration_ms != null
+    ? formatWorkedFor(stats.duration_ms / 1000) : 'Worked';
+  const details = document.createElement('div');
+  details.className = 'run-stats';
+  const row = (label, value) => {
+    if (value == null) return;
+    const l = document.createElement('span');
+    l.textContent = label;
+    const v = document.createElement('span');
+    v.className = 'value';
+    v.textContent = typeof value === 'number' ? value.toLocaleString() : value;
+    details.appendChild(l);
+    details.appendChild(v);
+  };
+  row('Steps', stats.steps);
+  row('LLM calls', stats.llm_calls);
+  row('Tokens in', stats.input_tokens);
+  row('Tokens out', stats.output_tokens);
+  row('Speed', stats.tokens_per_second == null ? null
+      : stats.tokens_per_second.toLocaleString() + ' tok/s');
+  const runUuid = (m.meta || {}).assistant_run_uuid;
+  if (runUuid){
+    const a = document.createElement('a');
+    a.href = '/assistant?id=' + encodeURIComponent(runUuid);
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.textContent = 'Inspect ↗';
+    a.title = 'Open the assistant run that produced this message in a new tab';
+    details.appendChild(a);
+  }
+  msg.insertBefore(toggle, body);
+  msg.insertBefore(details, body);
+  const apply = (open) => {
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    details.style.display = open ? '' : 'none';
+  };
+  apply(expandedSections.has(m.id));
+  toggle.addEventListener('click', () => {
+    const open = !expandedSections.has(m.id);
+    if (open) expandedSections.add(m.id); else expandedSections.delete(m.id);
+    apply(open);
+  });
 }
 
 // One timer for every working bubble on the page, rather than one per bubble:
@@ -1416,7 +1512,7 @@ function workedForLine(m){
 // to be cancelled at exactly the moments a rebuild makes easy to miss. This
 // reads the DOM instead, so a bubble that is gone simply stops being counted.
 setInterval(() => {
-  const lines = log.querySelectorAll('.msg-worked[data-worked-since], .reasoning-label[data-worked-since]');
+  const lines = log.querySelectorAll('.reasoning-label[data-worked-since]');
   lines.forEach((line) => {
     line.textContent = formatWorkedFor(
       (Date.now() - Number(line.dataset.workedSince)) / 1000);
@@ -1549,22 +1645,18 @@ function makeMessage(m){
   // message id so the state survives the live re-renders while streaming.
   let toggleTop = null, toggleBottom = null;
   if (collapseNoun){
-    toggleTop = document.createElement('button');
-    toggleTop.type = 'button';
-    toggleTop.className = isReasoning ? 'reasoning-toggle' : 'thinking-toggle';
     if (isReasoning){
       // The label is filled by setReasoningLabel: live while thinking, then
       // frozen at the duration once the reply starts.
-      const label = document.createElement('span');
-      label.className = 'reasoning-label';
-      const chevron = document.createElement('span');
-      chevron.className = 'reasoning-chevron';
-      chevron.textContent = '›';
-      toggleTop.appendChild(label);
-      toggleTop.appendChild(chevron);
+      toggleTop = buildWorkedToggle();
+      msg.appendChild(toggleTop);
       setReasoningLabel(msg, null);
+    } else {
+      toggleTop = document.createElement('button');
+      toggleTop.type = 'button';
+      toggleTop.className = 'thinking-toggle';
+      msg.appendChild(toggleTop);
     }
-    msg.appendChild(toggleTop);
   }
   msg.appendChild(body);
   // An over-long message is clamped to its opening, with a toggle under the
@@ -1588,7 +1680,9 @@ function makeMessage(m){
     msg.appendChild(moreBottom);
   }
   // Working bubbles say how long they have been at it, counting up.
-  if (m.kind === 'progress') msg.appendChild(workedForLine(m));
+  if (m.kind === 'progress') addWorkingToggle(msg, body, m);
+  // A finished assistant turn: its "Worked for" line, opening to its cost.
+  addRunStatsToggle(msg, body, m);
   // Write-proposal card (confirm / reject) — only on messages that carry meta.write_intent.
   const proposalCard = renderProposalCard(m);
   if (proposalCard) msg.appendChild(proposalCard);
@@ -1694,7 +1788,6 @@ function makeMessage(m){
   if (toggleTop){
     const apply = (expanded) => {
       if (isReasoning){
-        msg.classList.toggle('open', expanded);
         toggleTop.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       } else {
         toggleTop.textContent = expanded ? ('Collapse to hide ' + collapseNoun) : ('Expand to view ' + collapseNoun);
@@ -2608,6 +2701,7 @@ async function selectRoom(uuid, scrollMsgId){
   renderedIds = new Set();
   streamingBase = {};
   expandedSections = new Set();
+  collapsedSections = new Set();
   chatSyncUrl();          // mirror the open room into ?id= so a reload reopens it
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
