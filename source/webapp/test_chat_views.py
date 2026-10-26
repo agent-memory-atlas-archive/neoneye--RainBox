@@ -279,8 +279,12 @@ def test_working_bubble_opens_by_default_and_reply_keeps_a_closed_worked_line():
     assert "apply(!collapsedSections.has(m.id));" in body        # working: open
     assert "function addRunStatsToggle(msg, body, m)" in body
     assert "const stats = (m.meta || {}).run_stats;" in body
-    assert "apply(expandedSections.has(m.id));" in body          # finished: closed
+    assert "const key = 'run-stats:' + m.id;" in body           # apart from "show all"
+    assert "apply(expandedSections.has(key));" in body           # finished: closed
     assert "a.textContent = 'Inspect ↗';" in body
+    # On a long reply the line sits above "show less", on a line of its own.
+    assert "const anchor = lead && lead.classList.contains('msg-more-toggle') ? lead : body;" in body
+    assert ".reasoning-toggle{display:flex;width:fit-content;" in body
     assert ".reasoning-toggle[aria-expanded=\"true\"] .reasoning-chevron{transform:rotate(90deg)}" in body
     assert "collapsedSections = new Set();" in body
 

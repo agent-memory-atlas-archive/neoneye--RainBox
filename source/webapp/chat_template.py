@@ -239,7 +239,7 @@ CHAT_TEMPLATE: str = """
      turn's header; the reply that follows drops its own header and tucks in
      underneath (syncReasoningRows), so a turn reads as one message. Expanded,
      the thoughts sit behind a quiet rule, smaller and greyer than the reply. */
-  .reasoning-toggle{display:inline-flex;align-items:center;gap:0.3em;margin:0;padding:0;background:none;border:none;
+  .reasoning-toggle{display:flex;width:fit-content;align-items:center;gap:0.3em;margin:0;padding:0;background:none;border:none;
                     cursor:pointer;font:inherit;font-size:0.85rem;color:#8b8b95;font-variant-numeric:tabular-nums}
   .reasoning-toggle:hover{color:#4b5563}
   .reasoning-chevron{display:inline-block;transition:transform 0.15s}
@@ -1539,16 +1539,23 @@ function addRunStatsToggle(msg, body, m){
     a.title = 'Open the assistant run that produced this message in a new tab';
     details.appendChild(a);
   }
-  msg.insertBefore(toggle, body);
-  msg.insertBefore(details, body);
+  // Above everything that leads into the reply's text — including the
+  // "show less" toggle a long reply carries just above it.
+  const lead = body.previousElementSibling;
+  const anchor = lead && lead.classList.contains('msg-more-toggle') ? lead : body;
+  msg.insertBefore(toggle, anchor);
+  msg.insertBefore(details, anchor);
   const apply = (open) => {
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
     details.style.display = open ? '' : 'none';
   };
-  apply(expandedSections.has(m.id));
+  // Keyed apart from the row's id: a long reply's "show all" is in the same
+  // set under the bare id, and opening one must not open the other.
+  const key = 'run-stats:' + m.id;
+  apply(expandedSections.has(key));
   toggle.addEventListener('click', () => {
-    const open = !expandedSections.has(m.id);
-    if (open) expandedSections.add(m.id); else expandedSections.delete(m.id);
+    const open = !expandedSections.has(key);
+    if (open) expandedSections.add(key); else expandedSections.delete(key);
     apply(open);
   });
 }
