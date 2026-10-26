@@ -239,7 +239,7 @@ CHAT_TEMPLATE: str = """
      turn's header; the reply that follows drops its own header and tucks in
      underneath (syncReasoningRows), so a turn reads as one message. Expanded,
      the thoughts sit behind a quiet rule, smaller and greyer than the reply. */
-  .reasoning-toggle{display:flex;width:fit-content;align-items:center;gap:0.3em;margin:0;padding:0;background:none;border:none;
+  .reasoning-toggle{display:flex;width:fit-content;align-items:center;gap:0.3em;margin:0 0 0.35em;padding:0;background:none;border:none;
                     cursor:pointer;font:inherit;font-size:0.85rem;color:#8b8b95;font-variant-numeric:tabular-nums}
   .reasoning-toggle:hover{color:#4b5563}
   .reasoning-chevron{display:inline-block;transition:transform 0.15s}
