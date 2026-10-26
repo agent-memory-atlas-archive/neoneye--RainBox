@@ -291,19 +291,27 @@ CHAT_TEMPLATE: str = """
   }
   /* The row spans the full width, like a reply's, so hovering anywhere beside
      the bubble reveals its action row; the bubble itself is what is capped at
-     80% and pushed to the right. The action row sits to the bubble's left, on
-     its last line, rather than below it: below, its reserved (if invisible)
-     height pushed the answer as far from its question as the next question
-     is from the answer — beside, a turn reads as a pair. A two-column grid
-     does it: actions | bubble on the bubble's row (dense placement backfills
-     the actions into it), and everything else — the show-all toggles, the
-     edit box — spans the row, right-aligned, as before. */
-  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug){display:grid;
-      grid-template-columns:minmax(0, 1fr) fit-content(80%);grid-auto-flow:row dense;column-gap:0.4em;align-items:end}
-  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > *{grid-column:1 / -1;justify-self:end}
-  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text{grid-column:2;box-sizing:border-box;
+     80% and pushed to the right. */
+  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug){position:relative;
+      display:flex;flex-direction:column;align-items:flex-end}
+  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text{max-width:80%;box-sizing:border-box;
       background:#e7efff;color:#1a1a2e;border-radius:18px;padding:0.55em 1em}
-  .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-actions{grid-column:1;margin-top:0}
+  /* Where a pointer hovers, the person's action row floats just under the
+     bubble, right-aligned, taking no space: in flow, its reserved (if
+     invisible) height pushed the answer as far from its question as the next
+     question is from the answer. Floating, it lands in the empty right side
+     of the answer's first line — the short "Worked for" line — and a turn
+     reads as a pair. It starts flush at the row's bottom so the pointer
+     moves from the bubble onto it without leaving the message; it ignores
+     the pointer while hidden, so its invisible box neither reveals itself
+     nor blocks the answer underneath; and it carries the page's background
+     in case it sits over text. A touch screen keeps it in flow, always shown. */
+  @media (hover: hover){
+    .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-actions{position:absolute;top:100%;right:0;
+        z-index:1;margin-top:0;padding-top:2px;background:#fff;border-radius:6px;pointer-events:none}
+    .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug):hover > .msg-actions,
+    .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug):has(:focus-visible) > .msg-actions{pointer-events:auto}
+  }
   .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing > .msg-edit-area{width:80%}
   /* A right-aligned row reads from its outer edge in: the clock leads. */
   .chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock{order:-1;margin-left:0;margin-right:0.4em}
