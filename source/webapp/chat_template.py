@@ -315,7 +315,7 @@ CHAT_TEMPLATE: str = """
   .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing > .msg-edit-area{width:80%}
   /* A right-aligned row reads from its outer edge in: the clock leads. */
   .chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock{order:-1;margin-left:0;margin-right:0.4em}
-  /* The working bubble in a one-to-one room is the same quiet "Worked for 2s"
+  /* The working bubble in a one-to-one room is the same quiet "Working for 2s"
      line the reasoning row takes over from — no bubble, badge, header or
      buttons — so the hand-off is seamless rather than a flash of a bubble.
      Any status text the turn writes (the assistant's steps) stays readable. */
@@ -1435,13 +1435,15 @@ async function proposalAct(wrap, url, cap, stepLink) {
 // How long a working bubble has been working, as the operator reads it:
 // seconds alone under a minute, then minutes and seconds, then hours — the
 // unit that changes every second is always the last one, so the line reads as
-// a running clock at any length.
-function formatWorkedFor(seconds){
+// a running clock at any length. A count still running reads "Working for";
+// a settled one, "Worked for".
+function formatWorkedFor(seconds, working){
   const s = Math.max(0, Math.floor(seconds));
-  if (s < 60) return 'Worked for ' + s + 's';
+  const lead = working ? 'Working for ' : 'Worked for ';
+  if (s < 60) return lead + s + 's';
   const m = Math.floor(s / 60), rs = s % 60;
-  if (m < 60) return 'Worked for ' + m + 'm ' + rs + 's';
-  return 'Worked for ' + Math.floor(m / 60) + 'h ' + (m % 60) + 'm ' + rs + 's';
+  if (m < 60) return lead + m + 'm ' + rs + 's';
+  return lead + Math.floor(m / 60) + 'h ' + (m % 60) + 'm ' + rs + 's';
 }
 
 // A reasoning row's toggle label. Once the reply that follows it exists, the
@@ -1463,7 +1465,7 @@ function setReasoningLabel(node, reply){
     label.textContent = formatWorkedFor(Math.max(0, end - start) / 1000);
   } else if (!reply && row.streaming && !isNaN(start)){
     label.dataset.workedSince = String(start);
-    label.textContent = formatWorkedFor((Date.now() - start) / 1000);
+    label.textContent = formatWorkedFor((Date.now() - start) / 1000, true);
   } else {
     delete label.dataset.workedSince;
     label.textContent = 'Thoughts';
@@ -1513,7 +1515,7 @@ function buildWorkedToggle(){
   return btn;
 }
 
-// A working bubble's "Worked for 21s" toggle, counting from the row's own
+// A working bubble's "Working for 21s" toggle, counting from the row's own
 // created_at, not from when this page happened to see it: a reload, a second
 // tab, or a browser opened mid-turn all have to show the same elapsed time.
 // The bubble's status text (the assistant's step, cost and inspect link) is
@@ -1526,7 +1528,7 @@ function addWorkingToggle(msg, body, m){
   const since = Date.parse(m.created_at || '');
   if (!isNaN(since)){
     label.dataset.workedSince = String(since);
-    label.textContent = formatWorkedFor((Date.now() - since) / 1000);
+    label.textContent = formatWorkedFor((Date.now() - since) / 1000, true);
   }
   msg.insertBefore(toggle, body);
   if (!(m.text || '').trim()){
@@ -1612,7 +1614,7 @@ setInterval(() => {
   const lines = log.querySelectorAll('.reasoning-label[data-worked-since]');
   lines.forEach((line) => {
     line.textContent = formatWorkedFor(
-      (Date.now() - Number(line.dataset.workedSince)) / 1000);
+      (Date.now() - Number(line.dataset.workedSince)) / 1000, true);
   });
 }, 1000);
 

@@ -258,13 +258,16 @@ def test_working_bubbles_count_up():
     """A turn that takes a minute should say so. The bubble counts from the
     row's own created_at — not from when this tab first saw it — so a reload
     or a second tab shows the same number, and one timer drives every bubble
-    because the rows are rebuilt under it on each status update."""
+    because the rows are rebuilt under it on each status update. A running
+    count reads "Working for"; a settled one, "Worked for"."""
     body = _body()
-    assert "function formatWorkedFor" in body
-    assert "return 'Worked for ' + s + 's';" in body
-    assert "return 'Worked for ' + m + 'm ' + rs + 's';" in body
+    assert "function formatWorkedFor(seconds, working)" in body
+    assert "const lead = working ? 'Working for ' : 'Worked for ';" in body
+    assert "if (s < 60) return lead + s + 's';" in body
     assert "label.dataset.workedSince = String(since);" in body
+    assert "label.textContent = formatWorkedFor((Date.now() - since) / 1000, true);" in body
     assert "log.querySelectorAll('.reasoning-label[data-worked-since]')" in body
+    assert "(Date.now() - Number(line.dataset.workedSince)) / 1000, true);" in body
     assert "if (m.kind === 'progress') addWorkingToggle(msg, body, m);" in body
 
 
