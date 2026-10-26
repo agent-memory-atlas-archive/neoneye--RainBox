@@ -264,8 +264,19 @@ CHAT_TEMPLATE: str = """
      debug) keep their header and bubble. */
   .msg-clock{display:none;font-size:0.78rem;color:#9ca3af;margin-left:0.4em;cursor:help;font-variant-numeric:tabular-nums}
   .chat-log.one-to-one .msg:not(.msg-debug) > .msg-head{display:none}
-  .chat-log.one-to-one .msg:not(.msg-debug) .msg-clock{display:inline;visibility:hidden}
-  .chat-log.one-to-one .msg:not(.msg-debug):hover .msg-clock{visibility:visible}
+  .chat-log.one-to-one .msg:not(.msg-debug) .msg-clock{display:inline}
+  /* The action row (copy, edit, delete, menu, tok/s, clock) appears while the
+     pointer is over its message, or focus is inside it, and is otherwise
+     transparent — faded, not removed, so rows don't jump as the pointer
+     moves; and faded rather than visibility:hidden, which would make the
+     buttons unfocusable and so keep a keyboard from ever revealing them.
+     Only where a pointer can hover: a touch screen never would, and would
+     lose the buttons entirely. */
+  @media (hover: hover){
+    .chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions{opacity:0;transition:opacity 0.12s}
+    .chat-log.one-to-one .msg:not(.msg-debug):hover > .msg-actions,
+    .chat-log.one-to-one .msg:not(.msg-debug):focus-within > .msg-actions{opacity:1}
+  }
   .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug){align-self:flex-end;max-width:80%;
       display:flex;flex-direction:column;align-items:flex-end}
   .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text{background:#e7efff;color:#1a1a2e;

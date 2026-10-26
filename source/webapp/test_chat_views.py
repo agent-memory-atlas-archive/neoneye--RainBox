@@ -595,6 +595,10 @@ def test_one_to_one_rooms_render_as_text_messages():
             '{align-self:flex-end;max-width:80%;') in body
     assert "msg.dataset.senderType = m.sender_type || '';" in body
     assert "clock.className = 'msg-clock';" in body
+    # The action row shows on hover (or focus) only, where hovering exists.
+    assert ".chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions{opacity:0;" in body
+    assert ".chat-log.one-to-one .msg:not(.msg-debug):focus-within > .msg-actions{opacity:1}" in body
+    assert "@media (hover: hover){" in body
     assert ('.chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock'
             '{order:-1;') in body
     assert "msgEl.classList.add('msg-editing');" in body
