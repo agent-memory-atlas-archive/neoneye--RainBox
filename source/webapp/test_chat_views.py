@@ -327,7 +327,7 @@ def test_live_messages_do_not_move_a_reader_who_scrolled_back():
     who WAS at the bottom one screen short."""
     body = _body()
     assert "const follow = (opts && opts.force) || isNearBottom();" in body
-    assert "msgs.forEach(appendMessage);\n  if (follow) scrollLogToBottom();" in body
+    assert "appendMessages(msgs);\n  growNewestPage(msgs);\n  if (follow) scrollLogToBottom();" in body
     # The threshold is named, because it is the pivot for every live update.
     assert "const FOLLOW_THRESHOLD_PX = 80;" in body
     assert "log.scrollHeight - log.scrollTop - log.clientHeight < FOLLOW_THRESHOLD_PX" in body
@@ -600,6 +600,26 @@ def test_one_to_one_rooms_render_as_text_messages():
     assert "(row.meta || {}).turn_started_at || row.created_at" in body
 
 
+def test_rooms_open_on_their_newest_page_with_a_history_panel():
+    """A long room opens on its newest 50 rows, not all of them: rendering
+    thousands of rows of markdown is what made it slow. Pages are numbered
+    oldest first, cut back from the newest; only the newest page is live,
+    and a History panel moves between pages with Prev/Next and page numbers
+    whose hover shows the date range. Bulk loads pair reasoning rows once."""
+    body = _body()
+    assert '<option value="history">History</option>' in body
+    assert "else if (mode === 'history') renderHistory();" in body
+    assert "pages = await getJSON('/chat/api/rooms/' + uuid + '/pages');" in body
+    assert "currentPageNo = pageHolding(Number(scrollMsgId)) || pages.length;" in body
+    assert "(onNewestPage() ? '' : '&through=' + p.last_id)" in body
+    assert "if (!onNewestPage()) return;  // an older page is history" in body
+    assert "if (!existing && !onNewestPage()) return;" in body
+    assert "if (!onNewestPage()) await openPage(roomPages.length);" in body
+    assert "prev.textContent = '‹ Prev';" in body and "next.textContent = 'Next ›';" in body
+    assert "range.textContent = formatPageRange(p);" in body
+    assert "statRow('Messages', roomRowCount())" in body
+
+
 def test_direct_room_stop_button():
     """A Stop button beside Send, shown only while a direct room's turn is in
     flight — read off the log (a progress row or a streaming row), and
@@ -612,8 +632,8 @@ def test_direct_room_stop_button():
     assert "msg.dataset.kind = m.kind" in body
     assert "'/chat/api/rooms/' + room + '/stop'" in body
     assert "stopBtn.addEventListener('click', stopTurn)" in body
-    assert "  log.appendChild(node);\n  syncStopButton();" in body          # appendMessageNode
+    assert "  if (bulkAppending) return;  // appendMessages syncs once for the batch\n  syncStopButton();" in body  # appendMessageNode
     assert "  pruneDaySeparators();\n  syncStopButton();" in body           # removeDeletedMessages
     assert "existing.replaceWith(node);\n    syncStopButton();" in body    # upsertMessage
     assert "log.innerHTML = '';\n  syncStopButton();" in body              # selectRoom
-    assert "msgs.forEach(appendMessage);\n  syncStopButton();" in body
+    assert "finally { bulkAppending = false; }\n  syncStopButton();" in body  # a batch (a page, or new rows)

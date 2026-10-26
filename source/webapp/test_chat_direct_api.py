@@ -720,3 +720,19 @@ def test_stop_rejected_in_agents_room(client, agents_room):
     room_uuid, _human_uuid = agents_room
     assert test_client.post(f"/chat/api/rooms/{room_uuid}/stop").status_code == 403
     assert test_client.post(f"/chat/api/rooms/{uuid4()}/stop").status_code == 404
+
+
+def test_pages_endpoint_and_a_bounded_page_read(client, direct_room):
+    c, app = client
+    room_uuid, human_uuid = direct_room
+    with app.app_context():
+        ids = [db.post_chat_message(room_uuid, human_uuid, f"m{i}").id
+               for i in range(3)]
+    pages = c.get(f"/chat/api/rooms/{room_uuid}/pages").get_json()
+    assert len(pages) == 1 and pages[0]["count"] == 3
+    rows = c.get(
+        f"/chat/api/rooms/{room_uuid}/messages?after={ids[0] - 1}&through={ids[1]}"
+    ).get_json()
+    assert [r["text"] for r in rows] == ["m0", "m1"]
+    assert c.get(
+        f"/chat/api/rooms/{room_uuid}/messages?through=x").status_code == 400

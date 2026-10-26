@@ -160,6 +160,26 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .ds-trouble-row button:hover{background:#f1f5f9}
   .room-sidebar .ds-trouble-row button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
   .room-sidebar .ds-note{color:#888;font-size:0.85rem}
+  /* History panel: the open room's pages, oldest first (renderHistory). */
+  .room-sidebar .hist-nav{display:flex;align-items:center;justify-content:space-between;gap:0.5em;margin:0.4em 0 0.8em;
+                          font-size:0.85rem;color:#374151;font-variant-numeric:tabular-nums}
+  .room-sidebar .hist-nav button,.room-sidebar .hist-page{border:1px solid #cbd5e1;background:#fff;color:#374151;border-radius:6px;
+                          font:inherit;font-size:0.8rem;cursor:pointer;font-variant-numeric:tabular-nums}
+  .room-sidebar .hist-nav button{padding:0.3em 0.7em;white-space:nowrap}
+  /* The position reads first, on its own line, so Prev/Next fit a narrow panel. */
+  .room-sidebar .hist-nav{flex-wrap:wrap}
+  .room-sidebar .hist-nav span{order:-1;flex-basis:100%;white-space:nowrap}
+  .room-sidebar .hist-nav button:hover,.room-sidebar .hist-page:hover{background:#f1f5f9}
+  .room-sidebar .hist-nav button:disabled{background:#f8fafc;color:#9ca3af;cursor:default}
+  .room-sidebar .hist-pages{display:flex;flex-wrap:wrap;gap:0.3em}
+  .room-sidebar .hist-page{min-width:2.6em;padding:0.25em 0.4em}
+  .room-sidebar .hist-page.sel{background:#dbeafe;border-color:#93c5fd;font-weight:600}
+  /* Top of the log when the room has more than one page: where this page sits
+     and the way to the rest. Quiet, like the day dividers. */
+  .page-banner{align-self:center;display:flex;gap:0.6em;align-items:center;font-size:0.8rem;color:#8b8b95;
+               font-variant-numeric:tabular-nums}
+  .page-banner button{border:none;background:none;padding:0;font:inherit;color:#2563eb;cursor:pointer}
+  .page-banner button:hover{text-decoration:underline}
 
   /* In-place message editing (direct rooms only). */
   .msg-edit-area{width:100%;box-sizing:border-box;font:inherit;font-size:0.95rem;line-height:1.4;padding:0.4em;border:1px solid #2563eb;border-radius:6px;resize:vertical;min-height:6em}
@@ -394,6 +414,7 @@ CHAT_TEMPLATE: str = """
         <option value="stats">Stats</option>
         <option value="settings">Settings</option>
         <option value="bridge">Bridge</option>
+        <option value="history">History</option>
         <option value="export">Export</option>
       </select>
     </div>
@@ -580,6 +601,15 @@ let roomDetailsMap = new Map(); // room uuid -> {agents, message_count, last_mes
 let lastId = 0;                 // highest message id rendered in currentRoom
 let renderedIds = new Set();    // message ids already in the log (dedup)
 let streamingBase = {};         // message id -> last full row dict (for live in-place updates)
+// The open room's history pages (/pages, db.room_message_pages): oldest first,
+// cut back from the newest row so the newest page is always full. The log
+// shows one page; currentPageNo is which. Only the newest page is live — an
+// older page is history, and rows arriving meanwhile wait on the newest.
+let roomPages = [];
+let currentPageNo = 0;
+// Set while a batch of rows is being appended, so the per-row bookkeeping
+// that scans the whole log runs once per batch instead of once per row.
+let bulkAppending = false;
 let expandedSections = new Set(); // collapsible-row ids (thinking/debug) the user expanded
 let collapsedSections = new Set(); // working-bubble ids the user closed (they start open)
 const unread = {};              // room uuid -> unread count (rooms not open)
@@ -591,12 +621,12 @@ let agentsLoaded = false;
 // panel doesn't apply — never loses the panel choice.
 const SIDEBAR_MODE_KEY = 'chat.sidebarMode';
 const SIDEBAR_VISIBLE_KEY = 'chat.sidebarVisible';
-let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'export'
+let sidebarMode = 'members';    // 'members' | 'stats' | 'settings' | 'bridge' | 'history' | 'export'
 let sidebarVisible = false;
 try {
   const saved = localStorage.getItem(SIDEBAR_MODE_KEY);
   if (saved === 'members' || saved === 'stats' || saved === 'settings'
-      || saved === 'bridge' || saved === 'export'){
+      || saved === 'bridge' || saved === 'history' || saved === 'export'){
     sidebarMode = saved;
     sidebarVisible = true;  // single-key era stored 'hidden' for off; a panel meant shown
   }
@@ -686,6 +716,7 @@ function appendMessageNode(node, m){
     log.appendChild(makeDaySeparator(day, d ? formatDayLabel(d) : day));
   }
   log.appendChild(node);
+  if (bulkAppending) return;  // appendMessages syncs once for the batch
   syncStopButton();
   syncReasoningRows();
 }
@@ -715,6 +746,17 @@ function appendMessage(m){
   renderedIds.add(m.id);
   appendMessageNode(makeMessage(m), m);
   lastId = Math.max(lastId, m.id);
+}
+
+// Append a batch of rows (a page, or what arrived since the cursor). The
+// pairing of reasoning rows with replies scans the whole log, so it runs once
+// here rather than after each row — per row it made a long room quadratic.
+function appendMessages(msgs){
+  bulkAppending = true;
+  try { msgs.forEach(appendMessage); }
+  finally { bulkAppending = false; }
+  syncStopButton();
+  syncReasoningRows();
 }
 
 function removeDeletedMessages(ids){
@@ -762,6 +804,7 @@ function scrollLogToBottom(){
 // is what discards the edit textarea startEditMessage leaves in the node.
 function upsertMessage(m){
   const existing = log.querySelector('[data-message-id="' + m.id + '"]');
+  if (!existing && !onNewestPage()) return;  // a new row belongs to the newest page
   const pinned = isNearBottom();
   if (existing && m.streaming && existing.dataset.renderKey === messageRenderKey(m)){
     existing._row = m;  // what the copy button reads, so it copies live text
@@ -1947,6 +1990,12 @@ async function retryFromMessage(m){
   try {
     const d = await postJSON('/chat/api/rooms/' + room + '/messages/' + m.id + '/retry', {});
     if (room === currentRoom && d.deleted_ids) removeDeletedMessages(d.deleted_ids);
+    // Retried from an older page: the rewind cut the pages after it, and the
+    // new reply arrives on the newest — re-read the pages and go there.
+    if (room === currentRoom && !onNewestPage()){
+      try { roomPages = await getJSON('/chat/api/rooms/' + room + '/pages'); } catch (_) {}
+      if (room === currentRoom) await openPage(roomPages.length);
+    }
     chatToast('Retrying — asking the model again…');
   } catch (e) {
     alert('Retry failed: ' + e.message);
@@ -2710,6 +2759,8 @@ async function selectRoom(uuid, scrollMsgId){
   streamingBase = {};
   expandedSections = new Set();
   collapsedSections = new Set();
+  roomPages = [];
+  currentPageNo = 0;
   chatSyncUrl();          // mirror the open room into ?id= so a reload reopens it
   renderRooms();
   const room = rooms.find(r => r.uuid === uuid);
@@ -2727,10 +2778,16 @@ async function selectRoom(uuid, scrollMsgId){
   syncStopButton();  // the previous room's button must not survive the switch
   syncRoomLayout();
   input.focus();
-  const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=0');
+  // Open on the newest page — or, for a deep link, the page holding it.
+  let pages = [];
+  try { pages = await getJSON('/chat/api/rooms/' + uuid + '/pages'); } catch (_) {}
   if (uuid !== currentRoom) return;  // room switched while loading
-  msgs.forEach(appendMessage);
-  syncStopButton();  // an empty room appends nothing
+  roomPages = pages;
+  currentPageNo = pageHolding(Number(scrollMsgId)) || pages.length;
+  const msgs = await getJSON(pageRowsUrl(uuid));
+  if (uuid !== currentRoom) return;  // room switched while loading
+  appendMessages(msgs);
+  syncPageBanner();
   renderSidebar();  // members/stats reflect the now-open room — resizes the log,
                     // so toggle it BEFORE scrolling or we land a line short.
   scrollLogToBottom();
@@ -2762,13 +2819,15 @@ function scrollToMessage(msgId){
 // message, so take them to it wherever they were.
 async function fetchNew(uuid, opts){
   if (uuid !== currentRoom) return;
+  if (!onNewestPage()) return;  // an older page is history; new rows wait on the newest
   const msgs = await getJSON('/chat/api/rooms/' + uuid + '/messages?after=' + lastId);
-  if (uuid !== currentRoom || !msgs.length) return;  // re-check after await
+  if (uuid !== currentRoom || !msgs.length || !onNewestPage()) return;  // re-check after await
   // Measured BEFORE the append and after the await: appending grows
   // scrollHeight, so the same reading taken afterwards would call someone who
   // was at the bottom "scrolled up" and strand them one screen short.
   const follow = (opts && opts.force) || isNearBottom();
-  msgs.forEach(appendMessage);
+  appendMessages(msgs);
+  growNewestPage(msgs);
   if (follow) scrollLogToBottom();
   if (activeSidebarMode() === 'stats') renderStats();  // keep the live message count fresh
 }
@@ -2820,7 +2879,9 @@ async function send(){
   }
   // don't wait for the SSE round-trip; force the scroll because this row is
   // the operator's own — they are following the conversation, not reading back.
-  await fetchNew(currentRoom, {force: true});
+  // Sent from an older page, the conversation continues on the newest: go there.
+  if (!onNewestPage()) await openPage(roomPages.length);
+  else await fetchNew(currentRoom, {force: true});
   input.focus();
 }
 
@@ -2916,7 +2977,7 @@ function syncSidebarModeOptions(){
   sidebarModeSel.value = activeSidebarMode();
 }
 
-// Right sidebar: hidden / members / stats / settings / bridge / export.
+// Right sidebar: hidden / members / stats / settings / bridge / history / export.
 async function renderSidebar(){
   const mode = activeSidebarMode();
   if (mode === 'hidden'){
@@ -2929,6 +2990,7 @@ async function renderSidebar(){
   else if (mode === 'stats') renderStats();
   else if (mode === 'settings') await renderSettingsPanel();
   else if (mode === 'bridge') renderBridgePanel();
+  else if (mode === 'history') renderHistory();
   else if (mode === 'export') renderExport();
 }
 
@@ -3398,6 +3460,190 @@ function statRow(label, value){
   return d;
 }
 
+// ---- history pages ----
+function onNewestPage(){
+  return !roomPages.length || currentPageNo >= roomPages.length;
+}
+function roomRowCount(){
+  return roomPages.reduce((n, p) => n + p.count, 0);
+}
+// The page number holding message `id`, or 0 when no page does.
+function pageHolding(id){
+  if (!id) return 0;
+  const p = roomPages.find(p => p.first_id <= id && id <= p.last_id);
+  return p ? p.page : 0;
+}
+// The read for the current page. The newest page is open-ended, so a row
+// posted after the page list was fetched still lands on it.
+function pageRowsUrl(room){
+  const base = '/chat/api/rooms/' + room + '/messages?after=';
+  const p = roomPages[currentPageNo - 1];
+  if (!p) return base + '0';
+  return base + (p.first_id - 1) + (onNewestPage() ? '' : '&through=' + p.last_id);
+}
+// Rows that arrived on the newest page extend it in place (pages are cut
+// again on the next room open), so counts and its date range stay true.
+function growNewestPage(msgs){
+  if (!msgs.length) return;
+  const last = msgs[msgs.length - 1];
+  const p = roomPages[roomPages.length - 1];
+  if (!p){
+    roomPages = [{page: 1, first_id: msgs[0].id, last_id: last.id,
+                  first_at: msgs[0].created_at, last_at: last.created_at, count: msgs.length}];
+    currentPageNo = 1;
+  } else {
+    p.last_id = Math.max(p.last_id, last.id);
+    p.last_at = last.created_at;
+    p.count += msgs.length;
+  }
+  if (activeSidebarMode() === 'history') renderHistory();
+}
+// Show page `n` of the open room in place of the current one.
+async function openPage(n){
+  const room = currentRoom;
+  if (!room || n < 1 || n > roomPages.length) return;
+  currentPageNo = n;
+  lastId = 0;
+  renderedIds = new Set();
+  streamingBase = {};
+  log.innerHTML = '';
+  const msgs = await getJSON(pageRowsUrl(room));
+  if (room !== currentRoom || currentPageNo !== n) return;  // moved on meanwhile
+  appendMessages(msgs);
+  syncPageBanner();
+  scrollLogToBottom();
+  if (activeSidebarMode() === 'history') renderHistory();
+}
+// The quiet line at the top of a paged room's log: on the newest page, that
+// older history exists and where; on an older page, which one this is and the
+// way back to the live conversation.
+function syncPageBanner(){
+  const old = log.querySelector('.page-banner');
+  if (old) old.remove();
+  if (roomPages.length < 2) return;
+  const banner = document.createElement('div');
+  banner.className = 'page-banner';
+  const text = document.createElement('span');
+  const go = document.createElement('button');
+  go.type = 'button';
+  if (onNewestPage()){
+    const older = roomRowCount() - roomPages[roomPages.length - 1].count;
+    text.textContent = older.toLocaleString() + ' older messages';
+    go.textContent = 'History';
+    go.addEventListener('click', () => {
+      sidebarVisible = true;
+      sidebarMode = 'history';
+      persistSidebarPrefs();
+      syncSidebarModeOptions();
+      renderSidebar();
+    });
+  } else {
+    text.textContent = 'Page ' + currentPageNo + ' of ' + roomPages.length;
+    go.textContent = 'Newest ›';
+    go.addEventListener('click', () => openPage(roomPages.length));
+  }
+  banner.appendChild(text);
+  banner.appendChild(go);
+  log.insertBefore(banner, log.firstChild);
+}
+// "2026-10-26 00:41" in local time.
+function formatStamp(iso){
+  const d = new Date(iso || '');
+  if (isNaN(d)) return '';
+  return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+    + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+}
+// A page's span for its hover: both ends with dates, or the second as a
+// clock alone when the page sits within one day.
+function formatPageRange(p){
+  const a = formatStamp(p.first_at), b = formatStamp(p.last_at);
+  const end = a.slice(0, 10) === b.slice(0, 10) ? b.slice(11) : b;
+  return a + ' – ' + end;
+}
+
+// History panel: Prev (older) / Next (newer) and every page by number, oldest
+// first, the shown one marked. Hovering a number shows the page's date range
+// and size in the same light popover as the tok/s stats.
+function renderHistory(){
+  sidebarEl.innerHTML = '';
+  const h = document.createElement('h3');
+  h.className = 'sidebar-title';
+  h.textContent = 'History';
+  sidebarEl.appendChild(h);
+  if (!roomPages.length){
+    const note = document.createElement('p');
+    note.className = 'ds-note';
+    note.textContent = 'No messages yet.';
+    sidebarEl.appendChild(note);
+    return;
+  }
+  const nav = document.createElement('div');
+  nav.className = 'hist-nav';
+  const prev = document.createElement('button');
+  prev.type = 'button';
+  prev.className = 'hist-prev';
+  prev.textContent = '‹ Prev';
+  prev.title = 'Older messages';
+  prev.disabled = currentPageNo <= 1;
+  prev.addEventListener('click', () => openPage(currentPageNo - 1));
+  const where = document.createElement('span');
+  where.textContent = 'Page ' + currentPageNo + ' of ' + roomPages.length;
+  const next = document.createElement('button');
+  next.type = 'button';
+  next.className = 'hist-next';
+  next.textContent = 'Next ›';
+  next.title = 'Newer messages';
+  next.disabled = onNewestPage();
+  next.addEventListener('click', () => openPage(currentPageNo + 1));
+  nav.appendChild(prev);
+  nav.appendChild(where);
+  nav.appendChild(next);
+  sidebarEl.appendChild(nav);
+  const grid = document.createElement('div');
+  grid.className = 'hist-pages';
+  const pop = document.createElement('div');
+  pop.className = 'gen-pop';
+  pop.setAttribute('role', 'tooltip');
+  pop.hidden = true;
+  roomPages.forEach((p) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'hist-page' + (p.page === currentPageNo ? ' sel' : '');
+    b.textContent = String(p.page);
+    b.setAttribute('aria-label', 'Page ' + p.page + ', ' + formatPageRange(p));
+    b.addEventListener('click', () => openPage(p.page));
+    const show = () => {
+      pop.textContent = '';
+      const range = document.createElement('div');
+      range.className = 'value';
+      range.textContent = formatPageRange(p);
+      const size = document.createElement('div');
+      size.className = 'label';
+      size.textContent = 'Page ' + p.page + ' · ' + p.count + ' messages'
+        + (p.page === roomPages.length ? ' · newest' : '');
+      pop.appendChild(range);
+      pop.appendChild(size);
+      pop.hidden = false;
+      const r = b.getBoundingClientRect();
+      const margin = 6;
+      let left = r.left + r.width / 2 - pop.offsetWidth / 2;
+      left = Math.max(margin, Math.min(left, window.innerWidth - pop.offsetWidth - margin));
+      let top = r.top - pop.offsetHeight - 6;
+      if (top < margin) top = r.bottom + 6;
+      pop.style.left = left + 'px';
+      pop.style.top = top + 'px';
+    };
+    const hide = () => { pop.hidden = true; };
+    b.addEventListener('mouseenter', show);
+    b.addEventListener('mouseleave', hide);
+    b.addEventListener('focus', show);
+    b.addEventListener('blur', hide);
+    grid.appendChild(b);
+  });
+  sidebarEl.appendChild(grid);
+  sidebarEl.appendChild(pop);
+}
+
 function renderStats(){
   const room = rooms.find(r => r.uuid === currentRoom);
   sidebarEl.innerHTML = '';
@@ -3405,9 +3651,9 @@ function renderStats(){
   h.className = 'sidebar-title';
   h.textContent = 'Stats';
   sidebarEl.appendChild(h);
-  // renderedIds holds every message loaded for the open room, so its size is a
-  // live count that grows as new messages arrive.
-  sidebarEl.appendChild(statRow('Messages', renderedIds.size));
+  // The room's whole history, not the one page in the log; the newest page
+  // grows as rows arrive (growNewestPage), so the count stays live.
+  sidebarEl.appendChild(statRow('Messages', roomRowCount()));
   sidebarEl.appendChild(statRow('Members', room ? room.member_count : 0));
 }
 

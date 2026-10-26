@@ -808,16 +808,18 @@ def list_chatroom_details() -> list[dict[str, Any]]:
     ]
 
 
-def list_room_messages(room_uuid: UUID, after_id: int = 0) -> list[dict[str, Any]]:
-    """Messages in a room with id > after_id, oldest first, sender resolved.
+def list_room_messages(
+    room_uuid: UUID, after_id: int = 0, through_id: int | None = None,
+) -> list[dict[str, Any]]:
+    """Messages in a room with id > after_id (and id <= through_id, when
+    given — one page of room_message_pages), oldest first, sender resolved.
     Each row also carries the latest user feedback rating ("upvote" /
     "downvote" / None) so a reload restores the button state in the UI."""
-    rows = (
-        db.session.query(ChatMessage)
-        .filter(ChatMessage.room_uuid == room_uuid, ChatMessage.id > after_id)
-        .order_by(ChatMessage.id.asc())
-        .all()
-    )
+    query = db.session.query(ChatMessage).filter(
+        ChatMessage.room_uuid == room_uuid, ChatMessage.id > after_id)
+    if through_id is not None:
+        query = query.filter(ChatMessage.id <= through_id)
+    rows = query.order_by(ChatMessage.id.asc()).all()
     sender_uuids = {r.sender_uuid for r in rows}
     users: dict[UUID, ChatUser] = {}
     if sender_uuids:
@@ -1131,6 +1133,49 @@ def settle_streaming_rows(room_uuid: UUID, sender_uuid: UUID) -> list[int]:
         ids.append(msg.id)
     db.session.commit()
     return ids
+
+
+#: Rows per page of a room's history. The chat opens a room on its newest page
+#: alone: rendering a long room whole (thousands of rows of markdown) is what
+#: made opening it slow, not fetching it.
+CHAT_PAGE_SIZE: int = 50
+
+
+def room_message_pages(
+    room_uuid: UUID, page_size: int = CHAT_PAGE_SIZE,
+) -> list[dict[str, Any]]:
+    """A room's rows split into pages, oldest page first, numbered from 1.
+
+    Pages are cut back from the newest row, so the newest page is always full
+    and the oldest holds the remainder — a room opens on a full page of recent
+    conversation, never on a stub of three rows. Each page is {page,
+    first_id, last_id, first_at, last_at, count}; a page's rows are
+    list_room_messages(after_id=first_id - 1, through_id=last_id). Every kind
+    counts (the log renders every kind). Reads ids and times only, never
+    text."""
+    rows = (
+        db.session.query(ChatMessage.id, ChatMessage.created_at)
+        .filter(ChatMessage.room_uuid == room_uuid)
+        .order_by(ChatMessage.id.asc())
+        .all()
+    )
+    pages: list[dict[str, Any]] = []
+    end = len(rows)
+    while end > 0:
+        start = max(0, end - page_size)
+        chunk = rows[start:end]
+        pages.append({
+            "first_id": chunk[0][0],
+            "last_id": chunk[-1][0],
+            "first_at": chunk[0][1].isoformat(),
+            "last_at": chunk[-1][1].isoformat(),
+            "count": len(chunk),
+        })
+        end = start
+    pages.reverse()
+    for number, page in enumerate(pages, start=1):
+        page["page"] = number
+    return pages
 
 
 def get_room_message(room_uuid: UUID, message_id: int) -> dict[str, Any] | None:

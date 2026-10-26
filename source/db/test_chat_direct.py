@@ -296,3 +296,24 @@ def test_settle_streaming_rows_flips_only_that_senders_rows(direct_room):
     assert by_id[done.id]["streaming"] is False
     assert by_id[other.id]["streaming"] is True     # another sender's row is not ours
     assert db.settle_streaming_rows(room_uuid, responder) == []
+
+
+def test_room_pages_are_cut_back_from_the_newest_row(direct_room):
+    """The newest page is always full; the oldest holds the remainder. Pages
+    are numbered oldest first and their id ranges tile the room."""
+    room_uuid, human_uuid = direct_room
+    ids = [db.post_chat_message(room_uuid, human_uuid, f"m{i}").id for i in range(7)]
+    pages = db.room_message_pages(room_uuid, page_size=3)
+    assert [p["page"] for p in pages] == [1, 2, 3]
+    assert [p["count"] for p in pages] == [1, 3, 3]
+    assert [(p["first_id"], p["last_id"]) for p in pages] == [
+        (ids[0], ids[0]), (ids[1], ids[3]), (ids[4], ids[6])]
+    middle = pages[1]
+    rows = db.list_room_messages(
+        room_uuid, after_id=middle["first_id"] - 1, through_id=middle["last_id"])
+    assert [r["text"] for r in rows] == ["m1", "m2", "m3"]
+
+
+def test_room_pages_of_an_empty_room(direct_room):
+    room_uuid, _human = direct_room
+    assert db.room_message_pages(room_uuid) == []

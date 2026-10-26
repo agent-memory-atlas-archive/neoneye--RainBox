@@ -384,7 +384,23 @@ def chat_room_messages(room_uuid: str) -> Response | tuple[Response, int]:
         after_id = int(request.args.get("after", "0"))
     except ValueError:
         after_id = 0
-    return jsonify(db.list_room_messages(ruuid, after_id))
+    # `through` bounds the read to one history page (room_message_pages).
+    through_raw = request.args.get("through")
+    try:
+        through_id = int(through_raw) if through_raw else None
+    except ValueError:
+        abort(400, "through must be a message id")
+    return jsonify(db.list_room_messages(ruuid, after_id, through_id))
+
+
+@app.route("/chat/api/rooms/<room_uuid>/pages")
+def chat_room_pages(room_uuid: str) -> Response:
+    """The room's history pages (db.room_message_pages): what the chat's
+    History sidebar lists, and how it finds the newest page to open on."""
+    ruuid = _parse_uuid(room_uuid)
+    if db.get_chatroom(ruuid) is None:
+        abort(404, "room not found")
+    return jsonify(db.room_message_pages(ruuid))
 
 
 @app.route("/chat/api/rooms/<room_uuid>/messages/<int:message_id>")
