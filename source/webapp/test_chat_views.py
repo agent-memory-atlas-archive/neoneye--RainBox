@@ -293,6 +293,11 @@ def test_working_bubble_opens_its_run():
     assert "const href = '/assistant?id=' + encodeURIComponent(progressRunUuid);" in body
     assert "if (e.target.closest('a, button, input, textarea')) return;" in body
     assert "if (String(window.getSelection() || '')) return;" in body
+    # The turn is still running in this tab: the trace, from the bubble or its
+    # inspect link, opens in a new one.
+    assert "window.open(href, '_blank', 'noopener');" in body
+    assert "window.location.href = href;" not in body
+    assert "body.querySelectorAll('a[href]').forEach((a) => {" in body
 
 
 def test_streaming_rows_are_patched_not_rebuilt():

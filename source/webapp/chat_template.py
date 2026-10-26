@@ -1770,19 +1770,27 @@ function makeMessage(m){
   // run's trace: the operator watching the seconds tick is exactly the one who
   // wants to see what they are paying for, and asking them to hit the inline
   // link inside a two-line bubble is a smaller target than the bubble itself.
-  // The row's own controls keep their clicks, a modified click opens a tab as
-  // any link would, and a click that ends a text selection isn't a click.
+  // The trace opens in a new tab — the turn is still running here, and the
+  // reader must not be taken out of the conversation to watch it — and so do
+  // the links in the bubble's status text (its "inspect ↗"). The row's own
+  // controls keep their clicks, and a click that ends a text selection isn't
+  // a click.
   const progressRunUuid = m.kind === 'progress'
     ? (m.meta || {}).assistant_run_uuid : null;
+  if (m.kind === 'progress'){
+    body.querySelectorAll('a[href]').forEach((a) => {
+      a.target = '_blank';
+      a.rel = 'noopener';
+    });
+  }
   if (progressRunUuid){
     const href = '/assistant?id=' + encodeURIComponent(progressRunUuid);
     msg.classList.add('msg-progress-linked');
-    msg.title = 'Open the assistant run behind this';
+    msg.title = 'Open the assistant run behind this in a new tab';
     msg.addEventListener('click', (e) => {
       if (e.target.closest('a, button, input, textarea')) return;
       if (String(window.getSelection() || '')) return;
-      if (e.metaKey || e.ctrlKey || e.shiftKey){ window.open(href, '_blank'); return; }
-      window.location.href = href;
+      window.open(href, '_blank', 'noopener');
     });
   }
   if (toggleTop){

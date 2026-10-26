@@ -7308,7 +7308,7 @@ class AssistantAgent(ModelGroupAgent):
         if stats["tps"]:
             cost.append(f"{stats['tps']} tok/s")
         run_link = f"[inspect ↗](/assistant?id={self._run.uuid})"
-        return (f"💭 **Step {step_count}** — {self._activity}\n"
+        return (f"**Step {step_count}** — {self._activity}\n"
                 f"{' · '.join(cost)} · {run_link}")
 
     def _apply_pending_controls(
