@@ -4250,7 +4250,11 @@ class AssistantAgent(ModelGroupAgent):
                               "`reply`. If a fact was shortened or omitted, call "
                               "`memory_query` with that specific fact's uuid instead "
                               "of repeating the same query."),
-                        data=prior.data,
+                        # The findings, not the first read's `timing`: that
+                        # records the calls it made, and the trace reads each
+                        # step's calls from it — a repeat that made none must
+                        # not show (or count) them again.
+                        data={k: v for k, v in prior.data.items() if k != "timing"},
                     )
                 elif action_sig in failed_actions:
                     observation = AssistantObservation(

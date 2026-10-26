@@ -1410,6 +1410,40 @@ def test_loop_does_not_dispatch_identical_successful_read_twice(room):
     assert "already completed this exact read" in (second.observation_preview or "")
 
 
+def test_repeated_read_does_not_carry_the_first_reads_timing(room):
+    """The repeat passes on the first read's findings but not its `timing`:
+    that payload is the calls the first read made — its embeds, its recall
+    filter — and the trace reads each step's calls from it, so a copy drew the
+    first read's embed and recall filter again under every repeat and counted
+    their seconds once per repeat in the run's totals."""
+    room_uuid, message_uuid = room
+    agent = _agent()
+    timing = {"embeddings": {"calls": [{"model": "embedder", "ms": 1100, "texts": 1,
+                                        "requested_at": "1999-12-30T23:00:00+00:00",
+                                        "preview": ["physical location"]}]},
+              "phases": [{"name": "recall filter", "ms": 5000}]}
+
+    def fake_dispatch(ctx, decision):
+        return AssistantObservation(ok=True, text="no facts recalled",
+                                    data={"recalled": [], "timing": timing})
+
+    agent._dispatch_action = fake_dispatch
+    agent._decide_next_step = scripted_decisions(
+        _decision(AssistantActionName.MEMORY_QUERY, query="physical location"),
+        _decision(AssistantActionName.MEMORY_QUERY, query="physical location"),
+        _decision(AssistantActionName.REPLY, message="Nothing recalled."),
+    )
+
+    result = agent.handle(uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
+
+    assert result["status"] == "finished"
+    first, second = _decide_steps(_steps_for(result["assistant_run_uuid"]))[:2]
+    assert (first.observation or {}).get("data", {}).get("timing") == timing
+    repeat = (second.observation or {}).get("data") or {}
+    assert "timing" not in repeat
+    assert repeat.get("recalled") == []
+
+
 def test_loop_does_not_dispatch_identical_failed_action_twice(room):
     """A failed action with unchanged args cannot produce new evidence, so the
     host should reject its replay before dispatch and steer the next decision."""
