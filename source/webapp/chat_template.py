@@ -174,6 +174,9 @@ CHAT_TEMPLATE: str = """
   .room-sidebar .hist-pages{display:flex;flex-wrap:wrap;gap:0.3em}
   .room-sidebar .hist-page{min-width:2.6em;padding:0.25em 0.4em}
   .room-sidebar .hist-page.sel{background:#dbeafe;border-color:#93c5fd;font-weight:600}
+  /* A page's hover: start over end, the characters they share dimmed so the
+     part that differs is what stands out. */
+  .gen-pop .stamp-same{color:#b6bac3}
   /* Top of the log when the room has more than one page: where this page sits
      and the way to the rest. Quiet, like the day dividers. */
   .page-banner{align-self:center;display:flex;gap:0.6em;align-items:center;font-size:0.8rem;color:#8b8b95;
@@ -3561,6 +3564,19 @@ function formatPageRange(p){
   return a + ' – ' + end;
 }
 
+// One stamp of a page's range for its hover, its first `shared` characters
+// (the prefix it has in common with the other end) dimmed.
+function stampLine(text, shared){
+  const line = document.createElement('div');
+  line.className = 'value';
+  const same = document.createElement('span');
+  same.className = 'stamp-same';
+  same.textContent = text.slice(0, shared);
+  line.appendChild(same);
+  line.appendChild(document.createTextNode(text.slice(shared)));
+  return line;
+}
+
 // History panel: Prev (older) / Next (newer) and every page by number, oldest
 // first, the shown one marked. Hovering a number shows the page's date range
 // and size in the same light popover as the tok/s stats.
@@ -3614,14 +3630,15 @@ function renderHistory(){
     b.addEventListener('click', () => openPage(p.page));
     const show = () => {
       pop.textContent = '';
-      const range = document.createElement('div');
-      range.className = 'value';
-      range.textContent = formatPageRange(p);
+      const a = formatStamp(p.first_at), z = formatStamp(p.last_at);
+      let shared = 0;
+      while (shared < a.length && a[shared] === z[shared]) shared++;
+      pop.appendChild(stampLine(a, shared));
+      pop.appendChild(stampLine(z, shared));
       const size = document.createElement('div');
       size.className = 'label';
       size.textContent = 'Page ' + p.page + ' · ' + p.count + ' messages'
         + (p.page === roomPages.length ? ' · newest' : '');
-      pop.appendChild(range);
       pop.appendChild(size);
       pop.hidden = false;
       const r = b.getBoundingClientRect();

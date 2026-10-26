@@ -616,7 +616,9 @@ def test_rooms_open_on_their_newest_page_with_a_history_panel():
     assert "if (!existing && !onNewestPage()) return;" in body
     assert "if (!onNewestPage()) await openPage(roomPages.length);" in body
     assert "prev.textContent = '‹ Prev';" in body and "next.textContent = 'Next ›';" in body
-    assert "range.textContent = formatPageRange(p);" in body
+    # The hover's range: start over end, their shared prefix dimmed.
+    assert "while (shared < a.length && a[shared] === z[shared]) shared++;" in body
+    assert "pop.appendChild(stampLine(a, shared));\n      pop.appendChild(stampLine(z, shared));" in body
     assert "statRow('Messages', roomRowCount())" in body
 
 
