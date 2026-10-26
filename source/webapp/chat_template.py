@@ -263,6 +263,15 @@ CHAT_TEMPLATE: str = """
      action row and shows on hover. Diagnostic rows (notices, working bubbles,
      debug) keep their header and bubble. */
   .msg-clock{display:none;font-size:0.78rem;color:#9ca3af;margin-left:0.4em;cursor:help;font-variant-numeric:tabular-nums}
+  /* A reading column: a one-to-one room's conversation is at most 48rem wide
+     and centered, so replies wrap at a readable length and the person's
+     bubble sits near the answer instead of across a wide screen. Done as
+     padding on the log, so the scrollbar stays at the window's edge and a
+     scroll anywhere over the log still scrolls it; the composer below takes
+     the same padding, so its input lines up with the column. On a narrow
+     window the padding falls back to the usual 1em. */
+  .chat-log.one-to-one,.compose.one-to-one{padding-left:max(1em, calc((100% - 48rem) / 2));
+      padding-right:max(1em, calc((100% - 48rem) / 2))}
   .chat-log.one-to-one .msg:not(.msg-debug) > .msg-head{display:none}
   .chat-log.one-to-one .msg:not(.msg-debug) .msg-clock{display:inline}
   /* The action row (copy, edit, delete, menu, tok/s, clock) appears while the
@@ -947,7 +956,9 @@ function isOneToOneRoom(){
   return !!r && (r.room_type === 'direct' || r.member_count === 2);
 }
 function syncRoomLayout(){
-  log.classList.toggle('one-to-one', isOneToOneRoom());
+  const oneToOne = isOneToOneRoom();
+  log.classList.toggle('one-to-one', oneToOne);
+  form.classList.toggle('one-to-one', oneToOne);  // the composer joins the reading column
 }
 
 // Send an up/down rating on a single agent message. The button row's data

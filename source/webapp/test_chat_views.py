@@ -588,7 +588,10 @@ def test_one_to_one_rooms_render_as_text_messages():
     Group rooms keep the transcript layout; diagnostic rows keep theirs."""
     body = _body()
     assert "return !!r && (r.room_type === 'direct' || r.member_count === 2);" in body
-    assert "log.classList.toggle('one-to-one', isOneToOneRoom());" in body
+    assert "log.classList.toggle('one-to-one', oneToOne);" in body
+    assert "form.classList.toggle('one-to-one', oneToOne);" in body
+    # A centered reading column, the composer aligned with it.
+    assert ".chat-log.one-to-one,.compose.one-to-one{padding-left:max(1em, calc((100% - 48rem) / 2));" in body
     assert body.count("syncRoomLayout();") >= 2
     assert ".chat-log.one-to-one .msg:not(.msg-debug) > .msg-head{display:none}" in body
     # The row is full width (hover anywhere beside the bubble); the bubble is 80%.
