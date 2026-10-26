@@ -266,16 +266,19 @@ CHAT_TEMPLATE: str = """
   .chat-log.one-to-one .msg:not(.msg-debug) > .msg-head{display:none}
   .chat-log.one-to-one .msg:not(.msg-debug) .msg-clock{display:inline}
   /* The action row (copy, edit, delete, menu, tok/s, clock) appears while the
-     pointer is over its message, or focus is inside it, and is otherwise
-     transparent — faded, not removed, so rows don't jump as the pointer
-     moves; and faded rather than visibility:hidden, which would make the
-     buttons unfocusable and so keep a keyboard from ever revealing them.
+     pointer is over its message, or keyboard focus is inside it, and is
+     otherwise transparent — faded, not removed, so rows don't jump as the
+     pointer moves; and faded rather than visibility:hidden, which would make
+     the buttons unfocusable and so keep a keyboard from ever revealing them.
+     Keyboard focus only (:focus-visible): a click leaves focus on what was
+     clicked — the "Worked for" toggle, a copy button — and :focus-within
+     would then pin the row visible after the pointer had gone.
      Only where a pointer can hover: a touch screen never would, and would
      lose the buttons entirely. */
   @media (hover: hover){
     .chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions{opacity:0;transition:opacity 0.12s}
     .chat-log.one-to-one .msg:not(.msg-debug):hover > .msg-actions,
-    .chat-log.one-to-one .msg:not(.msg-debug):focus-within > .msg-actions{opacity:1}
+    .chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions{opacity:1}
   }
   .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug){align-self:flex-end;max-width:80%;
       display:flex;flex-direction:column;align-items:flex-end}

@@ -597,7 +597,9 @@ def test_one_to_one_rooms_render_as_text_messages():
     assert "clock.className = 'msg-clock';" in body
     # The action row shows on hover (or focus) only, where hovering exists.
     assert ".chat-log.one-to-one .msg:not(.msg-debug) > .msg-actions{opacity:0;" in body
-    assert ".chat-log.one-to-one .msg:not(.msg-debug):focus-within > .msg-actions{opacity:1}" in body
+    # Keyboard focus reveals it; a click's lingering focus must not pin it.
+    assert ".chat-log.one-to-one .msg:not(.msg-debug):has(:focus-visible) > .msg-actions{opacity:1}" in body
+    assert ":focus-within > .msg-actions" not in body
     assert "@media (hover: hover){" in body
     assert ('.chat-log.one-to-one .msg[data-sender-type="human"] .msg-clock'
             '{order:-1;') in body
