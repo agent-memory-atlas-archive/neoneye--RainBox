@@ -605,6 +605,11 @@ def test_one_to_one_rooms_render_as_text_messages():
     assert ('.chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-actions'
             '{position:absolute;top:100%;right:0;') in body
     assert "padding-top:2px;background:#fff;border-radius:6px;pointer-events:none}" in body
+    # the band beside the answer's "Worked for" line: its right half hovers the
+    # person's message, and only above an answer that opens with that line
+    assert ":has(+ .msg .reasoning-toggle)," in body
+    assert ":has(+ .msg.msg-superseded + .msg .reasoning-toggle))::after{content:'';" in body
+    assert "position:absolute;top:100%;right:0;width:50%;height:2.4rem}" in body
     assert "msg.dataset.senderType = m.sender_type || '';" in body
     assert "clock.className = 'msg-clock';" in body
     # The action row shows on hover (or focus) only, where hovering exists.

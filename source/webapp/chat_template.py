@@ -311,6 +311,17 @@ CHAT_TEMPLATE: str = """
         z-index:1;margin-top:0;padding-top:2px;background:#fff;border-radius:6px;pointer-events:none}
     .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug):hover > .msg-actions,
     .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug):has(:focus-visible) > .msg-actions{pointer-events:auto}
+    /* The band under the bubble is split: the answer's "Worked for" toggle
+       owns its left half, the person's message the right half — a hover zone
+       of the message, reaching down to the answer's text, so the pointer
+       finds the action row where it appears. Only when the answer opens with
+       that toggle line (a reasoning row, a working line, a turn's cost):
+       otherwise the band is the answer's first line of text, which stays
+       selectable. */
+    .chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug):is(
+        :has(+ .msg .reasoning-toggle),
+        :has(+ .msg.msg-superseded + .msg .reasoning-toggle))::after{content:'';
+        position:absolute;top:100%;right:0;width:50%;height:2.4rem}
   }
   .chat-log.one-to-one .msg[data-sender-type="human"].msg-editing > .msg-edit-area{width:80%}
   /* A right-aligned row reads from its outer edge in: the clock leads. */
