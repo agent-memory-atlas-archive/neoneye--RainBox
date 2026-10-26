@@ -595,10 +595,11 @@ def test_one_to_one_rooms_render_as_text_messages():
     assert body.count("syncRoomLayout();") >= 2
     assert ".chat-log.one-to-one .msg:not(.msg-debug) > .msg-head{display:none}" in body
     # The row is full width (hover anywhere beside the bubble); the bubble is 80%.
-    assert ('.chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug)'
-            '{display:flex;flex-direction:column;align-items:flex-end}') in body
-    assert ('.chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-text'
-            '{max-width:80%;') in body
+    # Actions | bubble on one row (bubble capped at 80%), so the answer follows
+    # its question closely; other children span the row.
+    assert "grid-template-columns:minmax(0, 1fr) fit-content(80%);grid-auto-flow:row dense;" in body
+    assert ('.chat-log.one-to-one .msg[data-sender-type="human"]:not(.msg-debug) > .msg-actions'
+            '{grid-column:1;margin-top:0}') in body
     assert "msg.dataset.senderType = m.sender_type || '';" in body
     assert "clock.className = 'msg-clock';" in body
     # The action row shows on hover (or focus) only, where hovering exists.
