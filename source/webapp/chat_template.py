@@ -522,7 +522,7 @@ CHAT_TEMPLATE: str = """
   </div>
 
   <div class="ui-modal" id="chat-room-modal" hidden>
-    <h3>New chatroom</h3>
+    <h3 id="chat-room-title">New chatroom</h3>
     <input type="text" id="chat-room-input" placeholder="Room name" autocomplete="off">
     <div class="room-type-choices">
       <label><input type="radio" name="chat-room-type" value="agents" checked> Agents room</label>
@@ -2590,7 +2590,8 @@ function buildRoomMenu(roomUuid){
   return wrap;
 }
 
-// Folder kebab: Rename + Delete. The wrap is laid out (display:flex) but its
+// Folder kebab: New room (created inside this folder), Rename, Copy folder
+// id, Delete. The wrap is laid out (display:flex) but its
 // visibility is governed by CSS — shown only when the folder node is selected
 // (.chat-node.sel) or hovered, mirroring the rooms' active-only kebab.
 function buildFolderMenu(folderId){
@@ -2605,7 +2606,7 @@ function buildFolderMenu(folderId){
   menu.className = 'room-menu';
   menu.setAttribute('role', 'menu');
   menu.hidden = true;
-  [['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
+  [['New room', ''], ['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']].forEach(([label, mod]) => {
     const item = document.createElement('button');
     item.type = 'button';
     item.className = 'item' + (mod ? ' ' + mod : '');
@@ -2615,7 +2616,8 @@ function buildFolderMenu(folderId){
       e.stopPropagation();
       e.preventDefault();  // the menu sits inside the folder's anchor — never follow it
       menu.hidden = true;
-      if (label === 'Copy folder id') copyIdToast(folderId, 'Folder');
+      if (label === 'New room') openRoomModal(folderId);
+      else if (label === 'Copy folder id') copyIdToast(folderId, 'Folder');
       else if (label === 'Delete') confirmDeleteFolder(folderId);
       else if (label === 'Rename') renameFolder(folderId);
     });
@@ -4025,7 +4027,14 @@ function syncRoomTypeUI(){
 document.querySelectorAll('input[name="chat-room-type"]').forEach(radio => {
   radio.addEventListener('change', syncRoomTypeUI);
 });
-async function openRoomModal(){
+// The folder a new room goes into: set by a folder's "New room" menu item,
+// null (top level) from the "+ New room" button.
+let roomModalFolder = null;
+async function openRoomModal(folderId){
+  roomModalFolder = folderId || null;
+  const folder = roomModalFolder ? folderById(roomModalFolder) : null;
+  document.getElementById('chat-room-title').textContent =
+    folder ? 'New chatroom in ' + folder.name : 'New chatroom';
   const input = document.getElementById('chat-room-input');
   input.value = '';
   if (!agentsLoaded) await loadAgents();
@@ -4050,14 +4059,17 @@ async function confirmRoomModal(){
     : Array.from(agentListEl.querySelectorAll('input:checked')).map(cb => cb.value);
   try {
     await flushPendingTreeSave();
-    const res = await postJSON('/chat/api/rooms', { name, member_uuids, room_type });
+    const res = await postJSON('/chat/api/rooms',
+      { name, member_uuids, room_type, folder_uuid: roomModalFolder });
+    // Open the folder, as a drop into it does, so the new room is in view.
+    if (roomModalFolder){ expandedFolders[roomModalFolder] = true; saveExpandState(); }
     closeRoomModal();
     await loadRooms(res.uuid);
   } catch (err) {
     alert('Create room failed: ' + err);
   }
 }
-newRoomBtn.addEventListener('click', openRoomModal);
+newRoomBtn.addEventListener('click', () => openRoomModal(null));
 document.getElementById('chat-room-cancel').addEventListener('click', closeRoomModal);
 document.getElementById('chat-room-create').addEventListener('click', confirmRoomModal);
 document.getElementById('chat-room-input').addEventListener('input', e => {

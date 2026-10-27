@@ -158,15 +158,26 @@ def remove_room_member(room_uuid: UUID, user_uuid: UUID) -> bool:
 
 def create_chatroom(
     name: str, created_by: UUID, member_uuids: list[UUID],
-    room_type: str = "agents",
+    room_type: str = "agents", folder_uuid: UUID | None = None,
 ) -> Chatroom:
     """Create a room. The creator (the human) is always a member; `member_uuids`
     are the additional participants (agents). Duplicates are ignored.
     `room_type` is "agents" (group chat with responder agents) or "direct"
-    (one-to-one operator<->model chat; see DirectChatAgent)."""
+    (one-to-one operator<->model chat; see DirectChatAgent). With
+    `folder_uuid` the room is created inside that folder, after the rooms
+    already there; the folder must exist."""
     if room_type not in ("agents", "direct"):
         raise ValueError(f"invalid room_type: {room_type!r}")
-    room = Chatroom(name=name, created_by=created_by, room_type=room_type)
+    position = 0
+    if folder_uuid is not None:
+        if db.session.execute(sa.select(ChatroomFolder.id).where(
+                ChatroomFolder.uuid == folder_uuid)).first() is None:
+            raise ValueError(f"no such folder: {folder_uuid}")
+        position = db.session.execute(
+            sa.select(sa.func.count()).select_from(Chatroom)
+            .where(Chatroom.folder_uuid == folder_uuid)).scalar() or 0
+    room = Chatroom(name=name, created_by=created_by, room_type=room_type,
+                    folder_uuid=folder_uuid, position=int(position))
     db.session.add(room)
     db.session.flush()  # assign room.uuid before inserting members
     seen: set[UUID] = set()

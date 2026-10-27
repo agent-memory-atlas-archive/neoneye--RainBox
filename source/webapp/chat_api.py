@@ -125,7 +125,13 @@ def chat_rooms() -> Response | tuple[Response, int]:
             if DIRECT_CHAT_UUID in member_uuids:
                 abort(400, "the direct-chat responder cannot be a member of an "
                            "agents room; create the room with room_type='direct'")
-        room = db.create_chatroom(name, human.uuid, member_uuids, room_type=room_type)
+        folder_raw = data.get("folder_uuid")
+        folder_uuid = _parse_uuid(folder_raw) if folder_raw else None
+        try:
+            room = db.create_chatroom(name, human.uuid, member_uuids,
+                                      room_type=room_type, folder_uuid=folder_uuid)
+        except ValueError as err:
+            abort(400, str(err))
         # A create is a tree mutation, so it hands back the fresh tree version —
         # without it the client's next drag 409s (notes/ui-tree-persistence.md).
         return jsonify({"uuid": str(room.uuid), "name": room.name,

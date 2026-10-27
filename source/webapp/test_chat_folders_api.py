@@ -175,3 +175,33 @@ def test_room_delete_preview(app_ctx):
         assert preview["message_count"] == 1 and preview["room_name"] == room.name
     finally:
         db.delete_chatroom(room.uuid)
+
+
+def test_a_room_created_in_a_folder_lands_last_in_it(app_ctx):
+    """A folder's "New room" creates the room inside that folder, after the
+    rooms already there; an unknown folder is refused rather than leaving a
+    room pointing at nothing."""
+    from webapp.core import app as flask_app
+    client = flask_app.test_client()
+    folder = client.post("/chat/api/folders", json={"name": "apitest-newroom"}).get_json()
+    created = []
+    try:
+        for _ in range(2):
+            resp = client.post("/chat/api/rooms", json={
+                "name": f"apinew-{uuid4().hex[:6]}", "folder_uuid": folder["id"]})
+            assert resp.status_code == 201
+            created.append(resp.get_json()["uuid"])
+        db.session.expire_all()
+        placed = db.session.execute(
+            sa.select(Chatroom.uuid, Chatroom.folder_uuid, Chatroom.position)
+            .where(Chatroom.uuid.in_(created)).order_by(Chatroom.position)).all()
+        assert [str(r.uuid) for r in placed] == created
+        assert {str(r.folder_uuid) for r in placed} == {folder["id"]}
+        assert [r.position for r in placed] == [0, 1]
+        missing = client.post("/chat/api/rooms", json={
+            "name": "apinew-missing", "folder_uuid": str(uuid4())})
+        assert missing.status_code == 400
+    finally:
+        for room_uuid in created:
+            client.delete(f"/chat/api/rooms/{room_uuid}")
+        client.delete(f"/chat/api/folders/{folder['id']}")

@@ -31,6 +31,17 @@ def test_room_and_folder_kebabs_have_copy_id():
     assert 'id="chat-toast"' in body
 
 
+def test_folder_kebab_creates_a_room_inside_the_folder():
+    """A folder's menu leads with "New room": the room dialog names the
+    folder, the create posts it, and the "+ New room" button stays top-level."""
+    body = _body()
+    assert "[['New room', ''], ['Rename', ''], ['Copy folder id', ''], ['Delete', 'danger']]" in body
+    assert "if (label === 'New room') openRoomModal(folderId);" in body
+    assert "folder ? 'New chatroom in ' + folder.name : 'New chatroom';" in body
+    assert "{ name, member_uuids, room_type, folder_uuid: roomModalFolder });" in body
+    assert "newRoomBtn.addEventListener('click', () => openRoomModal(null));" in body
+
+
 def test_typed_newlines_render_as_line_breaks():
     """A single newline in a typed message must render as a line break (chat
     style), not collapse to a space — marked is configured with breaks:true."""
