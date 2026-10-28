@@ -13,7 +13,8 @@ of which is a worker the supervisor spawns.
 
 import logging
 import time
-from typing import cast
+from datetime import UTC, datetime
+from typing import Any, cast
 from uuid import UUID
 
 from llama_index.core.llms import ChatMessage, MessageRole
@@ -80,7 +81,8 @@ def structured_llm_call(
     system_prompt: str,
     user_prompt: str,
     response_model: type[BaseModel],
-    usage_out: dict[str, int] | None = None,
+    usage_out: dict[str, Any] | None = None,
+    attempts_out: list[dict[str, Any]] | None = None,
 ) -> tuple[BaseModel, UUID]:
     """One structured-output call, falling back through a model group's members
     on failure. Returns (result, answering_model_uuid); raises RuntimeError when
@@ -97,9 +99,25 @@ def structured_llm_call(
     through this helper.
 
     Pass `usage_out` to have this call's cost written into it as
-    {input, output, ms} — the same shape as StructuredLLMAgent's `_last_usage`.
-    An out-parameter rather than a wider return type because every existing
-    caller ignores usage, and only the succeeding member's cost is recorded."""
+    {input, output, ms, requested_at} — StructuredLLMAgent's `_last_usage`
+    plus when the answering member was asked, which after a fallback is not
+    when the call began. An out-parameter rather than a wider return type
+    because every existing caller ignores usage, and only the succeeding
+    member's cost is recorded there.
+
+    Pass `attempts_out` to have every member that failed appended to it, in
+    the shape of a step row's `rejected_attempts` with `outcome: "failed"`:
+    its model, when it was asked, how long it ran, the error, and the
+    reasoning and response it had streamed when it failed. A member that
+    times out mid-generation is the case this exists for — its seconds are
+    otherwise a gap in the run's trace, and what it was writing when it was
+    cut off is the only evidence of why.
+
+    The answer is consumed as a stream, as `ModelGroupAgent` does, for the
+    same two reasons: the tokens arrive incrementally, so a cut-off member
+    still leaves its partial text in the instrumentation tally; and the
+    member's timeout bounds the whole stream as a wall-clock deadline, where
+    a per-read timeout never trips on a model that keeps generating."""
     if not candidate_model_uuids:
         raise RuntimeError(
             f"agent {agent_name} has no model group bound (assign one on /agentmodel)"
@@ -116,11 +134,21 @@ def structured_llm_call(
 
     from llama_index.core.instrumentation.dispatcher import instrument_tags
 
-    token_counter = TokenCountingHandler()
+    from agents.base import ModelGroupAgent, truncate_middle
+    from llm import capture_reasoning
+
     for model_uuid in candidate_model_uuids:
+        # Per member: one counter across a fallback charges the answering
+        # member for the failed one's prompt too.
+        token_counter = TokenCountingHandler()
+        attempt_at = datetime.now(UTC)
         t0 = time.monotonic()
+        model_name = ""
+        reasoning: str | None = None
+        response_text: str | None = None
         try:
             _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
+            timeout_s = float(args.get("request_timeout") or args.get("timeout") or 60.0)
             # Fail fast on a down/unreachable provider: the OpenAI client's
             # default exponential backoff (max_retries=10) turns one outage
             # into a ~30s+ hang per model with no UI feedback. We already
@@ -132,13 +160,32 @@ def structured_llm_call(
             sllm = the_llm.as_structured_llm(
                 response_model, callback_manager=CallbackManager([token_counter])
             )
-            with instrument_tags({"caller": agent_name}):
-                result = cast(BaseModel, sllm.chat(messages).raw)
+            deadline = time.monotonic() + timeout_s
+            last = None
+            with instrument_tags({"caller": agent_name}), \
+                    capture_reasoning() as tally:
+                try:
+                    for last in sllm.stream_chat(messages):
+                        if time.monotonic() > deadline:
+                            raise TimeoutError(
+                                f"structured stream exceeded {timeout_s:.0f}s "
+                                "(model still generating)")
+                finally:
+                    reasoning = tally.reasoning_text.strip() or None
+                    response_text = (
+                        tally.content_text
+                        or getattr(getattr(last, "message", None), "content", None)
+                        or "").strip() or None
+            if last is None:
+                raise RuntimeError("structured stream produced no response")
+            result = ModelGroupAgent._settle_structured_result(
+                response_model, cast(BaseModel, last.raw), response_text)
             if usage_out is not None:
                 usage_out.update({
                     "input": token_counter.prompt_llm_token_count,
                     "output": token_counter.completion_llm_token_count,
                     "ms": int((time.monotonic() - t0) * 1000),
+                    "requested_at": attempt_at.isoformat(),
                 })
             return result, model_uuid
         except Exception as e:
@@ -147,6 +194,23 @@ def structured_llm_call(
                 "agent %s: model %s failed (%s); trying next in group",
                 agent_name, model_uuid, e,
             )
+            if attempts_out is not None:
+                attempts_out.append({
+                    "outcome": "failed",
+                    "model_uuid": str(model_uuid),
+                    "model_name": model_name,
+                    "requested_at": attempt_at.isoformat(),
+                    "ms": int((time.monotonic() - t0) * 1000),
+                    "input_tokens": token_counter.prompt_llm_token_count,
+                    "output_tokens": token_counter.completion_llm_token_count,
+                    "reasoning": truncate_middle(
+                        reasoning or "",
+                        ModelGroupAgent.REJECTED_ATTEMPT_REASONING_CHARS) or None,
+                    "response": truncate_middle(
+                        response_text or "",
+                        ModelGroupAgent.REJECTED_RESPONSE_ECHO_CHARS) or None,
+                    "error": f"{type(e).__name__}: {e}",
+                })
     raise RuntimeError(
         f"agent {agent_name}: all {len(candidate_model_uuids)} models "
         f"in the group failed; last error: {last_error}"

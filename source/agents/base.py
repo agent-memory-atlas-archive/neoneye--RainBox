@@ -696,6 +696,29 @@ class ModelGroupAgent(Agent):
                     if attempt_started:
                         self._model_attempt_failed(model_uuid, model_name, e)
                     retries_left = self.REJECTED_RESPONSE_RETRIES - rejections
+                    if not isinstance(e, RejectedResponse) and attempt_started:
+                        # A member that raised instead of answering — a
+                        # timeout mid-generation, a refused connection — ran
+                        # for real before the next member was tried. Kept
+                        # beside the rejected ones, marked failed, so its
+                        # seconds and what it had written are in the trace
+                        # rather than a gap before the call that answered.
+                        self._last_rejected_attempts.append({
+                            "outcome": "failed",
+                            "model_uuid": str(model_uuid),
+                            "model_name": model_name,
+                            "requested_at": attempt_at.isoformat(),
+                            "ms": int((time.monotonic() - t0) * 1000),
+                            "input_tokens": token_counter.prompt_llm_token_count,
+                            "output_tokens": token_counter.completion_llm_token_count,
+                            "reasoning": truncate_middle(
+                                self._last_reasoning or "",
+                                self.REJECTED_ATTEMPT_REASONING_CHARS) or None,
+                            "response": truncate_middle(
+                                self._last_response_text or "",
+                                self.REJECTED_RESPONSE_ECHO_CHARS) or None,
+                            "error": f"{type(e).__name__}: {e}",
+                        })
                     if not isinstance(e, RejectedResponse) or retries_left < 1:
                         logger.warning(
                             "agent %s: model %s failed (%s); trying next in group",

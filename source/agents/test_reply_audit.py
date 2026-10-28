@@ -11,6 +11,7 @@ exercised for real with `agents.model_groups.structured_llm_call`
 monkeypatched (unit tests).
 """
 
+from datetime import datetime
 from uuid import uuid4
 
 import pytest
@@ -197,7 +198,7 @@ def audit_call(monkeypatch):
     box: dict = {"verdict": None, "raise": None, "prompts": []}
 
     def fake_structured_llm_call(_name, _uuids, system_prompt, user_prompt,
-                                 _model, usage_out=None):
+                                 _model, usage_out=None, attempts_out=None):
         box["prompts"].append((system_prompt, user_prompt))
         if box["raise"] is not None:
             raise box["raise"]
@@ -392,6 +393,30 @@ def test_the_audit_row_carries_its_token_cost(room, monkeypatch):
 
     assert (audits[0].input_tokens, audits[0].output_tokens) == (4321, 87)
     assert audits[0].duration_ms == 23401
+
+
+def test_the_audit_row_keeps_a_failed_member_and_starts_at_the_answer(
+        room, monkeypatch):
+    """A member that timed out before the next answered rides on the audit's
+    row as a failed attempt, with what it had written; the row itself is
+    stamped when the answering member was asked, not when the audit began."""
+    failed = {"outcome": "failed", "model_uuid": str(uuid4()),
+              "model_name": "runaway-model",
+              "requested_at": "1999-12-30T23:00:00+00:00", "ms": 60000,
+              "reasoning": "checking", "response": '{"verdict": "send", "rea',
+              "error": "TimeoutError: structured stream exceeded 60s"}
+    agent, _messages = _audited_run(
+        room, monkeypatch,
+        (True, {"verdict": "send", "reason": "sound", "problems": "",
+                "model_uuid": str(uuid4()), "system_prompt": "sys",
+                "user_prompt": "usr", "attempts": [failed],
+                "usage": {"input": 10, "output": 5, "ms": 14000,
+                          "requested_at": "1999-12-30T23:01:00+00:00"}}))
+    [audit] = [s for s in db.list_assistant_steps(agent._run.uuid)
+               if s.action == AssistantAgent.REPLY_AUDIT_ACTION]
+
+    assert audit.rejected_attempts == [failed]
+    assert audit.requested_at == datetime.fromisoformat("1999-12-30T23:01:00+00:00")
 
 
 def test_a_bounced_audit_is_traced_too(room, monkeypatch):

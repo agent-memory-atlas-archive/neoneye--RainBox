@@ -425,3 +425,99 @@ def test_a_call_that_succeeded_outright_reports_no_rejections(monkeypatch):
     )
 
     assert agent._last_rejected_attempts == []
+
+
+# --- a member that fails outright -------------------------------------------
+#
+# The live case: a reply audit whose first member kept generating until the
+# 60s deadline, after which the group fell back to the next member. The
+# failed minute was nowhere in the trace — the run page drew it as an
+# "unaccounted" gap — and what the model had been writing was lost with it.
+
+#: What the cut-off member had streamed when it was stopped.
+RUNAWAY_TEXT = '{"answer": "again and again and again'
+
+
+def _runaway_then_answer(models: list, calls: list):
+    """prepare_llm for a group whose first member streams RUNAWAY_TEXT and
+    then times out, and whose second member answers."""
+    def stream_for(index):
+        def stream_chat(_messages):
+            calls.append(index)
+            if index == 0:
+                yield SimpleNamespace(
+                    message=SimpleNamespace(content=RUNAWAY_TEXT),
+                    raw=_Reply.model_construct(answer=None))
+                raise TimeoutError("structured stream exceeded 60s "
+                                   "(model still generating)")
+            yield SimpleNamespace(
+                message=SimpleNamespace(content='{"answer":"ok"}'),
+                raw=_Reply(answer="ok"))
+        return stream_chat
+
+    def prepare(_provider, model_name, _args):
+        index = models.index(model_name)
+        return SimpleNamespace(as_structured_llm=lambda *_a, **_k: SimpleNamespace(
+            stream_chat=stream_for(index)))
+    return prepare
+
+
+def _two_member_group(monkeypatch):
+    uuids = [uuid4(), uuid4()]
+    names = ["runaway-model", "answering-model"]
+    monkeypatch.setattr(
+        db, "resolved_model_kwargs",
+        lambda model_uuid: ("ollama", names[uuids.index(model_uuid)], {}))
+    calls: list[int] = []
+    return uuids, names, calls, _runaway_then_answer(names, calls)
+
+
+def test_a_member_that_timed_out_is_reported_as_a_failed_attempt(monkeypatch):
+    """The decide path keeps the member that failed beside the rejected ones,
+    marked failed, with what it had written when the deadline hit."""
+    uuids, names, calls, prepare = _two_member_group(monkeypatch)
+    monkeypatch.setattr(llm, "prepare_llm", prepare)
+    agent = ModelGroupAgent(uuid4(), "assistant", lambda _: None)
+    agent.candidate_model_uuids = uuids
+
+    result = agent._structured_completion(
+        system_prompt="Answer briefly.", user_prompt="Hello",
+        response_model=_Reply)
+
+    assert result == _Reply(answer="ok")
+    assert calls == [0, 1]
+    [attempt] = agent._last_rejected_attempts
+    assert attempt["outcome"] == "failed"
+    assert attempt["model_uuid"] == str(uuids[0])
+    assert attempt["model_name"] == "runaway-model"
+    assert attempt["response"] == RUNAWAY_TEXT
+    assert "TimeoutError" in attempt["error"] and "60s" in attempt["error"]
+    assert attempt["requested_at"] and attempt["ms"] is not None
+
+
+def test_the_group_call_reports_a_failed_member_and_when_the_next_began(monkeypatch):
+    """structured_llm_call (the reply audit's path) records the same failed
+    attempt, and reports when the answering member was asked — after the
+    failed one, not when the call began."""
+    from datetime import datetime
+
+    import agents.model_groups as mg
+
+    uuids, names, calls, prepare = _two_member_group(monkeypatch)
+    monkeypatch.setattr(mg, "prepare_llm", prepare)
+    usage: dict = {}
+    attempts: list = []
+
+    result, model_uuid = mg.structured_llm_call(
+        "assistant.reply_audit", uuids, "Answer briefly.", "Hello", _Reply,
+        usage_out=usage, attempts_out=attempts)
+
+    assert result == _Reply(answer="ok")
+    assert model_uuid == uuids[1]
+    [attempt] = attempts
+    assert attempt["outcome"] == "failed"
+    assert attempt["model_name"] == "runaway-model"
+    assert attempt["response"] == RUNAWAY_TEXT
+    assert "TimeoutError" in attempt["error"]
+    assert (datetime.fromisoformat(usage["requested_at"])
+            >= datetime.fromisoformat(attempt["requested_at"]))

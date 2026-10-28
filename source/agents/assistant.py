@@ -5386,13 +5386,17 @@ class AssistantAgent(ModelGroupAgent):
                    "user_prompt": user_prompt}
         from llm import capture_reasoning
 
-        usage: dict[str, int] = {}
+        usage: dict[str, Any] = {}
+        # Every group member that failed before one answered (or before the
+        # audit gave up): drawn on the run page as its own call, with what it
+        # was writing when it failed.
+        attempts: list[dict[str, Any]] = []
         with capture_reasoning() as tally:
             try:
                 audit, model_uuid = structured_llm_call(
                     "assistant.reply_audit", model_uuids,
                     ASSISTANT_SHARED_SYSTEM_PROMPT, user_prompt,
-                    ReplyAudit, usage_out=usage,
+                    ReplyAudit, usage_out=usage, attempts_out=attempts,
                 )
             except Exception as e:
                 logger.warning("assistant reply_audit failed open: %s", e)
@@ -5402,6 +5406,7 @@ class AssistantAgent(ModelGroupAgent):
                     "reasoning": tally.reasoning_text or None,
                     "response": tally.content_text or None,
                     "usage": usage,
+                    "attempts": attempts,
                     **prompts,
                 }
         audit = cast(ReplyAudit, audit)
@@ -5414,6 +5419,7 @@ class AssistantAgent(ModelGroupAgent):
             "reasoning": tally.reasoning_text or None,
             "response": tally.content_text or audit.model_dump_json(),
             "usage": usage,
+            "attempts": attempts,
             **prompts,
         }
 
@@ -7045,7 +7051,12 @@ class AssistantAgent(ModelGroupAgent):
             reasoning=payload.get("reasoning"),
             model_response=payload.get("response"),
             code_driven=True,
-            requested_at=requested_at,
+            # When the answering member was asked. After a fallback that is
+            # not when the audit began: the members that failed first ran in
+            # between, and are drawn as their own calls (rejected_attempts).
+            requested_at=(datetime.fromisoformat(usage["requested_at"])
+                          if usage.get("requested_at") else requested_at),
+            rejected_attempts=payload.get("attempts") or None,
             observation_preview=json.dumps(
                 {k: payload.get(k) for k in ("verdict", "problems", "reason",
                                              "skipped", "error")

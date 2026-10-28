@@ -91,7 +91,8 @@ def _call(label: str, kind: str, *, start, duration_ms, anchor: str = "",
 def _rejected_calls(step) -> list[dict]:
     """The calls this step made and threw away: responses that arrived and
     were refused by the schema or a validator, each retried with the reason
-    attached (see `ModelGroupAgent.REJECTED_RESPONSE_RETRIES`).
+    attached (see `ModelGroupAgent.REJECTED_RESPONSE_RETRIES`), and group
+    members that failed outright before the next one answered.
 
     Real calls to a real model, so they belong in the enumeration on the same
     footing as the one that succeeded — the step's own `duration_ms` covers
@@ -102,10 +103,13 @@ def _rejected_calls(step) -> list[dict]:
     for index, attempt in enumerate(attempts, start=1):
         # Numbered only when there were several, so the common single retry
         # reads as plain "(rejected)" and a model that failed twice in a row
-        # is still tellable apart row by row.
+        # is still tellable apart row by row. A member that raised instead of
+        # answering — a timeout, a refused connection — before the group fell
+        # back to the next is "(failed)": nothing came back to refuse.
         ordinal = f" {index}/{len(attempts)}" if len(attempts) > 1 else ""
+        outcome = "failed" if attempt.get("outcome") == "failed" else "rejected"
         calls.append(_call(
-            f"{step.action or '—'} (rejected{ordinal})", "rejected",
+            f"{step.action or '—'} ({outcome}{ordinal})", "rejected",
             start=_parse_ts(attempt.get("requested_at")),
             duration_ms=attempt.get("ms"), anchor=str(step.uuid),
             model_uuid=attempt.get("model_uuid"),

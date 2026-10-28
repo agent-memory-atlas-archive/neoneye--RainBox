@@ -711,6 +711,33 @@ def test_a_rejected_attempt_carries_what_it_answered():
     assert attempt["payload"]["feedback"][0]["content"] == "<rejected_response>"
 
 
+def test_a_group_member_that_failed_is_drawn_as_a_failed_call_before_the_answer():
+    """A reply audit whose first member ran into the 60s deadline and whose
+    second answered: the failed minute is a call of its own, labelled failed,
+    carrying what it had written and why it stopped — and the call that
+    answered starts after it, not on top of it."""
+    step = _step("reply_audit", at=0, ms=14000, code_driven=True)
+    step.rejected_attempts = [{
+        "outcome": "failed", "model_name": "runaway-model",
+        "requested_at": _at(0).isoformat(), "ms": 60000,
+        "input_tokens": 0, "output_tokens": 0,
+        "reasoning": "checking the reply",
+        "response": '{"verdict": "send", "reason": "again and again',
+        "error": "TimeoutError: structured stream exceeded 60s"}]
+
+    events = db.run_events(_run(finished=90), [step])
+
+    failed = next(e for e in events if e["variant"] == "rejected")
+    assert failed["label"] == "reply_audit (failed)"
+    assert failed["duration_ms"] == 60000
+    assert failed["payload"]["reasoning"] == "checking the reply"
+    assert "again and again" in failed["payload"]["model_response"]
+    assert "60s" in failed["payload"]["error"]
+    answered = next(e for e in events
+                    if e["variant"] == "code-driven" and e["label"] == "reply_audit")
+    assert answered["start"] >= _at(60)
+
+
 def test_the_criteria_revisions_inner_call_carries_its_prompts_and_response():
     """The revision's model call has no row of its own: the action step
     records what it sent and got back in the observation payload. The
