@@ -717,6 +717,25 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
     """
     if not active:
         return []
+    # The members of this call that already failed, as the calls they were —
+    # the moment they fail, not once the call's own row lands with them in its
+    # rejected_attempts. Without them a member that ran into its timeout sat
+    # inside the live row's growing bar until the next member answered.
+    action = active.get("action")
+    events = []
+    for attempt in active.get("failed_attempts") or []:
+        started = _parse_ts(attempt.get("started_at"))
+        finished = _parse_ts(attempt.get("finished_at"))
+        error = attempt.get("error") or ""
+        outcome = "rejected" if error.startswith("RejectedResponse") else "failed"
+        events.append(_as_event(_call(
+            f"{action or 'decide'} ({outcome})", "rejected", start=started,
+            duration_ms=(int((finished - started).total_seconds() * 1000)
+                         if started and finished else None),
+            model=str(attempt.get("model_name") or ""),
+            payload={"model_response": attempt.get("partial_response"),
+                     "reasoning": attempt.get("partial_reasoning"),
+                     "error": error or None})))
     start = _parse_ts(active.get("started_at"))
     elapsed = (int(((now or datetime.now().astimezone()) - start)
                    .total_seconds() * 1000)
@@ -724,8 +743,11 @@ def _live_event(active: dict | None, now: datetime | None = None) -> list[dict]:
     response, reasoning = (active.get("partial_response") or "",
                            active.get("partial_reasoning") or "")
     timeout = active.get("timeout_seconds")
-    return [_event(
-        "llm", "in flight", variant="live",
+    return events + [_event(
+        # Named for the call when it is a code-driven one, so the row says
+        # which call the operator is watching; a decide call has no action
+        # until it returns.
+        "llm", f"{action} (in flight)" if action else "in flight", variant="live",
         start=start, duration_ms=max(elapsed, 0) if elapsed is not None else None,
         uuid="live",
         kpis={"model": active.get("model_name"),

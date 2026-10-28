@@ -521,3 +521,34 @@ def test_the_group_call_reports_a_failed_member_and_when_the_next_began(monkeypa
     assert "TimeoutError" in attempt["error"]
     assert (datetime.fromisoformat(usage["requested_at"])
             >= datetime.fromisoformat(attempt["requested_at"]))
+
+
+def test_the_group_call_reports_each_member_to_its_observer(monkeypatch):
+    """What the run's in-flight checkpoint is fed from: each member as it is
+    asked, its stream, and its failure with what it had written."""
+    import agents.model_groups as mg
+
+    uuids, names, calls, prepare = _two_member_group(monkeypatch)
+    monkeypatch.setattr(mg, "prepare_llm", prepare)
+    seen: list = []
+
+    class Observer:
+        def started(self, model_uuid, model_name, timeout_seconds):
+            seen.append(("started", model_name, timeout_seconds))
+
+        def progress(self, model_uuid, model_name, reasoning, response_text):
+            seen.append(("progress", model_name, response_text))
+
+        def failed(self, model_uuid, model_name, error, reasoning, response_text):
+            seen.append(("failed", model_name, type(error).__name__, response_text))
+
+    mg.structured_llm_call("assistant.reply_audit", uuids, "Answer briefly.",
+                           "Hello", _Reply, observer=Observer())
+
+    assert seen == [
+        ("started", "runaway-model", 60.0),
+        ("progress", "runaway-model", RUNAWAY_TEXT),
+        ("failed", "runaway-model", "TimeoutError", RUNAWAY_TEXT),
+        ("started", "answering-model", 60.0),
+        ("progress", "answering-model", '{"answer":"ok"}'),
+    ]

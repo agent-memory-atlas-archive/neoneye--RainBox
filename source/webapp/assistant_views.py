@@ -1351,6 +1351,10 @@ def _active_model_call(run) -> dict | None:
     attempts = active.get("attempts") or []
     newest = attempts[-1] if attempts else {}
     return {
+        "action": active.get("action"),
+        # The members that already failed in this call, drawn as their own
+        # calls the moment they fail rather than once the call's row lands.
+        "failed_attempts": [a for a in attempts[:-1] if a.get("error")],
         "step_index": active.get("step_index"),
         "model_name": newest.get("model_name"),
         "model_group_uuid": active.get("model_group_uuid"),

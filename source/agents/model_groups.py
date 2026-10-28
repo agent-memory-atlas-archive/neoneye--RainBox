@@ -83,6 +83,7 @@ def structured_llm_call(
     response_model: type[BaseModel],
     usage_out: dict[str, Any] | None = None,
     attempts_out: list[dict[str, Any]] | None = None,
+    observer: Any = None,
 ) -> tuple[BaseModel, UUID]:
     """One structured-output call, falling back through a model group's members
     on failure. Returns (result, answering_model_uuid); raises RuntimeError when
@@ -117,7 +118,14 @@ def structured_llm_call(
     same two reasons: the tokens arrive incrementally, so a cut-off member
     still leaves its partial text in the instrumentation tally; and the
     member's timeout bounds the whole stream as a wall-clock deadline, where
-    a per-read timeout never trips on a model that keeps generating."""
+    a per-read timeout never trips on a model that keeps generating.
+
+    Pass `observer` to watch the call while it runs: its `started(model_uuid,
+    model_name, timeout_seconds)` as each member is asked, `progress(model_uuid,
+    model_name, reasoning, response_text)` as its stream grows, and
+    `failed(model_uuid, model_name, error, reasoning, response_text)` when it
+    fails. The assistant turns these into its run's in-flight checkpoint, so
+    the page shows the member being asked right now, not the call before it."""
     if not candidate_model_uuids:
         raise RuntimeError(
             f"agent {agent_name} has no model group bound (assign one on /agentmodel)"
@@ -149,6 +157,8 @@ def structured_llm_call(
         try:
             _provider_id, model_name, args = db.resolved_model_kwargs(model_uuid)
             timeout_s = float(args.get("request_timeout") or args.get("timeout") or 60.0)
+            if observer is not None:
+                observer.started(model_uuid, model_name, timeout_s)
             # Fail fast on a down/unreachable provider: the OpenAI client's
             # default exponential backoff (max_retries=10) turns one outage
             # into a ~30s+ hang per model with no UI feedback. We already
@@ -166,6 +176,14 @@ def structured_llm_call(
                     capture_reasoning() as tally:
                 try:
                     for last in sllm.stream_chat(messages):
+                        if observer is not None:
+                            observer.progress(
+                                model_uuid, model_name,
+                                tally.reasoning_text.strip() or None,
+                                (tally.content_text
+                                 or getattr(getattr(last, "message", None),
+                                            "content", None)
+                                 or "").strip() or None)
                         if time.monotonic() > deadline:
                             raise TimeoutError(
                                 f"structured stream exceeded {timeout_s:.0f}s "
@@ -194,6 +212,13 @@ def structured_llm_call(
                 "agent %s: model %s failed (%s); trying next in group",
                 agent_name, model_uuid, e,
             )
+            if observer is not None:
+                try:
+                    observer.failed(model_uuid, model_name, e,
+                                    reasoning, response_text)
+                except Exception:   # noqa: BLE001 — watching must not cost the call
+                    logger.warning("agent %s: observer failed", agent_name,
+                                   exc_info=True)
             if attempts_out is not None:
                 attempts_out.append({
                     "outcome": "failed",

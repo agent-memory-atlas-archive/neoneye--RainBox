@@ -198,7 +198,8 @@ def audit_call(monkeypatch):
     box: dict = {"verdict": None, "raise": None, "prompts": []}
 
     def fake_structured_llm_call(_name, _uuids, system_prompt, user_prompt,
-                                 _model, usage_out=None, attempts_out=None):
+                                 _model, usage_out=None, attempts_out=None,
+                                 observer=None):
         box["prompts"].append((system_prompt, user_prompt))
         if box["raise"] is not None:
             raise box["raise"]
@@ -450,3 +451,55 @@ def test_a_clarifying_question_is_not_audited(room, monkeypatch):
         uuid4(),
         {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
     assert calls == []
+
+
+def test_while_the_audit_runs_the_page_watches_the_audit(room, monkeypatch):
+    """During the audit the decide call is over: its reply row is already
+    written (running, settled on the verdict), and the run's in-flight
+    checkpoint is the audit's — a member that failed is on it the moment it
+    failed, and the member being asked now is the newest attempt. The
+    checkpoint is gone once the audit returns."""
+    import agents.model_groups as mg
+
+    room_uuid, message_uuid = room
+    agent = _agent()
+    agent._decide_next_step = scripted_decisions(_reply("12 feet is 3.6576 meters."))
+    monkeypatch.setattr(mg, "resolve_assistant_model_uuids",
+                        lambda _slot: ([uuid4(), uuid4()], "assistant.reply_audit"))
+    seen: dict = {}
+
+    def fake_call(_name, uuids, _system, _user, _model, usage_out=None,
+                  attempts_out=None, observer=None):
+        first, second = uuids
+        observer.started(first, "runaway-model", 60.0)
+        observer.progress(first, "runaway-model", "thinking", '{"verdict": "se')
+        observer.failed(first, "runaway-model",
+                        TimeoutError("structured stream exceeded 60s"),
+                        "thinking", '{"verdict": "se')
+        observer.started(second, "answering-model", 60.0)
+        db.session.expire_all()
+        run = db.session.query(AssistantRun).filter(
+            AssistantRun.room_uuid == room_uuid).one()
+        seen["active"] = (run.metadata_ or {}).get("active_call")
+        seen["steps"] = [(s.action, s.phase)
+                         for s in db.list_assistant_steps(run.uuid)]
+        return ReplyAudit(reason="sound", verdict="send"), second
+
+    monkeypatch.setattr(mg, "structured_llm_call", fake_call)
+    agent.handle(uuid4(), {"room_uuid": str(room_uuid),
+                           "message_uuid": str(message_uuid)})
+
+    assert ("reply", "running") in seen["steps"]
+    active = seen["active"]
+    assert active["action"] == "reply_audit"
+    failed, current = active["attempts"]
+    assert failed["model_name"] == "runaway-model"
+    assert "60s" in failed["error"]
+    assert failed["partial_response"] == '{"verdict": "se'
+    assert current["model_name"] == "answering-model"
+    assert "error" not in current
+    run = db.session.query(AssistantRun).filter(
+        AssistantRun.room_uuid == room_uuid).one()
+    assert "active_call" not in (run.metadata_ or {})
+    phases = {s.action: s.phase for s in db.list_assistant_steps(run.uuid)}
+    assert phases["reply"] == "final"

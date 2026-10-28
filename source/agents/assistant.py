@@ -4130,7 +4130,26 @@ class AssistantAgent(ModelGroupAgent):
                     # Only replies are audited: a clarifying question has no
                     # formatting surface worth a bounced step.
                     rejection = None
+                    # A reply's row opens before its audit, as an action's
+                    # does before it runs: the decide call is over, and its
+                    # row is what the page shows for it while the audit — the
+                    # call in flight now — runs. The verdict settles it.
+                    reply_step = None
+                    reply_entry = None
                     if decision.action is AssistantActionName.REPLY:
+                        reply_step = self._open_step(
+                            step_index=step_index, decision=decision,
+                            usage=usage, model_uuid=model_uuid,
+                            system_prompt=system_prompt,
+                            user_prompt=user_prompt,
+                            followup_turns=followup_turns,
+                            reasoning=reasoning,
+                            model_response=model_response,
+                            rejected_attempts=rejected_attempts,
+                            requested_at=requested_at,
+                            step_uuid=step_uuid,
+                        )
+                        reply_entry = self._steps[-1]
                         self._set_activity("auditing the reply")
                         audit_requested_at = datetime.now(UTC)
                         audit_step_uuid = uuid4()
@@ -4153,19 +4172,8 @@ class AssistantAgent(ModelGroupAgent):
                             )
                         else:
                             audit_rejections += 1
-                            self._record_step(
-                                step_index=step_index, phase="failed",
-                                decision=decision, error=rejection, usage=usage,
-                                model_uuid=model_uuid,
-                                system_prompt=system_prompt,
-                                user_prompt=user_prompt,
-                                followup_turns=followup_turns,
-                                reasoning=reasoning,
-                                model_response=model_response,
-                                rejected_attempts=rejected_attempts,
-                                requested_at=requested_at,
-                                step_uuid=step_uuid,
-                            )
+                            self._settle_step(reply_step, phase="failed",
+                                              error=rejection, entry=reply_entry)
                             scratchpad.append(AssistantTurnStep(
                                 step_index=step_index,
                                 action=decision.action.value,
@@ -4175,16 +4183,20 @@ class AssistantAgent(ModelGroupAgent):
                                 reason=decision.reason,
                             ))
                             continue
-                    self._record_step(
-                        step_index=step_index, phase="final", decision=decision,
-                        usage=usage, model_uuid=model_uuid,
-                        system_prompt=system_prompt, user_prompt=user_prompt,
-                        followup_turns=followup_turns,
-                        reasoning=reasoning, model_response=model_response,
-                        rejected_attempts=rejected_attempts,
-                        requested_at=requested_at,
-                        step_uuid=step_uuid,
-                    )
+                    if reply_entry is not None:
+                        self._settle_step(reply_step, phase="final",
+                                          entry=reply_entry)
+                    else:
+                        self._record_step(
+                            step_index=step_index, phase="final", decision=decision,
+                            usage=usage, model_uuid=model_uuid,
+                            system_prompt=system_prompt, user_prompt=user_prompt,
+                            followup_turns=followup_turns,
+                            reasoning=reasoning, model_response=model_response,
+                            rejected_attempts=rejected_attempts,
+                            requested_at=requested_at,
+                            step_uuid=step_uuid,
+                        )
                     text = self._terminal_text(decision)
                     if decision.action is AssistantActionName.REPLY:
                         text = self._append_result_links(text, result_links)
@@ -5391,15 +5403,32 @@ class AssistantAgent(ModelGroupAgent):
         # audit gave up): drawn on the run page as its own call, with what it
         # was writing when it failed.
         attempts: list[dict[str, Any]] = []
+        # The audit is the call in flight while it runs, so the page watches
+        # it — its members, its stream, a member failing — rather than the
+        # decide call that came before it. Cleared however the audit ends.
+        if self._run is not None:
+            db.checkpoint_assistant_call(
+                self._run,
+                step_index=self._steps[-1]["step_index"] if self._steps else 0,
+                system_prompt=ASSISTANT_SHARED_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                requested_at=datetime.now(UTC),
+                model_group_uuid=self._slot_group(ASSISTANT_REPLY_AUDIT_UUID),
+                log=self._turn_log or None,
+                action=self.REPLY_AUDIT_ACTION,
+            )
         with capture_reasoning() as tally:
             try:
                 audit, model_uuid = structured_llm_call(
                     "assistant.reply_audit", model_uuids,
                     ASSISTANT_SHARED_SYSTEM_PROMPT, user_prompt,
                     ReplyAudit, usage_out=usage, attempts_out=attempts,
+                    observer=_InFlightCheckpoint(self),
                 )
             except Exception as e:
                 logger.warning("assistant reply_audit failed open: %s", e)
+                if self._run is not None:
+                    db.clear_assistant_call_checkpoint(self._run)
                 return True, {
                     "error": f"{type(e).__name__}: {e}",
                     "group_from": group_from,
@@ -5409,6 +5438,8 @@ class AssistantAgent(ModelGroupAgent):
                     "attempts": attempts,
                     **prompts,
                 }
+        if self._run is not None:
+            db.clear_assistant_call_checkpoint(self._run)
         audit = cast(ReplyAudit, audit)
         return audit.verdict == "send", {
             "verdict": audit.verdict,
@@ -7483,12 +7514,19 @@ class AssistantAgent(ModelGroupAgent):
         observation_preview: str | None = None,
         observation: dict[str, Any] | None = None,
         error: str | None = None,
+        entry: dict[str, Any] | None = None,
     ) -> None:
         """Settle the step opened by `_open_step`: mutate its row (and the mirror
         entry) in place to the terminal `phase` with the observation. The
         terminal `debug-assistant` trace row is posted here, where the
-        observation exists — exactly one anchor per step."""
-        if self._steps:
+        observation exists — exactly one anchor per step.
+
+        `entry` is the mirror entry `_open_step` appended, for a step settled
+        after other rows were recorded behind it (a reply, after its audit);
+        otherwise it is the newest entry."""
+        if entry is not None:
+            entry.update(phase=phase, error=error)
+        elif self._steps:
             self._steps[-1].update(phase=phase, error=error)
         if step is not None:
             db.settle_assistant_step(
@@ -7517,8 +7555,9 @@ class AssistantAgent(ModelGroupAgent):
         step_uuid: "UUID | None" = None,
     ) -> None:
         """Record a single-insert (no open/settle lifecycle) trace step — the
-        terminal-only path: a `failed` validation, the `final` reply, and a
-        crash-failure row. Persists one `assistant_step` row and, when terminal,
+        terminal-only path: a `failed` validation, a `final` step that is not
+        audited (a clarifying question), and a crash-failure row. A reply opens
+        its row before its audit and settles on the verdict instead. Persists one `assistant_step` row and, when terminal,
         its self-contained `debug-assistant` chat anchor — and mirrors one entry
         into `self._steps` for fast in-process assertions. `usage` is the decide
         call's token counts (None for a crash/control row).
@@ -7566,6 +7605,37 @@ class AssistantAgent(ModelGroupAgent):
                 duration_ms=(usage or {}).get("ms"),
             )
             db.clear_assistant_call_checkpoint(self._run)
+
+
+class _InFlightCheckpoint:
+    """Feeds a model-group call (`structured_llm_call`'s observer) into the
+    run's in-flight checkpoint, the way the decide path's own hooks feed it:
+    each member as it is asked, its stream as it grows, its failure the moment
+    it fails. Without it a code-driven call ran unseen, and the page went on
+    showing the call before it as in flight."""
+
+    def __init__(self, agent: "AssistantAgent") -> None:
+        self._agent = agent
+
+    def started(self, model_uuid: UUID, model_name: str,
+                timeout_seconds: float) -> None:
+        self._agent._model_attempt_started(model_uuid, model_name, timeout_seconds)
+
+    def progress(self, model_uuid: UUID, model_name: str,
+                 reasoning: str | None, response_text: str | None) -> None:
+        self._agent._model_attempt_progress(
+            model_uuid, model_name, reasoning, response_text)
+
+    def failed(self, model_uuid: UUID, model_name: str, error: Exception,
+               reasoning: str | None, response_text: str | None) -> None:
+        run = self._agent._run
+        if run is None:
+            return
+        db.checkpoint_assistant_model_progress(
+            run, model_uuid=model_uuid, reasoning=reasoning,
+            response_text=response_text)
+        db.checkpoint_assistant_model_failure(
+            run, model_uuid=model_uuid, error=f"{type(error).__name__}: {error}")
 
 
 class AssistantPromptBuilder:

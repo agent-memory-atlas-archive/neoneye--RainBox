@@ -299,15 +299,15 @@ def test_classifier_is_first_observed_step_and_does_not_consume_budget(room):
     assert [(row.action, row.phase) for row in rows] == [
         ("response_language_classifier", "observed"),
         ("acceptance_criteria", "skipped"),
-        ("reply_audit", "observed"),
         ("reply", "final"),
+        ("reply_audit", "observed"),
     ]
     assert [row.step_index for row in rows] == [0, 0, 0, 0]
     # The classifier and the audit are calls the loop makes on its own; only
     # the reply is a model decision. Readers use the flag to tell them apart —
     # a code-driven row's action/reason are labels, not something the model
     # chose, and its response is the classification, not a decision.
-    assert [row.code_driven for row in rows] == [True, True, True, False]
+    assert [row.code_driven for row in rows] == [True, True, False, True]
     assert rows[0].phase == "observed"
     assert '"score": 5' in (rows[0].observation_preview or "")
     assert '"audit"' not in (rows[0].observation_preview or "")
@@ -404,8 +404,8 @@ def test_classifier_failure_is_traced_and_assistant_continues(room):
     assert [(row.action, row.phase) for row in rows] == [
         ("response_language_classifier", "failed"),
         ("acceptance_criteria", "skipped"),
-        ("reply_audit", "observed"),
         ("reply", "final"),
+        ("reply_audit", "observed"),
     ]
     assert "scorer unavailable" in (rows[0].error or "")
     assert rows[1].error is None            # skipped is not a failure

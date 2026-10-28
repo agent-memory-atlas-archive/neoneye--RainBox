@@ -738,6 +738,35 @@ def test_a_group_member_that_failed_is_drawn_as_a_failed_call_before_the_answer(
     assert answered["start"] >= _at(60)
 
 
+def test_a_member_that_failed_mid_call_is_drawn_before_the_call_ends():
+    """While a code-driven call is still running, a member that already failed
+    is its own row — from the in-flight checkpoint, not once the call's row
+    lands — and the live row names the call and starts at the member being
+    asked now."""
+    active = {
+        "action": "reply_audit", "model_name": "answering-model",
+        "started_at": _at(60).isoformat(), "timeout_seconds": 60.0,
+        "attempt": 2, "partial_response": '{"verdict"',
+        "failed_attempts": [{
+            "model_name": "runaway-model",
+            "started_at": _at(0).isoformat(), "finished_at": _at(60).isoformat(),
+            "partial_reasoning": "checking the reply",
+            "partial_response": '{"verdict": "send", "reason": "again and again',
+            "error": "TimeoutError: structured stream exceeded 60s"}]}
+
+    events = db.run_events(_run(), [], active=active)
+
+    failed = next(e for e in events if e["label"] == "reply_audit (failed)")
+    assert failed["duration_ms"] == 60000
+    assert failed["kpis"]["model"] == "runaway-model"
+    assert "again and again" in failed["payload"]["model_response"]
+    assert failed["payload"]["reasoning"] == "checking the reply"
+    assert "60s" in failed["payload"]["error"]
+    live = events[-1]
+    assert live["label"] == "reply_audit (in flight)"
+    assert live["start"] == _at(60)
+
+
 def test_the_criteria_revisions_inner_call_carries_its_prompts_and_response():
     """The revision's model call has no row of its own: the action step
     records what it sent and got back in the observation payload. The

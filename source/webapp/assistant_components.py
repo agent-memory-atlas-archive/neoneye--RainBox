@@ -977,6 +977,10 @@ def event_description(event: dict) -> str:
     catalog entry falls back to what that kind is, so no event is ever nameless
     in the header.
     """
+    # The call in flight is described as what it is — whichever call it is,
+    # which its label already names.
+    if event.get("variant") == "live":
+        return ACTION_DESCRIPTIONS["in flight"]
     label = event.get("label") or ""
     action = label.split("→")[-1].strip() if "→" in label else label
     return (CODE_DRIVEN_DESCRIPTIONS.get(action)

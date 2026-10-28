@@ -290,6 +290,7 @@ def checkpoint_assistant_call(
     model_group_uuid: UUID | None,
     log: list | None = None,
     followup_turns: list[dict[str, str]] | None = None,
+    action: str | None = None,
 ) -> AssistantRun:
     """Persist a model request before dispatch so a killed worker leaves
     evidence — and so /assistant can show what a call in flight was ASKED,
@@ -299,9 +300,13 @@ def checkpoint_assistant_call(
 
     `log` is the same operator-facing context the step row carries: which
     profile was in force, which blocks were switched on. It frames the prompts
-    the same way there as here."""
+    the same way there as here.
+
+    `action` names a code-driven call (the reply audit) on the in-flight row;
+    a decide call leaves it None, since what it decides is not known yet."""
     metadata = dict(run.metadata_ or {})
     metadata["active_call"] = {
+        "action": action,
         "step_index": step_index,
         "system_prompt": system_prompt,
         "user_prompt": user_prompt,
@@ -762,18 +767,12 @@ def assistant_trace_steps(run_uuid: UUID) -> list[AssistantStep]:
     """A run's steps in the order they ran, for the surfaces that read as a
     trace: the /assistant timeline and the markdown export.
 
-    Commit order is not causal order, and the reply audit is where they come
-    apart. The audit runs on a reply the decide call has already produced, but
-    the decide row cannot be written until the audit's verdict is known (it
-    settles `final` or `failed` on that verdict), so the audit commits first.
-    Read by row id the audit appears BEFORE the call it audited — and since an
-    audit prompt carries no action list, the run reads as one where the model
-    was never offered its actions.
-
-    The gantt on the same page has always been laid out on the clock, so commit
-    order left one page disagreeing with itself about which of two calls came
-    first. This puts the rows themselves in that order, so every surface reads
-    one sequence.
+    Commit order is not causal order: a row is written when its call returns
+    or its action settles, and a row recorded from a payload (the reply
+    audit's, written once its group has answered) can commit after a call
+    that began later. The gantt on the same page is laid out on the clock, so
+    this puts the rows themselves in that order, and every surface reads one
+    sequence.
 
     A row with no start at all falls back to when it was written, and one
     without even that keeps its row position at the end: a legacy row belongs

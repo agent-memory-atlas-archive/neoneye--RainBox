@@ -136,7 +136,8 @@ def test_step_records_token_usage_and_model_from_the_decide_call(room):
     agent._decide_next_step = decider
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
-    final = db.list_assistant_steps(agent._run.uuid)[-1]
+    final = next(s for s in db.list_assistant_steps(agent._run.uuid)
+                 if s.action == "reply")
     assert final.input_tokens == 412 and final.output_tokens == 87
     assert final.duration_ms == 5100
     assert final.model_uuid == model_uuid
@@ -160,7 +161,8 @@ def test_step_records_reasoning_without_posting_it_to_the_room(room):
     agent._decide_next_step = decider
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
-    final = db.list_assistant_steps(agent._run.uuid)[-1]
+    final = next(s for s in db.list_assistant_steps(agent._run.uuid)
+                 if s.action == "reply")
     assert final.reasoning == "The operator greeted me; a short reply suffices."
     kinds = {m["kind"] for m in db.list_room_messages(room_uuid)}
     assert "thinking" not in kinds
@@ -176,7 +178,8 @@ def test_non_reasoning_model_leaves_no_reasoning_trace(room):
     agent._decide_next_step = scripted_decisions(_reply("Hello!"))
     agent.handle(
         uuid4(), {"room_uuid": str(room_uuid), "message_uuid": str(message_uuid)})
-    final = db.list_assistant_steps(agent._run.uuid)[-1]
+    final = next(s for s in db.list_assistant_steps(agent._run.uuid)
+                 if s.action == "reply")
     assert final.reasoning is None
     assert not [
         m for m in db.list_room_messages(room_uuid) if m["kind"] == "thinking"
@@ -381,16 +384,17 @@ def test_loop_persists_run_and_steps_to_tables(room):
     steps = _steps_for(run.uuid)
     # Every call the run made is a row, the loop's own included: the language
     # classifier and the acceptance criteria (both skipped here — a bare test
-    # agent binds no model group), then the reply audit, then the decide step's
-    # terminal reply. A skipped call is recorded, not dropped: an install that
-    # never classifies is a different problem from one that classifies wrong.
+    # agent binds no model group), then the decide step's terminal reply, then
+    # the reply audit that settled it. A skipped call is recorded, not
+    # dropped: an install that never classifies is a different problem from
+    # one that classifies wrong.
     assert [(s.action, s.phase) for s in steps] == [
         ("response_language_classifier", "skipped"),
         ("acceptance_criteria", "skipped"),
-        ("reply_audit", "observed"),
         ("reply", "final"),
+        ("reply_audit", "observed"),
     ]
-    assert [s.code_driven for s in steps] == [True, True, True, False]
+    assert [s.code_driven for s in steps] == [True, True, False, True]
 
 
 def test_journal_result_is_summary_not_full_trace(room):
