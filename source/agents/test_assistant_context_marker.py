@@ -3,6 +3,7 @@ posted into a room after a facts/Q&A change or a profile.current switch, so
 the model re-checks profile-dependent assumptions instead of reusing an
 earlier answer from the transcript. One marker checkpoints both event stamps;
 legacy facts-only markers stay recognized."""
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -345,9 +346,50 @@ def test_combined_notice_names_the_facts_cause_too(room):
     agent = _agent()
     db.set_setting("profile.current", None)
     db.mark_facts_invalidated("qa_sync")
-    db.set_setting("profile.current_changed_at", "2026-08-30T00:00:00+00:00")
+    # After the room's first message, so the switch is news to the room too.
+    db.set_setting("profile.current_changed_at", datetime.now(UTC).isoformat())
     assert _post(agent, room.uuid) is True
     text = _markers(room.uuid)[-1]["text"]
     assert "question_answer.jsonl" in text
     assert "profile" in text
     assert _combined_context_notice(None, "shields").count("shield") == 1
+
+
+# ---- rooms with no history before the change ---------------------------------
+
+@pytest.fixture
+def fresh_room(app_ctx):
+    """A room created after the change it would be told about."""
+    human = db.get_human_user()
+    room = db.create_chatroom(f"cm-{uuid4().hex[:8]}", human.uuid, [ASSISTANT_UUID])
+    try:
+        yield room, human
+    finally:
+        db.session.rollback()
+        db.session.query(db.ChatMessage).filter(
+            db.ChatMessage.room_uuid == room.uuid).delete()
+        db.session.query(db.Chatroom).filter(
+            db.Chatroom.uuid == room.uuid).delete()
+        db.session.commit()
+
+
+def test_a_room_that_starts_after_the_change_gets_no_notice(fresh_room):
+    """Both causes stamped before the room's first message: the room holds no
+    earlier answer either change could have staled, so the turn starts
+    without a notice — not on its first message, and not on later ones."""
+    room, human = fresh_room
+    for key in KEYS:
+        db.set_setting(key, None)
+    db.set_current_profile(_template_uuid(0))
+    db.mark_facts_invalidated("qa_sync")
+    agent = _agent()
+    db.post_chat_message(room.uuid, human.uuid, "first question")
+    assert _post(agent, room.uuid) is False
+    db.post_chat_message(room.uuid, human.uuid, "second question")
+    assert _post(agent, room.uuid) is False
+    assert _markers(room.uuid) == []
+
+    # A change after the conversation began is news to it again.
+    db.mark_facts_invalidated("qa_sync")
+    assert _post(agent, room.uuid) is True
+    assert len(_markers(room.uuid)) == 1

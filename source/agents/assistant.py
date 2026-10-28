@@ -4835,7 +4835,9 @@ class AssistantAgent(ModelGroupAgent):
     ) -> bool:
         """Post a one-time context-invalidation notice when either pending
         cause — a facts/Q&A invalidation or a profile.current switch — has not
-        yet been acknowledged in this room. Uses ONLY the uuid, label, and
+        yet been acknowledged in this room — and the room has conversation
+        from before it: a room that starts after a change has no earlier
+        answer to re-check. Uses ONLY the uuid, label, and
         stamps from the turn's captured context, never a fresh settings read.
 
         The snapshot's two non-empty stamps are independently written and
@@ -4861,9 +4863,22 @@ class AssistantAgent(ModelGroupAgent):
             def acked(key: str, stamp: str) -> bool:
                 return any((m.get("meta") or {}).get(key) == stamp for m in msgs)
 
-            facts_pending = bool(facts) and not acked("facts_invalidation", facts)
-            profile_pending = bool(changed) and not acked(
-                "profile_context_changed", changed)
+            def predates(stamp: str) -> bool:
+                """Whether the room holds conversation from before the change.
+                A room created (or first written in) after it has no earlier
+                answer the change could have staled, so there is nothing to
+                re-check; an unreadable stamp keeps the notice."""
+                try:
+                    at = datetime.fromisoformat(stamp)
+                    return any(datetime.fromisoformat(m["created_at"]) < at
+                               for m in msgs if m.get("created_at"))
+                except (TypeError, ValueError):
+                    return True
+
+            facts_pending = (bool(facts) and not acked("facts_invalidation", facts)
+                             and predates(facts))
+            profile_pending = (bool(changed) and not acked(
+                "profile_context_changed", changed) and predates(changed))
             if not facts_pending and not profile_pending:
                 return False
 
